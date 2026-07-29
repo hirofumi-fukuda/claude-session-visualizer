@@ -189,6 +189,11 @@ def build_rows():
                 agents[sid] = {"sessionId": sid, "cwd": st.get("cwd", ""), "pid": None}
 
     rows = []
+    # transcript(jsonl)が存在しないセッションは除外する。実体は Cursor がウィンドウ復元時に
+    # 1タブにつき2プロセス起動する（まっさらな fresh 起動 → 直後に --resume 本体）ことで生じる
+    # 「fresh側の捨てプロセス」。会話が1度も無いため <sid>.jsonl が生成されないが、プロセスは
+    # 生き続けて claude agents --json に出続ける。本体リストからは消し、件数だけ脚注に出す。
+    skipped = 0
     for sid, rec in agents.items():
         st = states.get(sid, {})
         cwd = rec.get("cwd") or st.get("cwd") or ""
@@ -200,9 +205,10 @@ def build_rows():
         if st.get("transcript_path"):
             cand.append(Path(st["transcript_path"]))
         transcript = next((p for p in cand if p.exists()), None)
-        summary = _peek(transcript, ws) if transcript else {
-            "ai_title": None, "first_user_text": None, "last_prompt": None,
-            "user_texts_matchpool": [], "workspace": ws}
+        if transcript is None:
+            skipped += 1
+            continue
+        summary = _peek(transcript, ws)
         mapper.map_session(summary)
 
         state = st.get("state") or ({"waiting": "waiting_input"}.get(rec.get("status"), ""))
@@ -221,24 +227,27 @@ def build_rows():
     # 待ち状態（🔴許可待ち→🟡確認待ち）を最上部に固定し、各グループ内は更新の新しい順。
     # 作業中も新しい順＝いま動いているセッションが上に来る（見逃し防止と「今どれ」を両立）。
     rows.sort(key=lambda r: (STATE_ORDER.get(r["state"], 9), -r["updated_epoch"]))
-    return rows
+    return rows, skipped
 
 
-def render(rows):
+def render(rows, skipped=0):
     now = datetime.now().strftime("%H:%M:%S")
     n_wait = sum(1 for r in rows if r["state"].startswith("waiting"))
     print(f"🖥️ Claude ライブボード {now} — 稼働 {len(rows)} セッション（うち待ち {n_wait}）\n")
     if not rows:
         print("（稼働中セッションなし）")
-        return
-    print(_pad("状態", 12) + _pad("案件", 22) + _pad("S", 5) + _pad("更新", 10)
-          + _pad("WS", 16) + _pad("pid", 7) + "タイトル")
-    print("-" * 110)
-    for r in rows:
-        state = STATE_LABELS.get(r["state"], "⚪ 不明")
-        print(_pad(state, 12) + _pad(r["project"], 22) + _pad(r["s_no"], 5)
-              + _pad(r["updated"], 10) + _pad(r["ws"], 16) + _pad(str(r["pid"]), 7)
-              + _trim(r["title"], 50))
+    else:
+        print(_pad("状態", 12) + _pad("案件", 22) + _pad("S", 5) + _pad("更新", 10)
+              + _pad("WS", 16) + _pad("pid", 7) + "タイトル")
+        print("-" * 110)
+        for r in rows:
+            state = STATE_LABELS.get(r["state"], "⚪ 不明")
+            print(_pad(state, 12) + _pad(r["project"], 22) + _pad(r["s_no"], 5)
+                  + _pad(r["updated"], 10) + _pad(r["ws"], 16) + _pad(str(r["pid"]), 7)
+                  + _trim(r["title"], 50))
+    if skipped:
+        print(f"\n※ 非表示: 会話実体のない空セッション {skipped}件"
+              "（Cursor復元時の重複起動プロセス）")
 
 
 STATE_COLORS = {
@@ -248,10 +257,12 @@ STATE_COLORS = {
 }
 
 
-def render_html(rows, refresh_sec):
+def render_html(rows, refresh_sec, skipped=0):
     esc = html_mod.escape
     now = datetime.now().strftime("%H:%M:%S")
     n_wait = sum(1 for r in rows if r["state"].startswith("waiting"))
+    footnote = (f'<div class="note">※ 非表示: 会話実体のない空セッション {skipped}件'
+                "（Cursor復元時の重複起動プロセス）</div>") if skipped else ""
     body = []
     for r in rows:
         color, label = STATE_COLORS.get(r["state"], ("#95a5a6", "不明"))
@@ -280,6 +291,7 @@ def render_html(rows, refresh_sec):
             white-space: nowrap; }}
   .pj {{ font-weight: bold; }}
   .title {{ color: #666; }}
+  .note {{ color: #999; font-size: 12px; margin-top: 10px; }}
 </style>
 </head>
 <body>
@@ -289,6 +301,7 @@ def render_html(rows, refresh_sec):
 <tr><th>状態</th><th>案件</th><th>S</th><th>更新</th><th>WS</th><th>タイトル</th></tr>
 {"".join(body)}
 </table>
+{footnote}
 </body>
 </html>"""
 
@@ -302,15 +315,15 @@ def main():
     html_mode = "--html" in args
     out_path = REPO_ROOT / "reports" / "live_board.html"
     while True:
-        rows = build_rows()
+        rows, skipped = build_rows()
         if html_mode:
             out_path.parent.mkdir(exist_ok=True)
-            out_path.write_text(render_html(rows, watch or 10), encoding="utf-8")
+            out_path.write_text(render_html(rows, watch or 10, skipped), encoding="utf-8")
             print(f"{datetime.now().strftime('%H:%M:%S')} updated -> {out_path}")
         else:
             if watch:
                 os.system("cls" if os.name == "nt" else "clear")
-            render(rows)
+            render(rows, skipped)
         if not watch:
             break
         time.sleep(watch)
