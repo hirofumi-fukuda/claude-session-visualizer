@@ -1,6 +1,8 @@
 {
   "_comment": "汎用サンプル設定。自分の運用に合わせて config.local.json にコピーして編集する（config.local.json が優先される）",
   "claude_dir": "~/.claude",
+  "_fresh_working_sec_comment": "ライブボードの状態しきい値（秒）。transcript(jsonl)がこの秒数以内に追記されていれば🟢作業中、それ以降は🟡確認待ち。フック非依存の状態判定に使う（既定30）",
+  "fresh_working_sec": 30,
   "workspaces": [],
   "workspace_labels": {},
   "kickoff_patterns": [

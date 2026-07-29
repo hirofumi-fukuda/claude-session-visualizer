@@ -1,10 +1,16 @@
 """並行セッションのライブボード（照準②の最小ビュー）。
 
-データ源の3点合成:
+データ源:
   1. claude agents --json                 … 稼働中セッション一覧（公式・pid/cwd/sessionId）
-  2. ~/.claude/hooks/session_state/*.json … session_notify.ps1 が書く状態
-     （working=作業中 / waiting_input=確認待ち / waiting_permission=許可待ち）
-  3. claude_sv.mapping                    … 採番規約→案件名の解決（冒頭発話をピーク読み）
+  2. transcript(jsonl) の更新時刻           … 状態判定の主軸。直近 fresh_sec 秒に追記=🟢作業中／
+                                             それ以降無音=🟡確認待ち（フック非依存＝Cursorでも動く）
+  3. ~/.claude/hooks/session_state/*.json … （任意）CLIでフックが発火した時だけ上乗せ。
+                                             🔴許可待ちの区別に使う。鮮度で足切りし古い値は無視
+  4. claude_sv.mapping                    … 採番規約→案件名の解決（冒頭発話をピーク読み）
+
+  ※ 状態を jsonl mtime で判定するのは S5 の設計判断（2026-07-30）。Cursor/VSCode拡張版の
+    Claude Code ではフックが実質発火せず session_state が書かれないため（新規セッションでも
+    0件と実証）、hook 依存をやめて transcript の追記活動を状態の主軸に据えた。
 
 使い方: python live_board.py                    # ターミナルに1回表示
         python live_board.py --watch 10         # 10秒ごとに再表示（Ctrl+Cで終了）
@@ -32,7 +38,7 @@ PEEK_LINES = 400  # 冒頭発話ピークの読み込み上限（採番合言葉
 
 STATE_LABELS = {
     "working": "🟢 作業中",
-    "waiting_input": "🟡 確認待ち",
+    "waiting_input": "🟡 待機中",
     "waiting_permission": "🔴 許可待ち",
 }
 STATE_ORDER = {"waiting_permission": 0, "waiting_input": 1, "working": 2}
@@ -174,6 +180,8 @@ def build_rows():
 
     agents = _agents_json()
     states = _load_states(claude_dir)
+    fresh_sec = cfg.get("fresh_working_sec", 30)
+    now_epoch = datetime.now(timezone.utc).timestamp()
 
     if agents is None:
         # claude CLI が使えない場合は直近24hの状態ファイルだけで表示
@@ -211,7 +219,22 @@ def build_rows():
         summary = _peek(transcript, ws)
         mapper.map_session(summary)
 
-        state = st.get("state") or ({"waiting": "waiting_input"}.get(rec.get("status"), ""))
+        # 状態は transcript(jsonl) の更新時刻で判定（フック非依存・Cursor/CLIどちらでも動く）。
+        # 直近 fresh_sec 秒に追記あり=🟢作業中、それ以降無音=🟡確認待ち。
+        # フック状態JSONが「新しく」存在する時だけ上乗せ（CLIでフックが発火した場合の
+        # 🔴許可待ち区別など）。古い state ファイルに引きずられないよう鮮度で足切りする。
+        mtime = transcript.stat().st_mtime
+        state = "working" if (now_epoch - mtime) < fresh_sec else "waiting_input"
+        hk_ts = st.get("ts")
+        hk_age = None
+        if hk_ts:
+            try:
+                hk_age = now_epoch - datetime.fromisoformat(hk_ts.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                pass
+        if st.get("state") and hk_age is not None and hk_age < fresh_sec:
+            state = st["state"]
+
         title = (st.get("title") or summary["first_user_text"] or rec.get("name")
                  or (Path(cwd).name if cwd else "?"))
         rows.append({
@@ -219,8 +242,8 @@ def build_rows():
             "project": summary["project"] or "—",
             "s_no": f"S{summary['session_no']}" if summary.get("session_no") is not None else "",
             "title": title,
-            "updated": _age(st.get("ts")) if st.get("ts") else _age(epoch_ms=rec.get("startedAt")),
-            "updated_epoch": _updated_epoch(st.get("ts"), rec.get("startedAt")),
+            "updated": _age(epoch_ms=mtime * 1000),
+            "updated_epoch": mtime,
             "ws": _ci_get(ws_labels, ws, Path(cwd).name if cwd else ws[:16]),
             "pid": rec.get("pid") or "",
         })
@@ -252,7 +275,7 @@ def render(rows, skipped=0):
 
 STATE_COLORS = {
     "working": ("#27ae60", "作業中"),
-    "waiting_input": ("#f39c12", "確認待ち"),
+    "waiting_input": ("#f39c12", "待機中"),
     "waiting_permission": ("#c0392b", "許可待ち"),
 }
 
@@ -306,6 +329,25 @@ def render_html(rows, refresh_sec, skipped=0):
 </html>"""
 
 
+def _kill_stale_watchers():
+    """多重起動した他の live_board 監視プロセスを停止する（出力ファイルの奪い合い防止）。Windows専用。
+    自PID以外で live_board.py を実行中の python.exe が対象。PID再利用による誤爆を避けるため、
+    コマンドラインに 'live_board.py' を含むものだけ落とす。旧コードを抱えた watcher が残って
+    古い状態で HTML を上書きし続ける事故（S5 2026-07-30）への恒久対策。"""
+    if os.name != "nt":
+        return 0
+    ps = ("$me=%d; $t=@(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+          "Where-Object { $_.CommandLine -like '*live_board.py*' -and $_.ProcessId -ne $me }); "
+          "$t | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; "
+          "$t.Count") % os.getpid()
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                           capture_output=True, text=True, timeout=15)
+        return int((r.stdout or "0").strip().splitlines()[-1])
+    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError):
+        return 0
+
+
 def main():
     args = sys.argv[1:]
     watch = None
@@ -313,6 +355,10 @@ def main():
         i = args.index("--watch")
         watch = int(args[i + 1]) if len(args) > i + 1 and args[i + 1].isdigit() else 10
     html_mode = "--html" in args
+    if watch:  # 常駐は1個だけに保つ（古いコードの watcher が残って上書きし返す事故を防ぐ）
+        n = _kill_stale_watchers()
+        if n:
+            print(f"既存の監視プロセス {n}件を停止（多重起動の掃除）")
     out_path = REPO_ROOT / "reports" / "live_board.html"
     while True:
         rows, skipped = build_rows()
