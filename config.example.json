@@ -1,0 +1,19 @@
+{
+  "_comment": "汎用サンプル設定。自分の運用に合わせて config.local.json にコピーして編集する（config.local.json が優先される）",
+  "claude_dir": "~/.claude",
+  "workspaces": [],
+  "workspace_labels": {},
+  "kickoff_patterns": [
+    "^\\W{0,8}(?P<project>[^\\n]{1,40}?)\\s*S\\s*(?P<n>\\d+)\\s*(開始|スタート|start)",
+    "^\\W{0,8}(?P<project>[^\\n]{1,40}?)\\s*新セッション開始"
+  ],
+  "project_aliases": {
+    "サンプル案件": ["sample-project", "サンプル"]
+  },
+  "title_hints": [
+    { "project": "デイリーハブ", "contains": ["業務ハブ", "業務開始"] }
+  ],
+  "workspace_hints": {
+    "エンコード済みワークスペースディレクトリ名": "案件名"
+  }
+}
