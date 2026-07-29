@@ -6,9 +6,13 @@
      （working=作業中 / waiting_input=確認待ち / waiting_permission=許可待ち）
   3. claude_sv.mapping                    … 採番規約→案件名の解決（冒頭発話をピーク読み）
 
-使い方: python live_board.py             # 1回表示
-        python live_board.py --watch 10  # 10秒ごとに再表示（Ctrl+Cで終了）
+使い方: python live_board.py                    # ターミナルに1回表示
+        python live_board.py --watch 10         # 10秒ごとに再表示（Ctrl+Cで終了）
+        python live_board.py --html --watch 10  # reports/live_board.html を書き換え続ける
+                                                # （ブラウザ側はメタリフレッシュで自動再読込。
+                                                #   ワンクリック起動は live_board.bat）
 """
+import html as html_mod
 import io
 import json
 import os
@@ -222,16 +226,76 @@ def render(rows):
               + _trim(r["title"], 50))
 
 
+STATE_COLORS = {
+    "working": ("#27ae60", "作業中"),
+    "waiting_input": ("#f39c12", "確認待ち"),
+    "waiting_permission": ("#c0392b", "許可待ち"),
+}
+
+
+def render_html(rows, refresh_sec):
+    esc = html_mod.escape
+    now = datetime.now().strftime("%H:%M:%S")
+    n_wait = sum(1 for r in rows if r["state"].startswith("waiting"))
+    body = []
+    for r in rows:
+        color, label = STATE_COLORS.get(r["state"], ("#95a5a6", "不明"))
+        body.append(
+            f'<tr><td><span class="badge" style="background:{color}">{label}</span></td>'
+            f'<td class="pj">{esc(r["project"])}</td><td>{esc(r["s_no"])}</td>'
+            f'<td>{esc(r["updated"])}</td><td>{esc(r["ws"])}</td>'
+            f'<td class="title">{esc(_trim(r["title"], 70))}</td></tr>')
+    return f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="{refresh_sec}">
+<title>Claude ライブボード</title>
+<style>
+  body {{ font-family: -apple-system, "Segoe UI", "Yu Gothic", "Meiryo", sans-serif;
+         margin: 0; padding: 20px; background: #f4f6f8; color: #1c2833; }}
+  h1 {{ font-size: 17px; margin: 0 0 2px; }}
+  .meta {{ color: #888; font-size: 12px; margin-bottom: 14px; }}
+  table {{ border-collapse: collapse; background: #fff; border-radius: 8px;
+           box-shadow: 0 1px 3px rgba(0,0,0,.08); font-size: 13px; width: 100%; }}
+  th {{ text-align: left; color: #666; font-weight: normal; padding: 8px 12px;
+        border-bottom: 1px solid #e3e8ec; }}
+  td {{ padding: 7px 12px; border-bottom: 1px solid #f0f3f5; }}
+  .badge {{ color: #fff; border-radius: 10px; padding: 2px 10px; font-size: 12px;
+            white-space: nowrap; }}
+  .pj {{ font-weight: bold; }}
+  .title {{ color: #666; }}
+</style>
+</head>
+<body>
+<h1>🖥️ Claude ライブボード — 稼働 {len(rows)} セッション（うち待ち {n_wait}）</h1>
+<div class="meta">生成 {now} ／ {refresh_sec}秒ごと自動更新（裏で live_board.py --html --watch が動いている前提）</div>
+<table>
+<tr><th>状態</th><th>案件</th><th>S</th><th>更新</th><th>WS</th><th>タイトル</th></tr>
+{"".join(body)}
+</table>
+</body>
+</html>"""
+
+
 def main():
+    args = sys.argv[1:]
     watch = None
-    if "--watch" in sys.argv:
-        i = sys.argv.index("--watch")
-        watch = int(sys.argv[i + 1]) if len(sys.argv) > i + 1 else 10
+    if "--watch" in args:
+        i = args.index("--watch")
+        watch = int(args[i + 1]) if len(args) > i + 1 and args[i + 1].isdigit() else 10
+    html_mode = "--html" in args
+    out_path = REPO_ROOT / "reports" / "live_board.html"
     while True:
         rows = build_rows()
-        if watch:
-            os.system("cls" if os.name == "nt" else "clear")
-        render(rows)
+        if html_mode:
+            out_path.parent.mkdir(exist_ok=True)
+            out_path.write_text(render_html(rows, watch or 10), encoding="utf-8")
+            print(f"{datetime.now().strftime('%H:%M:%S')} updated -> {out_path}")
+        else:
+            if watch:
+                os.system("cls" if os.name == "nt" else "clear")
+            render(rows)
         if not watch:
             break
         time.sleep(watch)
