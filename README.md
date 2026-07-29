@@ -9,12 +9,18 @@
 3. **エージェントの中身** — セッション内のサブエージェント/ワークフローのやりとり・ツール呼び出しの会話ビューア
 4. **利用統計** — トークン/セッション数/時間帯の使用量
 
+## 使い方（日常運用）
+
+- **`claude_dashboard.bat`** … 案件×セッション地図の静的ダッシュボードを再生成→ブラウザ表示（見たいときにダブルクリック・数秒）
+- **`live_board.bat`** … 並行セッションのライブボード（ブラウザ10秒自動更新・停止=最小化窓を閉じる）
+- CLI: `python l0_report.py`（Markdown棚卸し・未分類の本文スニペット付き）／`python claude_dashboard_gen.py`／`python live_board.py [--watch N] [--html]`
+
 ## ロードマップ
 
-- **L0** 棚卸しレポート（jsonlパース→案件×セッション地図を1回生成）
-- **L1** 静的ダッシュボード生成（`gen.py` → HTML）
-- **L2** ローカルWebアプリ（ライブ監視＋会話ビューア）
-- **L3** 業務ダッシュボードとの統合
+- **L0** ✅ 棚卸しレポート（`l0_report.py`・2026-07-29）
+- **L1** ✅ 静的ダッシュボード（`claude_dashboard_gen.py` → HTML＋JSON中間出力・2026-07-29）
+- **L2** ライブ監視 → **自作Webアプリは廃止**（S2判断: claude-view=macOS専用。公式Agent View＋`live_board.py`〔`claude agents --json`×フック状態JSON×採番マッピング・静的HTML＋メタリフレッシュ〕で充足）。会話ビューアは既存OSS（claude-code-history-viewer 等・未導入）
+- **L3** 業務ダッシュボードとの統合（`reports/claude_dashboard_data.json` が受け口・未着手）
 
 ## 設計原則
 
