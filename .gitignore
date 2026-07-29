@@ -1,0 +1,24 @@
+# 生成物・キャッシュ（トランスクリプト由来の機密を含み得るため必ず除外）
+output/
+reports/
+cache/
+*.html
+!docs/**/*.html
+
+# 個人設定（採番規約・案件マッピング等。サンプルは config.example.* で共有）
+config.local.*
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
