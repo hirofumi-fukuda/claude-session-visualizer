@@ -129,6 +129,18 @@ def _age(ts_iso=None, epoch_ms=None):
     return f"{sec // 86400}日前"
 
 
+def _updated_epoch(ts_iso=None, epoch_ms=None):
+    """ソート用の更新時刻（epoch秒・新しいほど大）。状態JSONのts優先、無ければstartedAt。"""
+    if ts_iso:
+        try:
+            return datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    if epoch_ms:
+        return epoch_ms / 1000
+    return 0.0
+
+
 def _trim(s, limit):
     s = (s or "").replace("\n", " ")
     return s[:limit] + ("…" if len(s) > limit else "")
@@ -202,10 +214,13 @@ def build_rows():
             "s_no": f"S{summary['session_no']}" if summary.get("session_no") is not None else "",
             "title": title,
             "updated": _age(st.get("ts")) if st.get("ts") else _age(epoch_ms=rec.get("startedAt")),
+            "updated_epoch": _updated_epoch(st.get("ts"), rec.get("startedAt")),
             "ws": _ci_get(ws_labels, ws, Path(cwd).name if cwd else ws[:16]),
             "pid": rec.get("pid") or "",
         })
-    rows.sort(key=lambda r: (STATE_ORDER.get(r["state"], 9), r["project"] == "—", r["project"]))
+    # 待ち状態（🔴許可待ち→🟡確認待ち）を最上部に固定し、各グループ内は更新の新しい順。
+    # 作業中も新しい順＝いま動いているセッションが上に来る（見逃し防止と「今どれ」を両立）。
+    rows.sort(key=lambda r: (STATE_ORDER.get(r["state"], 9), -r["updated_epoch"]))
     return rows
 
 
