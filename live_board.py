@@ -1,0 +1,245 @@
+"""並行セッションのライブボード（照準②の最小ビュー）。
+
+データ源の3点合成:
+  1. claude agents --json                 … 稼働中セッション一覧（公式・pid/cwd/sessionId）
+  2. ~/.claude/hooks/session_state/*.json … session_notify.ps1 が書く状態
+     （working=作業中 / waiting_input=確認待ち / waiting_permission=許可待ち）
+  3. claude_sv.mapping                    … 採番規約→案件名の解決（冒頭発話をピーク読み）
+
+使い方: python live_board.py             # 1回表示
+        python live_board.py --watch 10  # 10秒ごとに再表示（Ctrl+Cで終了）
+"""
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import unicodedata
+from datetime import datetime, timezone
+from pathlib import Path
+
+from claude_sv.mapping import ProjectMapper, load_config
+from claude_sv.parser import _clean_user_text, _iter_text_items
+
+REPO_ROOT = Path(__file__).parent
+PEEK_LINES = 400  # 冒頭発話ピークの読み込み上限（採番合言葉は先頭にある前提）
+
+STATE_LABELS = {
+    "working": "🟢 作業中",
+    "waiting_input": "🟡 確認待ち",
+    "waiting_permission": "🔴 許可待ち",
+}
+STATE_ORDER = {"waiting_permission": 0, "waiting_input": 1, "working": 2}
+
+
+def _agents_json():
+    """claude agents --json で稼働中セッション一覧を取得（sessionId 重複は新しい方を残す）。"""
+    try:
+        r = subprocess.run("claude agents --json", shell=True, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=60)
+        recs = json.loads(r.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+    by_sid = {}
+    for rec in recs:
+        sid = rec.get("sessionId")
+        if not sid:
+            continue
+        if sid not in by_sid or rec.get("startedAt", 0) > by_sid[sid].get("startedAt", 0):
+            by_sid[sid] = rec
+    return by_sid
+
+
+def _load_states(claude_dir: Path):
+    state_dir = claude_dir / "hooks" / "session_state"
+    states = {}
+    if not state_dir.is_dir():
+        return states
+    for p in state_dir.glob("*.json"):
+        try:
+            states[p.stem] = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+    return states
+
+
+def _enc_ws(cwd: str) -> str:
+    """cwd → ~/.claude/projects 配下のワークスペースディレクトリ名（非英数字→'-'）。"""
+    return re.sub(r"[^A-Za-z0-9]", "-", cwd or "")
+
+
+def _peek(transcript: Path, workspace: str):
+    """冒頭だけ読んで採番マッチ用の擬似サマリーを作る（全パースしない）。"""
+    summary = {"ai_title": None, "first_user_text": None, "last_prompt": None,
+               "user_texts_matchpool": [], "workspace": workspace}
+    try:
+        with open(transcript, encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i >= PEEK_LINES:
+                    break
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = rec.get("type")
+                if t == "ai-title":
+                    summary["ai_title"] = rec.get("aiTitle") or summary["ai_title"]
+                elif t == "user" and not rec.get("isMeta") and not rec.get("isSidechain"):
+                    msg = rec.get("message") or {}
+                    for raw in _iter_text_items(msg.get("content")):
+                        text = _clean_user_text(raw)
+                        if text:
+                            if summary["first_user_text"] is None:
+                                summary["first_user_text"] = text[:200]
+                            if len(summary["user_texts_matchpool"]) < 10:
+                                summary["user_texts_matchpool"].append(text[:120])
+                            break
+                    if len(summary["user_texts_matchpool"]) >= 10:
+                        break
+    except OSError:
+        pass
+    return summary
+
+
+def _age(ts_iso=None, epoch_ms=None):
+    now = datetime.now(timezone.utc)
+    dt = None
+    if ts_iso:
+        try:
+            dt = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    elif epoch_ms:
+        dt = datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc)
+    if not dt:
+        return "?"
+    sec = int((now - dt).total_seconds())
+    if sec < 60:
+        return f"{sec}秒前"
+    if sec < 3600:
+        return f"{sec // 60}分前"
+    if sec < 86400:
+        return f"{sec // 3600}時間前"
+    return f"{sec // 86400}日前"
+
+
+def _trim(s, limit):
+    s = (s or "").replace("\n", " ")
+    return s[:limit] + ("…" if len(s) > limit else "")
+
+
+def _w(s):
+    """表示幅（全角=2）。"""
+    return sum(2 if unicodedata.east_asian_width(c) in "FWA" else 1 for c in s)
+
+
+def _pad(s, width):
+    """表示幅ベースの左寄せパディング（超過分は切り詰め）。"""
+    while _w(s) > width - 1:
+        s = s[:-1]
+    return s + " " * (width - _w(s))
+
+
+def _ci_get(d, key, default=None):
+    """辞書のケースインセンシティブ引き（ドライブレター大文字/小文字ズレ対策）。"""
+    if key in d:
+        return d[key]
+    kl = key.lower()
+    return next((v for k, v in d.items() if k.lower() == kl), default)
+
+
+def build_rows():
+    cfg = load_config(REPO_ROOT)
+    claude_dir = Path(cfg.get("claude_dir", "~/.claude")).expanduser()
+    ws_labels = cfg.get("workspace_labels", {})
+    mapper = ProjectMapper(cfg)
+
+    agents = _agents_json()
+    states = _load_states(claude_dir)
+
+    if agents is None:
+        # claude CLI が使えない場合は直近24hの状態ファイルだけで表示
+        print("⚠️ claude agents --json が実行できないため状態ファイルのみで表示")
+        agents = {}
+        cutoff = datetime.now(timezone.utc).timestamp() - 86400
+        for sid, st in states.items():
+            try:
+                ts = datetime.fromisoformat(st["ts"].replace("Z", "+00:00")).timestamp()
+            except (KeyError, ValueError):
+                continue
+            if ts >= cutoff:
+                agents[sid] = {"sessionId": sid, "cwd": st.get("cwd", ""), "pid": None}
+
+    rows = []
+    for sid, rec in agents.items():
+        st = states.get(sid, {})
+        cwd = rec.get("cwd") or st.get("cwd") or ""
+        ws = _enc_ws(cwd)
+        # ドライブレターの大小ズレを config のキー表記に正規化
+        ws = next((k for k in list(ws_labels) + list(mapper.workspace_hints)
+                   if k.lower() == ws.lower()), ws)
+        cand = [claude_dir / "projects" / ws / f"{sid}.jsonl"]
+        if st.get("transcript_path"):
+            cand.append(Path(st["transcript_path"]))
+        transcript = next((p for p in cand if p.exists()), None)
+        summary = _peek(transcript, ws) if transcript else {
+            "ai_title": None, "first_user_text": None, "last_prompt": None,
+            "user_texts_matchpool": [], "workspace": ws}
+        mapper.map_session(summary)
+
+        state = st.get("state") or ({"waiting": "waiting_input"}.get(rec.get("status"), ""))
+        title = (st.get("title") or summary["first_user_text"] or rec.get("name")
+                 or (Path(cwd).name if cwd else "?"))
+        rows.append({
+            "state": state,
+            "project": summary["project"] or "—",
+            "s_no": f"S{summary['session_no']}" if summary.get("session_no") is not None else "",
+            "title": title,
+            "updated": _age(st.get("ts")) if st.get("ts") else _age(epoch_ms=rec.get("startedAt")),
+            "ws": _ci_get(ws_labels, ws, Path(cwd).name if cwd else ws[:16]),
+            "pid": rec.get("pid") or "",
+        })
+    rows.sort(key=lambda r: (STATE_ORDER.get(r["state"], 9), r["project"] == "—", r["project"]))
+    return rows
+
+
+def render(rows):
+    now = datetime.now().strftime("%H:%M:%S")
+    n_wait = sum(1 for r in rows if r["state"].startswith("waiting"))
+    print(f"🖥️ Claude ライブボード {now} — 稼働 {len(rows)} セッション（うち待ち {n_wait}）\n")
+    if not rows:
+        print("（稼働中セッションなし）")
+        return
+    print(_pad("状態", 12) + _pad("案件", 22) + _pad("S", 5) + _pad("更新", 10)
+          + _pad("WS", 16) + _pad("pid", 7) + "タイトル")
+    print("-" * 110)
+    for r in rows:
+        state = STATE_LABELS.get(r["state"], "⚪ 不明")
+        print(_pad(state, 12) + _pad(r["project"], 22) + _pad(r["s_no"], 5)
+              + _pad(r["updated"], 10) + _pad(r["ws"], 16) + _pad(str(r["pid"]), 7)
+              + _trim(r["title"], 50))
+
+
+def main():
+    watch = None
+    if "--watch" in sys.argv:
+        i = sys.argv.index("--watch")
+        watch = int(sys.argv[i + 1]) if len(sys.argv) > i + 1 else 10
+    while True:
+        rows = build_rows()
+        if watch:
+            os.system("cls" if os.name == "nt" else "clear")
+        render(rows)
+        if not watch:
+            break
+        time.sleep(watch)
+
+
+if __name__ == "__main__":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
