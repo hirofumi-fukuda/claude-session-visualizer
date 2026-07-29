@@ -10,8 +10,10 @@
   "project_aliases": {
     "サンプル案件": ["sample-project", "サンプル"]
   },
+  "_title_hints_comment": "採番合言葉がない（AIタイトルのみの）セッションの回収用。ai_title＋first_user_text を空白除去+casefoldして部分一致。配列の順序＝優先度（先勝ち）なので、具体的な案件を上に・一般語ほど下に置く。短語（3文字未満や共有パートナー名等）は横断誤爆しやすいので避けるか下段に。",
   "title_hints": [
-    { "project": "デイリーハブ", "contains": ["業務ハブ", "業務開始"] }
+    { "project": "具体案件A", "contains": ["固有名詞", "specific-keyword"] },
+    { "project": "デイリーハブ", "contains": ["業務ハブ", "業務開始", "daily hub", "work session"] }
   ],
   "workspace_hints": {
     "エンコード済みワークスペースディレクトリ名": "案件名"
