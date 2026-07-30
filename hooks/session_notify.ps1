@@ -11,6 +11,10 @@
 
 $ErrorActionPreference = 'SilentlyContinue'
 
+# NOTE (S6 2026-07-30): superseded by session_notify.py for Cursor. Cursor's CC
+# extension does not execute PowerShell -File hooks; this .ps1 only runs under
+# the plain terminal CLI. The active hook is now `python session_notify.py`.
+
 # ---- read hook input JSON from stdin (Claude Code sends UTF-8) ----
 try { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
 $raw = [Console]::In.ReadToEnd()

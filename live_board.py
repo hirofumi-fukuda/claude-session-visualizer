@@ -2,15 +2,17 @@
 
 データ源:
   1. claude agents --json                 … 稼働中セッション一覧（公式・pid/cwd/sessionId）
-  2. transcript(jsonl) の更新時刻           … 状態判定の主軸。直近 fresh_sec 秒に追記=🟢作業中／
-                                             それ以降無音=🟡確認待ち（フック非依存＝Cursorでも動く）
-  3. ~/.claude/hooks/session_state/*.json … （任意）CLIでフックが発火した時だけ上乗せ。
-                                             🔴許可待ちの区別に使う。鮮度で足切りし古い値は無視
+  2. ~/.claude/hooks/session_state/*.json … 状態判定の主軸。session_notify.py が UserPromptSubmit=
+                                             working / Stop=waiting_input / Notification=waiting_permission
+                                             を書く（＝ターンの境界信号）。判定詳細は resolve_state。
+  3. transcript(jsonl) の更新時刻           … hook状態が無いセッションのフォールバック＋新ターン検知。
+                                             直近 fresh_sec 秒に追記=🟢作業中。
   4. claude_sv.mapping                    … 採番規約→案件名の解決（冒頭発話をピーク読み）
 
-  ※ 状態を jsonl mtime で判定するのは S5 の設計判断（2026-07-30）。Cursor/VSCode拡張版の
-    Claude Code ではフックが実質発火せず session_state が書かれないため（新規セッションでも
-    0件と実証）、hook 依存をやめて transcript の追記活動を状態の主軸に据えた。
+  ※ 状態モデルの変遷: S5 は「Cursorはフックが発火しない」と誤診し jsonl mtime を主軸にしたが、
+    S6（2026-07-30）で真因は「powershell -File フック不実行・python は動く」と判明→session_notify
+    を python化しフックが発火するように。状態は hook（ターン境界）を主軸に戻し jsonl mtime は
+    フォールバックへ。これで長いターンの追記の谷間でも🟢を維持できる（旧＝谷間で🟡へ誤落ち）。
 
 使い方: python live_board.py                    # ターミナルに1回表示
         python live_board.py --watch 10         # 10秒ごとに再表示（Ctrl+Cで終了）
@@ -42,6 +44,29 @@ STATE_LABELS = {
     "waiting_permission": "🔴 許可待ち",
 }
 STATE_ORDER = {"waiting_permission": 0, "waiting_input": 1, "working": 2}
+
+
+def resolve_state(now_epoch, mtime, hook_state, hook_ts_epoch, fresh_sec):
+    """セッションの状態を決める（S6設計・S7で谷間対策）。
+
+    hook 状態（UserPromptSubmit=working / Stop=waiting_input / Notification=waiting_permission）
+    を「ターンの境界信号」として主軸に据える。<sid>.json は常に最新イベントで上書きされるので、
+    hook_state==working は「UserPromptSubmit 済み・まだ Stop していない＝ターン進行中」を意味する。
+    これは jsonl の追記が途切れる谷間（長いツール実行・長い生成）でも有効なので、鮮度で足切り
+    しない（S5→S6以前は hk_age<fresh_sec で足切りしていたため、長いターンの合間に🟡へ誤落ちして
+    いた＝ふくちゃん報告のバグ）。jsonl mtime は hook 状態が無いセッション（フック配線前 等）の
+    フォールバック。待ち系(Stop/許可待ち)の後に jsonl が新しく動いていれば、境界を跨いだ新ターン
+    とみなして working に戻す（UserPromptSubmit を取りこぼした場合の保険）。
+    """
+    jsonl_fresh = (now_epoch - mtime) < fresh_sec
+    if hook_state in ("working", "waiting_input", "waiting_permission"):
+        if hook_state == "working":
+            return "working"  # ターン進行中。谷間でも維持（次の hook イベントまで有効）
+        # 待ち系: 直近の hook より後に jsonl が動き、かつ新鮮なら新ターン進行中とみなす
+        if jsonl_fresh and hook_ts_epoch is not None and mtime > hook_ts_epoch:
+            return "working"
+        return hook_state
+    return "working" if jsonl_fresh else "waiting_input"
 
 
 def _agents_json():
@@ -219,21 +244,18 @@ def build_rows():
         summary = _peek(transcript, ws)
         mapper.map_session(summary)
 
-        # 状態は transcript(jsonl) の更新時刻で判定（フック非依存・Cursor/CLIどちらでも動く）。
-        # 直近 fresh_sec 秒に追記あり=🟢作業中、それ以降無音=🟡確認待ち。
-        # フック状態JSONが「新しく」存在する時だけ上乗せ（CLIでフックが発火した場合の
-        # 🔴許可待ち区別など）。古い state ファイルに引きずられないよう鮮度で足切りする。
+        # 状態判定は resolve_state に集約（hook状態=ターン境界を主軸／jsonl mtimeはフォールバック）。
+        # S6で session_notify を python化しCursorでもフックが発火するようになったため、S5の
+        # 「jsonl mtime 主軸」から「hook状態 主軸＋jsonl フォールバック」へ。長いターンの谷間で
+        # 🟡へ誤落ちする問題（S7・ふくちゃん報告）を解消。
         mtime = transcript.stat().st_mtime
-        state = "working" if (now_epoch - mtime) < fresh_sec else "waiting_input"
-        hk_ts = st.get("ts")
-        hk_age = None
-        if hk_ts:
+        hk_ts_epoch = None
+        if st.get("ts"):
             try:
-                hk_age = now_epoch - datetime.fromisoformat(hk_ts.replace("Z", "+00:00")).timestamp()
+                hk_ts_epoch = datetime.fromisoformat(st["ts"].replace("Z", "+00:00")).timestamp()
             except ValueError:
                 pass
-        if st.get("state") and hk_age is not None and hk_age < fresh_sec:
-            state = st["state"]
+        state = resolve_state(now_epoch, mtime, st.get("state"), hk_ts_epoch, fresh_sec)
 
         title = (st.get("title") or summary["first_user_text"] or rec.get("name")
                  or (Path(cwd).name if cwd else "?"))
