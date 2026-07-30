@@ -160,6 +160,18 @@ def _age(ts_iso=None, epoch_ms=None):
     return f"{sec // 86400}日前"
 
 
+def _dur(sec):
+    """経過秒 → 簡潔な継続時間表記（'N秒'/'N分'/'N時間'/'N日'）。待ち時間の表示用。"""
+    sec = int(sec)
+    if sec < 60:
+        return f"{sec}秒"
+    if sec < 3600:
+        return f"{sec // 60}分"
+    if sec < 86400:
+        return f"{sec // 3600}時間"
+    return f"{sec // 86400}日"
+
+
 def _updated_epoch(ts_iso=None, epoch_ms=None):
     """ソート用の更新時刻（epoch秒・新しいほど大）。状態JSONのts優先、無ければstartedAt。"""
     if ts_iso:
@@ -206,6 +218,7 @@ def build_rows():
     agents = _agents_json()
     states = _load_states(claude_dir)
     fresh_sec = cfg.get("fresh_working_sec", 30)
+    new_wait_sec = cfg.get("new_waiting_sec", 180)  # 待ち入りからこの秒数以内は「新着」🆕
     now_epoch = datetime.now(timezone.utc).timestamp()
 
     if agents is None:
@@ -257,6 +270,15 @@ def build_rows():
                 pass
         state = resolve_state(now_epoch, mtime, st.get("state"), hk_ts_epoch, fresh_sec)
 
+        # 待ち状態の「待ち時間」と「新着」判定（A案・S7 ふくちゃん要望＝未確認/確認済みの近似）。
+        # 待ちに入った時刻＝hook ts（Stop/Notification 発火時）。無ければ jsonl mtime で近似。
+        # 待ち入りから new_wait_sec 秒以内＝🆕新着（≒トーストが出たばかりで未確認の可能性大）。
+        wait_sec = None
+        if state in ("waiting_input", "waiting_permission"):
+            since = hk_ts_epoch if hk_ts_epoch is not None else mtime
+            wait_sec = max(0, int(now_epoch - since))
+        is_new = wait_sec is not None and wait_sec < new_wait_sec
+
         title = (st.get("title") or summary["first_user_text"] or rec.get("name")
                  or (Path(cwd).name if cwd else "?"))
         rows.append({
@@ -266,6 +288,8 @@ def build_rows():
             "title": title,
             "updated": _age(epoch_ms=mtime * 1000),
             "updated_epoch": mtime,
+            "wait_sec": wait_sec,
+            "is_new": is_new,
             "ws": _ci_get(ws_labels, ws, Path(cwd).name if cwd else ws[:16]),
             "pid": rec.get("pid") or "",
         })
@@ -282,12 +306,16 @@ def render(rows, skipped=0):
     if not rows:
         print("（稼働中セッションなし）")
     else:
-        print(_pad("状態", 12) + _pad("案件", 22) + _pad("S", 5) + _pad("更新", 10)
+        print(_pad("状態", 18) + _pad("案件", 22) + _pad("S", 5) + _pad("更新", 10)
               + _pad("WS", 16) + _pad("pid", 7) + "タイトル")
-        print("-" * 110)
+        print("-" * 116)
         for r in rows:
             state = STATE_LABELS.get(r["state"], "⚪ 不明")
-            print(_pad(state, 12) + _pad(r["project"], 22) + _pad(r["s_no"], 5)
+            if r.get("wait_sec") is not None:      # 待ち時間を状態に併記
+                state += f" {_dur(r['wait_sec'])}"
+            if r.get("is_new"):                    # 新着（待ち入りたて＝未確認の可能性大）
+                state = "🆕" + state
+            print(_pad(state, 18) + _pad(r["project"], 22) + _pad(r["s_no"], 5)
                   + _pad(r["updated"], 10) + _pad(r["ws"], 16) + _pad(str(r["pid"]), 7)
                   + _trim(r["title"], 50))
     if skipped:
@@ -311,8 +339,12 @@ def render_html(rows, refresh_sec, skipped=0):
     body = []
     for r in rows:
         color, label = STATE_COLORS.get(r["state"], ("#95a5a6", "不明"))
+        if r.get("wait_sec") is not None:      # 待ち時間を状態に併記
+            label += f" {_dur(r['wait_sec'])}"
+        newbadge = '<span class="new">🆕</span>' if r.get("is_new") else ''  # 新着＝未確認の目印
         body.append(
-            f'<tr><td><span class="badge" style="background:{color}">{label}</span></td>'
+            f'<tr class="{"newrow" if r.get("is_new") else ""}">'
+            f'<td>{newbadge}<span class="badge" style="background:{color}">{label}</span></td>'
             f'<td class="pj">{esc(r["project"])}</td><td>{esc(r["s_no"])}</td>'
             f'<td>{esc(r["updated"])}</td><td>{esc(r["ws"])}</td>'
             f'<td class="title">{esc(_trim(r["title"], 70))}</td></tr>')
@@ -337,6 +369,8 @@ def render_html(rows, refresh_sec, skipped=0):
   .pj {{ font-weight: bold; }}
   .title {{ color: #666; }}
   .note {{ color: #999; font-size: 12px; margin-top: 10px; }}
+  .new {{ margin-right: 5px; }}
+  .newrow {{ background: #fffbe6; }}
 </style>
 </head>
 <body>

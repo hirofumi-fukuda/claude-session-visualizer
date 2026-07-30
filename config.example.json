@@ -1,8 +1,10 @@
 {
   "_comment": "汎用サンプル設定。自分の運用に合わせて config.local.json にコピーして編集する（config.local.json が優先される）",
   "claude_dir": "~/.claude",
-  "_fresh_working_sec_comment": "ライブボードの状態しきい値（秒）。transcript(jsonl)がこの秒数以内に追記されていれば🟢作業中、それ以降は🟡確認待ち。フック非依存の状態判定に使う（既定30）",
+  "_fresh_working_sec_comment": "ライブボードの状態しきい値（秒）。hook状態が無いセッションのフォールバック判定用。transcript(jsonl)がこの秒数以内に追記されていれば🟢作業中、それ以降は🟡待機中（既定30）",
   "fresh_working_sec": 30,
+  "_new_waiting_sec_comment": "待ちに入ってからこの秒数以内の待ちセッションを🆕新着（未確認の可能性大）として強調表示する。待ち時間そのものも各行に表示される（既定180＝3分）",
+  "new_waiting_sec": 180,
   "workspaces": [],
   "workspace_labels": {},
   "kickoff_patterns": [
