@@ -187,9 +187,16 @@ def _dormant_row(sid, summary, mtime, ws, ws_labels, note):
     }
 
 
-def _dormant_rows(cfg, claude_dir, live_sids, pins, mapper, ws_labels, now_epoch):
-    """再開予定（ピン済み・プロセス停止中）と再開候補（自動提示）の2リストを返す。"""
-    lookback = cfg.get("dormant_lookback_days", 10) * 86400
+def _dormant_rows(cfg, claude_dir, live_sids, live_proj_max, pins, mapper, ws_labels, now_epoch):
+    """再開予定（ピン済み・プロセス停止中）と再開候補（自動提示）の2リストを返す。
+
+    再開候補の抑制ルール（S7・ふくちゃん方針）:
+      - 番号なし単独セッション … 地図（採番）で追えず埋もれやすいので長め（unnumbered）に遡る。
+      - 番号付きセッション … 案件ごとの最新Sのみ候補（旧番号は除外）。稼働中に新しいSがあれば
+        （live_proj_max）停止中の旧番号は自動的に落ちる＝「S6動いてるならS4/S5は出さない」。
+    """
+    lb_num = cfg.get("dormant_lookback_days", 10) * 86400
+    lb_unnum = cfg.get("dormant_lookback_days_unnumbered", 30) * 86400
     suggest_max = cfg.get("dormant_suggest_max", 8)
     pin_by_sid = {p["sid"]: p for p in pins}
 
@@ -205,22 +212,42 @@ def _dormant_rows(cfg, claude_dir, live_sids, pins, mapper, ws_labels, now_epoch
                                             pin_by_sid[s].get("note", "")))
     pinned_rows.sort(key=lambda r: -r["last_epoch"])
 
-    # 💤 再開候補: プロセス停止中・直近lookback内更新・未ピン・案件マップ済・会話実体あり。
-    # peek はコストがあるので mtime 降順で上位だけ舐める（表示数の数倍で足切り）。
-    cutoff = now_epoch - lookback
+    # 💤 再開候補: プロセス停止中・未ピン・案件マップ済。番号有無で遡り日数を変える。
+    # peek はコストがあるので、広い方（unnumbered）の窓に入るものだけを mtime 降順で舐める。
+    cutoff = now_epoch - max(lb_num, lb_unnum)
     cand = sorted((f for f in files
                    if f[0] not in live_sids and f[0] not in pin_by_sid and f[3] >= cutoff),
-                  key=lambda x: -x[3])
-    suggest_rows = []
-    for s, jf, ws, mtime in cand[:max(suggest_max * 4, 12)]:
+                  key=lambda x: -x[3])[:max(suggest_max * 8, 50)]
+    parsed = []
+    for s, jf, ws, mtime in cand:
         summary = _peek(jf, ws)
         mapper.map_session(summary)
-        if not summary.get("project") or not summary.get("first_user_text"):
-            continue
-        suggest_rows.append(_dormant_row(s, summary, mtime, ws, ws_labels, ""))
-        if len(suggest_rows) >= suggest_max:
-            break
-    return pinned_rows, suggest_rows
+        if summary.get("project"):
+            parsed.append((s, summary, mtime, ws))
+
+    # 案件ごとの最新S（稼働中＋候補を合算）＝番号付きの旧番号除外の基準
+    proj_max = dict(live_proj_max)
+    for _s, summary, _m, _w in parsed:
+        n = summary.get("session_no")
+        if n is not None:
+            proj_max[summary["project"]] = max(proj_max.get(summary["project"], -1), n)
+
+    # 2グループに分けて各々を独立枠で出す（番号なしが番号付き最新Sを押し出さないように）
+    suggest_unnum, suggest_num = [], []
+    for s, summary, mtime, ws in parsed:
+        n = summary.get("session_no")
+        age = now_epoch - mtime
+        if n is not None:  # 番号付き: 案件の最新Sのみ・短lookback
+            if age > lb_num or n < proj_max.get(summary["project"], n):
+                continue
+            suggest_num.append(_dormant_row(s, summary, mtime, ws, ws_labels, ""))
+        else:              # 番号なし単独: 会話実体あり・長lookback
+            if age > lb_unnum or not summary.get("first_user_text"):
+                continue
+            suggest_unnum.append(_dormant_row(s, summary, mtime, ws, ws_labels, ""))
+    suggest_unnum.sort(key=lambda r: -r["last_epoch"])
+    suggest_num.sort(key=lambda r: -r["last_epoch"])
+    return pinned_rows, suggest_unnum[:suggest_max], suggest_num[:suggest_max]
 
 
 def _peek(transcript: Path, workspace: str):
@@ -404,6 +431,7 @@ def build_rows():
         rows.append({
             "state": state,
             "project": summary["project"] or "—",
+            "session_no": summary.get("session_no"),
             "s_no": f"S{summary['session_no']}" if summary.get("session_no") is not None else "",
             "title": title,
             "updated": _age(epoch_ms=mtime * 1000),
@@ -420,12 +448,18 @@ def build_rows():
 
     # 休眠セッション（プロセス停止中）の再開予定／再開候補（S7）
     live_sids = set(agents.keys())  # プロセスが生きているものは休眠から除外（幽霊含め再開提案しない）
-    pinned_rows, suggest_rows = _dormant_rows(
-        cfg, claude_dir, live_sids, pins, mapper, ws_labels, now_epoch)
-    return rows, skipped, pinned_rows, suggest_rows
+    # 案件ごとの「稼働中の最大S番号」＝番号付き候補の旧番号除外に使う（S6稼働中ならS4/S5は候補外）
+    live_proj_max = {}
+    for r in rows:
+        if r.get("session_no") is not None:
+            p = r["project"]
+            live_proj_max[p] = max(live_proj_max.get(p, -1), r["session_no"])
+    pinned_rows, suggest_unnum, suggest_num = _dormant_rows(
+        cfg, claude_dir, live_sids, live_proj_max, pins, mapper, ws_labels, now_epoch)
+    return rows, skipped, pinned_rows, suggest_unnum, suggest_num
 
 
-def render(rows, skipped=0, pinned_rows=None, suggest_rows=None):
+def render(rows, skipped=0, pinned_rows=None, suggest_unnum=None, suggest_num=None):
     now = datetime.now().strftime("%H:%M:%S")
     n_wait = sum(1 for r in rows if r["state"].startswith("waiting"))
     print(f"🖥️ Claude ライブボード {now} — 稼働 {len(rows)} セッション（うち待ち {n_wait}）\n")
@@ -448,10 +482,10 @@ def render(rows, skipped=0, pinned_rows=None, suggest_rows=None):
     if skipped:
         print(f"\n※ 非表示: 会話実体のない空セッション {skipped}件"
               "（Cursor復元時の重複起動プロセス）")
-    _render_dormant(pinned_rows or [], suggest_rows or [])
+    _render_dormant(pinned_rows or [], suggest_unnum or [], suggest_num or [])
 
 
-def _render_dormant(pinned_rows, suggest_rows):
+def _render_dormant(pinned_rows, suggest_unnum, suggest_num):
     """休眠セッション（プロセス停止中）の再開予定／再開候補をターミナルに表示。"""
     def _line(r, with_note):
         note = f"  — {r['note']}" if (with_note and r["note"]) else ""
@@ -461,10 +495,14 @@ def _render_dormant(pinned_rows, suggest_rows):
         print("\n📌 再開予定（ピン済み・プロセス停止中）")
         for r in pinned_rows:
             print(_line(r, True))
-    if suggest_rows:
-        print("\n💤 再開候補（案件マップ済・直近更新・未ピン）"
-              "  ← 続けるなら: python live_board.py pin <sid>")
-        for r in suggest_rows:
+    if suggest_num:
+        print("\n💤 再開候補・番号付き（案件の最新Sのみ・未ピン）  ← ピン: pin <sid>")
+        for r in suggest_num:
+            print(_line(r, False))
+    if suggest_unnum:
+        print("\n💤 再開候補・番号なし単独（長め遡り・未ピン）"
+              "  ← もっと遡る: candidates [--days N]")
+        for r in suggest_unnum:
             print(_line(r, False))
 
 
@@ -475,7 +513,7 @@ STATE_COLORS = {
 }
 
 
-def _dormant_html(pinned_rows, suggest_rows):
+def _dormant_html(pinned_rows, suggest_unnum, suggest_num):
     """休眠セッションの再開予定／再開候補を HTML セクションとして返す。"""
     esc = html_mod.escape
 
@@ -496,15 +534,21 @@ def _dormant_html(pinned_rows, suggest_rows):
         sections.append(
             '<h2>📌 再開予定 <span class="sub">（ピン済み・プロセス停止中）</span></h2>'
             f'<table class="dormant">{_rows_html(pinned_rows, True)}</table>')
-    if suggest_rows:
+    if suggest_num:
         sections.append(
-            '<h2>💤 再開候補 <span class="sub">（案件マップ済・直近更新・未ピン）'
-            '　続けるなら <code>python live_board.py pin &lt;sid&gt;</code></span></h2>'
-            f'<table class="dormant">{_rows_html(suggest_rows, False)}</table>')
+            '<h2>💤 再開候補・番号付き <span class="sub">（案件の最新Sのみ・未ピン）'
+            '　ピン <code>live_board.py pin &lt;sid&gt;</code></span></h2>'
+            f'<table class="dormant">{_rows_html(suggest_num, False)}</table>')
+    if suggest_unnum:
+        sections.append(
+            '<h2>💤 再開候補・番号なし単独 <span class="sub">（長め遡り・未ピン）'
+            '　もっと遡る <code>live_board.py candidates --days N</code></span></h2>'
+            f'<table class="dormant">{_rows_html(suggest_unnum, False)}</table>')
     return "".join(sections)
 
 
-def render_html(rows, refresh_sec, skipped=0, pinned_rows=None, suggest_rows=None):
+def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
+                suggest_unnum=None, suggest_num=None):
     esc = html_mod.escape
     now = datetime.now().strftime("%H:%M:%S")
     n_wait = sum(1 for r in rows if r["state"].startswith("waiting"))
@@ -523,7 +567,7 @@ def render_html(rows, refresh_sec, skipped=0, pinned_rows=None, suggest_rows=Non
             f'<td class="pj">{pin}{esc(r["project"])}</td><td>{esc(r["s_no"])}</td>'
             f'<td>{esc(r["updated"])}</td><td>{esc(r["ws"])}</td>'
             f'<td class="title">{esc(_trim(r["title"], 70))}</td></tr>')
-    dormant = _dormant_html(pinned_rows or [], suggest_rows or [])
+    dormant = _dormant_html(pinned_rows or [], suggest_unnum or [], suggest_num or [])
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -628,8 +672,63 @@ def _cmd_unpin(cfg, claude_dir, prefix):
     print(f"🗑 ピン解除: {sid[:12]}…")
 
 
+def _cmd_candidates(cfg, claude_dir, days):
+    """再開候補を『遡って確認』する一覧（ボードの抑制＝最新Sのみ/短lookback を外した全表示）。
+
+    案件マップ済・プロセス停止中・未ピンのセッションを days 日遡って更新順に全部出す。
+    番号なし単独が主眼だが、番号付きの旧番号もここでは隠さず出す（ボードは抑制・ここは全部見せ）。
+    """
+    mapper = ProjectMapper(cfg)
+    ws_labels = cfg.get("workspace_labels", {})
+    pins = _load_pins(cfg)
+    pin_sids = {p["sid"] for p in pins}
+    agents = _agents_json() or {}
+    live_sids = set(agents.keys())
+    now_epoch = datetime.now(timezone.utc).timestamp()
+    cutoff = now_epoch - days * 86400
+
+    rows = []
+    for s, jf, ws in _iter_session_files(claude_dir):
+        if s in live_sids or s in pin_sids:
+            continue
+        mtime = jf.stat().st_mtime
+        if mtime < cutoff:
+            continue
+        summary = _peek(jf, ws)
+        mapper.map_session(summary)
+        if not summary.get("project") or not summary.get("first_user_text"):
+            continue
+        rows.append(_dormant_row(s, summary, mtime, ws, ws_labels, ""))
+    rows.sort(key=lambda r: (1 if r["s_no"] else 0, -r["last_epoch"]))
+
+    n_unnum = sum(1 for r in rows if not r["s_no"])
+    print(f"💤 再開候補（直近{days}日・案件マップ済・停止中・未ピン）"
+          f" {len(rows)}件（番号なし {n_unnum} / 番号付き {len(rows) - n_unnum}）")
+    print("  ← ピン留め: python live_board.py pin <sid接頭辞> [メモ]\n")
+    if not rows:
+        print("（該当なし）")
+        return
+    print("  " + _pad("sid", 9) + _pad("案件", 22) + _pad("S", 5)
+          + _pad("最終更新", 13) + "タイトル")
+    for r in rows:
+        print("  " + _pad(r["sid_short"], 9) + _pad(r["project"], 22) + _pad(r["s_no"], 5)
+              + _pad("最終 " + r["last_age"], 13) + _trim(r["title"], 46))
+
+
 def main():
     args = sys.argv[1:]
+
+    # 再開候補を遡って一覧（番号なし含む全表示・ボードの抑制を外す）
+    if args and args[0] == "candidates":
+        cfg = load_config(REPO_ROOT)
+        claude_dir = Path(cfg.get("claude_dir", "~/.claude")).expanduser()
+        days = cfg.get("dormant_lookback_days_unnumbered", 30)
+        if "--days" in args:
+            i = args.index("--days")
+            if len(args) > i + 1 and args[i + 1].isdigit():
+                days = int(args[i + 1])
+        _cmd_candidates(cfg, claude_dir, days)
+        return
 
     # 休眠セッションのピン操作 CLI（B案の芯＝人の意図を config.local に保存する）
     if args and args[0] in ("pin", "unpin", "pins"):
@@ -661,17 +760,18 @@ def main():
             print(f"既存の監視プロセス {n}件を停止（多重起動の掃除）")
     out_path = REPO_ROOT / "reports" / "live_board.html"
     while True:
-        rows, skipped, pinned_rows, suggest_rows = build_rows()
+        rows, skipped, pinned_rows, suggest_unnum, suggest_num = build_rows()
         if html_mode:
             out_path.parent.mkdir(exist_ok=True)
             out_path.write_text(
-                render_html(rows, watch or 10, skipped, pinned_rows, suggest_rows),
+                render_html(rows, watch or 10, skipped, pinned_rows,
+                            suggest_unnum, suggest_num),
                 encoding="utf-8")
             print(f"{datetime.now().strftime('%H:%M:%S')} updated -> {out_path}")
         else:
             if watch:
                 os.system("cls" if os.name == "nt" else "clear")
-            render(rows, skipped, pinned_rows, suggest_rows)
+            render(rows, skipped, pinned_rows, suggest_unnum, suggest_num)
         if not watch:
             break
         time.sleep(watch)
