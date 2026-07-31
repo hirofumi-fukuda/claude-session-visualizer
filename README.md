@@ -14,6 +14,10 @@
 - **`claude_dashboard.bat`** … 案件×セッション地図の静的ダッシュボードを再生成→ブラウザ表示（見たいときにダブルクリック・数秒）
 - **`live_board.bat`** … 並行セッションのライブボード（ブラウザ10秒自動更新・停止=最小化窓を閉じる）
 - CLI: `python l0_report.py`（Markdown棚卸し・未分類の本文スニペット付き）／`python claude_dashboard_gen.py`／`python live_board.py [--watch N] [--html]`
+- **休眠セッション管理**（タブを閉じたが後で `--resume` して続けたいセッション）: ライブボード下部に **📌再開予定**（ピン済み・停止中）と **💤再開候補**（案件マップ済・直近更新・未ピンを自動提示）が出る。ピン操作は
+  - `python live_board.py pin <sid接頭辞> [メモ]` … 再開候補などからピン留め（意図の明示。sid接頭辞は8文字程度でOK）
+  - `python live_board.py unpin <sid接頭辞>` ／ `python live_board.py pins`（一覧）
+  - ピンは `config.local.json` の `pinned_sessions[]` に保存。sid は `--resume` 跨ぎで安定（同一 jsonl に同一 sid で追記される）ので迷子にならない。「休眠 vs クローズ」はデータ上区別不能（どちらもプロセス死）＝区別は人の意図＝ピンが真実、候補は自動提示の補助網
 
 ## ロードマップ
 
