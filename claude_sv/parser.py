@@ -30,10 +30,10 @@ def _iter_text_items(content):
                 yield item.get("text", "")
 
 
-def _to_local_date(ts_iso: str) -> str | None:
+def _to_local_dt(ts_iso: str):
+    """ISO文字列 → ローカル時刻の datetime（不正なら None）。日別・時間帯別の集計に使う。"""
     try:
-        dt = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
-        return dt.astimezone().strftime("%Y-%m-%d")
+        return datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).astimezone()
     except ValueError:
         return None
 
@@ -58,6 +58,8 @@ def parse_session(path: Path) -> dict:
         "cwd": None,
         "version": None,
         "days_active": {},  # "YYYY-MM-DD" -> assistantメッセージ数
+        "days_tokens": {},  # "YYYY-MM-DD" -> 出力トークン（日別推移グラフ用）
+        "hours_active": {},  # "曜日-時" (0=月〜6=日) -> assistantメッセージ数（稼働リズム用）
         "parse_errors": 0,
     }
     with open(path, encoding="utf-8", errors="replace") as f:
@@ -103,14 +105,18 @@ def parse_session(path: Path) -> dict:
                 if rec.get("isSidechain"):
                     continue
                 summary["n_assistant"] += 1
-                if isinstance(ts, str):
-                    day = _to_local_date(ts)
-                    if day:
-                        summary["days_active"][day] = summary["days_active"].get(day, 0) + 1
                 msg = rec.get("message") or {}
                 usage = msg.get("usage") or {}
-                summary["output_tokens"] += usage.get("output_tokens") or 0
+                out_tok = usage.get("output_tokens") or 0
+                summary["output_tokens"] += out_tok
                 summary["input_tokens"] += usage.get("input_tokens") or 0
+                dt = _to_local_dt(ts) if isinstance(ts, str) else None
+                if dt:
+                    day = dt.strftime("%Y-%m-%d")
+                    summary["days_active"][day] = summary["days_active"].get(day, 0) + 1
+                    summary["days_tokens"][day] = summary["days_tokens"].get(day, 0) + out_tok
+                    slot = f"{dt.weekday()}-{dt.hour}"
+                    summary["hours_active"][slot] = summary["hours_active"].get(slot, 0) + 1
                 content = msg.get("content")
                 if isinstance(content, list):
                     summary["n_tool_use"] += sum(
