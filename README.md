@@ -16,6 +16,7 @@
 - **`claude_dashboard.bat`** … 案件×セッション地図の静的ダッシュボードを再生成→ブラウザ表示（見たいときにダブルクリック・数秒）
 - **`live_board.bat`** … 並行セッションのライブボード（ブラウザ10秒自動更新・停止=最小化窓を閉じる）
 - **`counter.bat` / `python counter.py [案件名]`** … エージェントカウンター（台帳の近況・依頼票📨・回覧板の窓口。案件名を渡すとその案件宛ての未消化📨だけ返す）
+- **`backup_config.bat` / `python backup_config.py`** … `config.local.json`（gitignore対象＝案件マッピング/ピン情報/副業ラベルの正本）を `~/.claude/backups/agent-ops/` へ世代バックアップ（既定10世代・内容差分でスキップ・JSON検証付き）。復元=`python backup_config.py --restore latest`／一覧=`--list`。会社OneDriveは副業ラベルを含むため使わない（個人ルール）
 - CLI: `python l0_report.py`（Markdown棚卸し・未分類の本文スニペット付き）／`python claude_dashboard_gen.py`／`python live_board.py [--watch N] [--html]`／`python session_no.py "<案件名>"`（次のS番号を即答）
 - **休眠セッション管理**（タブを閉じたが後で `--resume` して続けたいセッション）: ライブボード下部に **📌再開予定**（ピン済み・停止中）と **💤再開候補**（自動提示）が出る。候補は2グループ:
   - **番号付き** … 案件の**最新Sのみ**（同案件に新しいS／稼働中Sがあれば旧番号は自動除外。短めの遡り＝`dormant_lookback_days`）
@@ -24,6 +25,15 @@
   - もっと遡って確認: `python live_board.py candidates [--days N]` … 案件マップ済・停止中・未ピンを番号なし含め遡って全一覧（ボードの抑制＝最新Sのみ/短遡り を外した全表示）
   - ピンは `config.local.json` の `pinned_sessions[]` に保存。sid は `--resume` 跨ぎで安定（同一 jsonl に同一 sid で追記される）ので迷子にならない。「休眠 vs クローズ」はデータ上区別不能（どちらもプロセス死）＝区別は人の意図＝ピンが真実、候補は自動提示の補助網
   - ⚠️ ライブボードは**常駐watcherが起動時のコードをメモリ保持**するため、コード変更後は watcher を再起動しないと反映されない（`--watch` 起動時のみ多重watcher掃除が走る）
+
+## 定期自動メンテ（S9・タスクスケジューラ）
+
+- `daily_maintenance.py` … 無人実行のオーケストレータ。①ダッシュボード再生成 ②`config.local.json` 世代バックアップ ③`reports/maintenance.log` に成否ログ。ブラウザは開かない・1ステップ落ちても続行・全成否を終了コードに反映。
+- Windows タスク `AgentOps-DailyMaintenance` … **平日 8:30** に `pythonw.exe daily_maintenance.py` を無ウィンドウ実行（`StartWhenAvailable`＝PC停止/スリープで見逃した日は起動後に遅延実行）。
+  - 状態確認: `Get-ScheduledTaskInfo -TaskName AgentOps-DailyMaintenance`（`LastTaskResult` 0=成功）
+  - 手動実行: `Start-ScheduledTask -TaskName AgentOps-DailyMaintenance` または `python daily_maintenance.py`
+  - 解除: `Unregister-ScheduledTask -TaskName AgentOps-DailyMaintenance -Confirm:$false`
+  - 再登録スクリプトは `SETUP.md` 参照（環境依存＝pythonw のパスを各自の環境に合わせる）。
 
 ## ロードマップ
 
@@ -56,4 +66,4 @@
 ## 台帳・プロジェクト管理
 
 - 現在地・セッション履歴: [docs/00-現在地.md](docs/00-現在地.md)
-- 起動合言葉: 「セッション見える化 S〈n〉 開始」
+- 起動合言葉: 「エージェント運用基盤 S〈n〉 開始」（旧「セッション見える化」・S8で改名・番号引き継ぎ）

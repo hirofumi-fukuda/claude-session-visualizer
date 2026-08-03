@@ -112,6 +112,24 @@ python live_board.py candidates [--days N]      :: 再開候補を遡って全�
 - 素のターミナルCLIなら §6-1,4 のCursor固有問題は無い（が §6-2,3 の多重watcher/再起動は共通）。
 - **Mac/Linux**: `_kill_stale_watchers` は Windows専用（`os.name != "nt"` で no-op になる）。トースト通知も powershell 依存なので発火しない（状態JSON書き込み自体は動く）。パス区切りは pathlib で吸収されるが、`.bat` は使えないので `python live_board.py --html --watch 10` を直接叩く。必要なら移植をユーザーに提案する。
 
+## 6.5 定期自動メンテのタスク登録（S9・任意）
+
+`daily_maintenance.py`（ダッシュボード再生成＋config世代バックアップ＋ログ）を平日朝に無人実行する Windows タスク。`pythonw.exe` のパスは各環境に合わせて差し替える（`(Get-Command python).Source` の隣の `pythonw.exe`）。
+
+```powershell
+$repo = "C:\source\git-h.fukuda1207\claude-session-visualizer"   # 自環境のリポパス
+$pyw  = Join-Path (Split-Path (Get-Command python).Source) "pythonw.exe"
+$action  = New-ScheduledTaskAction -Execute $pyw -Argument "daily_maintenance.py" -WorkingDirectory $repo
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 8:30am
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -MultipleInstances IgnoreNew
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName "AgentOps-DailyMaintenance" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force
+```
+
+- `StartWhenAvailable` … PC停止/スリープで見逃した日は起動後に遅延実行。
+- `LogonType Interactive` … ユーザープロファイル（`~/.claude`）へのアクセスが要るのでログオン時実行。
+- 解除: `Unregister-ScheduledTask -TaskName AgentOps-DailyMaintenance -Confirm:$false`
+
 ## 7. この配布物に含まれないもの（意図的除外）
 
 - `config.local.json`（元PCの個人設定・案件マッピング＝機密）→ この環境用に §3 で新規作成する。
