@@ -1,4 +1,4 @@
-"""L1 静的ダッシュボード: 案件×セッション地図・日別稼働・トークンを HTML 1枚に生成する。
+"""L1 静的ダッシュボード: 案件×セッション地図・稼働リズム・トークンを HTML 1枚に生成する。
 
 使い方:  python claude_dashboard_gen.py
 出力:    reports/claude_dashboard.html      … ブラウザで開く1枚もの（gitignore対象・ローカルのみ）
@@ -6,6 +6,13 @@
 
 生成物にトランスクリプト本文（発話・応答テキスト）は含めない（docs/01-設計方針.md）。
 未分類セッションの識別は ai-title のみ。本文スニペットが必要なら l0_report.py を使う。
+
+デザイン（S8 2026-08-01 全面刷新・ダーク既定＋ライト切替）:
+  - 外部リソース参照ゼロを維持（CDN禁止・SVGは自前生成）。色は全て CSS 変数＝テーマ切替が1箇所で効く
+  - 色は「識別」か「量」にだけ使う。statタイルの数字は必ずインク色（データ色を着せない）
+  - 量のスケールは単一色相の6段ランプ（seq-1..6）。ダーク時は暗→明、ライト時は明→暗＝
+    ゼロが常に地の色へ沈む向き。ダーク面での緑αは状態色（🟢作業中）と衝突するので使わない
+  - どのグラフも「表で見る」を併設（色だけに意味を載せない）
 """
 import html
 import io
@@ -15,15 +22,21 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.scan import scan_all
 
 REPO_ROOT = Path(__file__).parent
 HEATMAP_DAYS = 14
-HEATMAP_MAX_ROWS = 20
+HEATMAP_MAX_ROWS = 12
+TREND_DAYS = 30       # 日別推移グラフの表示日数
+SPARK_DAYS = 12       # ヒーロー数字に添えるスパークラインの点数
 RECENT_OPEN_DAYS = 7  # この日数以内に稼働した案件は地図を開いた状態で表示
 TOKEN_BAR_ROWS = 15
 UNCLASSIFIED = "（未分類）"
+WD_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
+SRC_LABELS = {"ai-title": "採番（AIタイトル）", "first-prompts": "採番（冒頭発話）",
+              "last-prompt": "採番（最終発話）", "title-hint": "キーワード", "workspace": "ワークスペース"}
 
 esc = html.escape
 
@@ -50,6 +63,18 @@ def _span(first_ts, last_ts):
     if a.date() == b.date():
         return f"{a.strftime('%m/%d %H:%M')}〜{b.strftime('%H:%M')}"
     return f"{a.strftime('%m/%d %H:%M')}〜{b.strftime('%m/%d %H:%M')}"
+
+
+def _k(n):
+    """トークン等の桁圧縮（1,234,567 → 1,235k）。"""
+    return f"{n / 1000:,.0f}k" if n >= 1000 else f"{n:,}"
+
+
+def _bin(v, peak, n=6, curve=0.5):
+    """量 → 1..n のランプ段。0 は 0（地の色）。偏りが強いので既定は sqrt スケール。"""
+    if not v or peak <= 0:
+        return 0
+    return max(1, min(n, int((v / peak) ** curve * n + 0.999)))
 
 
 # ---- データ集計（JSON 中間出力＝L3 統合用。テキスト本文は入れない） ----
@@ -112,6 +137,30 @@ def build_data(sessions, cfg):
                   "total": sum(act[p].values())} for p in act]
     heat_rows.sort(key=lambda r: -r["total"])
 
+    # 日別推移（直近 TREND_DAYS 日・出力トークンと応答数）
+    tdays = [(today - timedelta(days=i)).isoformat() for i in range(TREND_DAYS - 1, -1, -1)]
+    tok_by_day, msg_by_day = defaultdict(int), defaultdict(int)
+    for s in sessions:
+        for day, v in s.get("days_tokens", {}).items():
+            tok_by_day[day] += v
+        for day, v in s.get("days_active", {}).items():
+            msg_by_day[day] += v
+    daily = {"days": tdays,
+             "tokens": [tok_by_day[d] for d in tdays],
+             "assistant": [msg_by_day[d] for d in tdays]}
+    last7 = sum(tok_by_day[d] for d in tdays[-7:])
+    prev7 = sum(tok_by_day[d] for d in tdays[-14:-7])
+
+    # 稼働リズム（曜日×時間帯・全期間の assistant 応答数）
+    punch = [[0] * 24 for _ in range(7)]
+    for s in sessions:
+        for slot, n in s.get("hours_active", {}).items():
+            wd, _, hr = slot.partition("-")
+            try:
+                punch[int(wd)][int(hr)] += n
+            except (ValueError, IndexError):
+                continue
+
     # 案件別トークン（全期間累計）
     tok = defaultdict(lambda: {"output_tokens": 0, "n_sessions": 0})
     for s in sessions:
@@ -137,12 +186,19 @@ def build_data(sessions, cfg):
             "sessions": len(sessions),
             "size_mb": round(sum(s["size_bytes"] for s in sessions) / 1048576, 1),
             "output_tokens": sum(s["output_tokens"] for s in sessions),
+            "assistant": sum(s["n_assistant"] for s in sessions),
             "subagents": sum(s.get("n_subagents", 0) for s in sessions),
+            "tool_use": sum(s["n_tool_use"] for s in sessions),
+            "user_prompts": sum(s["n_user_prompts"] for s in sessions),
             "matched": len(matched),
             "unmatched": len(unmatched),
             "projects": len(by_project),
             "match_sources": dict(src_counts),
+            "last_ts": max((s["last_ts"] or "" for s in sessions), default=""),
         },
+        "pace": {"last7": last7, "prev7": prev7},
+        "daily": daily,
+        "punch": punch,
         "heatmap": {"days": days, "rows": heat_rows},
         "projects": projects,
         "tokens_by_project": token_rows,
@@ -150,56 +206,370 @@ def build_data(sessions, cfg):
     }
 
 
-# ---- HTML 生成（dashboard_gen.py と同型・自己完結1枚・外部ライブラリなし） ----
+# ---- HTML（自己完結1枚・外部リソース参照ゼロ・色は全て CSS 変数） ----
 
-def _stat(n, label, color="#1c2833"):
-    return (f'<div class="stat"><div class="n" style="color:{color}">{n}</div>'
-            f'<div class="l">{esc(label)}</div></div>')
+CSS = """
+*{box-sizing:border-box}
+:root{
+  color-scheme:dark;
+  --plane:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10); --wash:rgba(255,255,255,.055);
+  --cat-1:#3987e5; --cat-2:#d95926; --cat-3:#199e70;
+  --seq-0:#232321; --seq-1:#0d366b; --seq-2:#184f95; --seq-3:#256abf;
+  --seq-4:#3987e5; --seq-5:#6da7ec; --seq-6:#cde2fb;
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --plane:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10); --wash:rgba(11,11,11,.045);
+  --cat-1:#2a78d6; --cat-2:#eb6834; --cat-3:#1baf7a;
+  --seq-0:#f0efec; --seq-1:#cde2fb; --seq-2:#9ec5f4; --seq-3:#6da7ec;
+  --seq-4:#3987e5; --seq-5:#256abf; --seq-6:#184f95;
+}
+body{margin:0;padding:26px 22px 56px;background:var(--plane);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI","Yu Gothic UI",Meiryo,sans-serif;
+  font-size:13px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto}
+a{color:var(--cat-1)}
+header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px}
+h1{font-size:17px;font-weight:600;margin:0;letter-spacing:.01em}
+h1 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--cat-1);
+  margin-right:9px;vertical-align:2px}
+.sub{color:var(--muted);font-size:11.5px;margin-top:3px}
+.tgl{background:none;border:1px solid var(--border);color:var(--ink2);border-radius:999px;
+  padding:5px 13px;font-size:11.5px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.tgl:hover{background:var(--wash);color:var(--ink)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  padding:17px 19px 15px;margin:12px 0}
+.card h2{font-size:12.5px;font-weight:600;margin:0 0 2px;letter-spacing:.02em}
+.card .cap{color:var(--muted);font-size:11px;margin:0 0 14px}
+.note{color:var(--muted);font-size:11px;margin:9px 0 0}
+/* ── ヒーロー＋statタイル ───────────────────────────── */
+.hero-grid{display:grid;grid-template-columns:minmax(260px,1.5fr) repeat(4,minmax(110px,1fr));
+  gap:12px;margin:12px 0}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:15px 17px}
+.tile .l{color:var(--muted);font-size:11px;letter-spacing:.03em}
+.tile .v{font-size:26px;font-weight:600;line-height:1.2;margin-top:2px;color:var(--ink)}
+.tile.hero .v{font-size:48px;letter-spacing:-.02em;line-height:1.05;margin-top:4px}
+.tile .d{color:var(--ink2);font-size:11.5px;margin-top:4px}
+.tile .d b{font-weight:600;font-variant-numeric:tabular-nums}
+.spark{display:block;margin-top:8px;width:100%;height:34px;overflow:visible}
+/* ── SVG 共通 ─────────────────────────────────────── */
+svg{font-family:inherit}
+svg text{fill:var(--muted);font-size:10.5px}
+svg text.lbl{fill:var(--ink2);font-size:11px;font-weight:600}
+.gl{stroke:var(--grid);stroke-width:1}
+.ax{stroke:var(--axis);stroke-width:1}
+.ln{fill:none;stroke:var(--cat-1);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.ar{fill:var(--cat-1);fill-opacity:.10}
+.pt{fill:var(--cat-1);stroke:var(--surface);stroke-width:2}
+.hit{fill:transparent}
+.hit:hover{fill:var(--wash)}
+/* ── パンチカード／ヒートマップ ─────────────────────── */
+.punch{display:grid;grid-template-columns:26px repeat(24,1fr);gap:2px;align-items:center}
+.punch .h{font-size:9px;color:var(--muted);text-align:center;line-height:1.1}
+.punch .r{font-size:10.5px;color:var(--ink2);text-align:right;padding-right:4px}
+.punch .c{height:16px;border-radius:3px}
+.heat{display:grid;gap:2px;align-items:center}
+.heat .h{font-size:9.5px;color:var(--muted);text-align:center}
+.heat .h.wk{color:var(--ink2)}
+.heat .p{font-size:11.5px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;padding-right:6px}
+.heat .c{height:19px;border-radius:3px}
+.heat .t{font-size:10.5px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+/* ランプ段は単独クラス（.punch .c 等より詳細度を下げない＝base側に background を持たせない） */
+.s0{background:var(--seq-0)}.s1{background:var(--seq-1)}.s2{background:var(--seq-2)}
+.s3{background:var(--seq-3)}.s4{background:var(--seq-4)}.s5{background:var(--seq-5)}
+.s6{background:var(--seq-6)}
+.scale{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:10.5px;margin-top:11px}
+.scale i{width:20px;height:10px;border-radius:2px;display:inline-block}
+/* ── 横バー ───────────────────────────────────────── */
+.bar{display:grid;grid-template-columns:minmax(90px,168px) 1fr 124px;gap:12px;
+  align-items:center;margin:7px 0}
+.bar .n{font-size:12px;color:var(--ink2);text-align:right;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.bar .t{height:14px;background:var(--wash);border-radius:3px;overflow:hidden}
+.bar .f{height:14px;background:var(--cat-1);border-radius:0 4px 4px 0;min-width:2px}
+.bar .v{font-size:11.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.bar .v s{color:var(--muted);text-decoration:none;font-size:10.5px}
+/* ── 積み上げ（マッチ根拠） ────────────────────────── */
+.stack{display:flex;gap:2px;height:22px;margin:2px 0 12px}
+.stack>i{display:block;border-radius:2px}
+.stack>i:first-child{border-radius:4px 2px 2px 4px}
+.stack>i:last-child{border-radius:2px 4px 4px 2px}
+.k1{background:var(--cat-1)}.k2{background:var(--cat-2)}.k3{background:var(--cat-3)}
+.lg{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:11.5px;color:var(--ink2)}
+.lg span{display:flex;align-items:center;gap:6px}
+.lg i{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.lg b{font-weight:600;font-variant-numeric:tabular-nums}
+/* ── 案件×セッション地図 ──────────────────────────── */
+details.proj{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  padding:11px 19px;margin:8px 0}
+details.proj summary{cursor:pointer;font-size:13px;font-weight:600;list-style:none;
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+details.proj summary::-webkit-details-marker{display:none}
+details.proj summary::before{content:"▸";color:var(--muted);font-weight:400;margin-right:2px}
+details.proj[open] summary::before{content:"▾"}
+details.proj summary .meta{color:var(--muted);font-size:11px;font-weight:400}
+details.proj summary .pill{font-size:10.5px;font-weight:600;color:var(--ink2);
+  background:var(--wash);border-radius:999px;padding:1px 9px}
+/* 台帳ページ（エージェントカウンター）へ。生成済みの案件だけ出る */
+details.proj summary .lgl{text-decoration:none;font-size:11px;opacity:.5;margin-left:-4px}
+details.proj summary .lgl:hover{opacity:1}
+table{border-collapse:collapse;font-size:12px;width:100%;margin:10px 0 4px}
+th{text-align:left;color:var(--muted);font-weight:400;font-size:10.5px;letter-spacing:.03em;
+  padding:3px 12px 5px 0;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:5px 12px 5px 0;border-bottom:1px solid var(--grid);font-variant-numeric:tabular-nums}
+td.txt{font-variant-numeric:normal}
+tr:last-child td{border-bottom:none}
+.xf{color:var(--cat-2);font-size:10.5px}
+.tv{margin-top:12px;border-top:1px solid var(--border);padding-top:8px}
+.tv summary{cursor:pointer;color:var(--muted);font-size:11px;list-style:none}
+.tv summary::-webkit-details-marker{display:none}
+.tv summary::before{content:"⊞ ";color:var(--muted)}
+.tv[open] summary::before{content:"⊟ "}
+.tv .sc{max-height:280px;overflow:auto}
+h2.sec{font-size:13px;font-weight:600;margin:26px 0 2px}
+footer{margin-top:26px;color:var(--muted);font-size:11px;line-height:1.8}
+code{background:var(--wash);border-radius:4px;padding:1px 5px;font-size:11px}
+#tip{position:fixed;z-index:9;pointer-events:none;opacity:0;transition:opacity .1s;
+  background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:8px;
+  padding:6px 10px;font-size:11.5px;white-space:nowrap;
+  box-shadow:0 6px 22px rgba(0,0,0,.35)}
+@media (max-width:820px){
+  .hero-grid{grid-template-columns:repeat(2,1fr)}
+  .bar{grid-template-columns:minmax(70px,110px) 1fr 96px}
+}
+"""
+
+JS = """
+(function(){
+  var root=document.documentElement, btn=document.getElementById('tgl');
+  try{var s=localStorage.getItem('csv-theme'); if(s) root.dataset.theme=s;}catch(e){}
+  function lab(){btn.textContent = root.dataset.theme==='light' ? '☾ ダーク' : '☀ ライト';}
+  lab();
+  btn.onclick=function(){
+    root.dataset.theme = root.dataset.theme==='light' ? 'dark' : 'light';
+    try{localStorage.setItem('csv-theme', root.dataset.theme);}catch(e){}
+    lab();
+  };
+  var tip=document.getElementById('tip');
+  document.addEventListener('mouseover',function(e){
+    var t=e.target.closest('[data-tip]'); if(!t) return;
+    tip.textContent=t.getAttribute('data-tip'); tip.style.opacity='1';
+  });
+  document.addEventListener('mousemove',function(e){
+    if(tip.style.opacity!=='1') return;
+    var x=e.clientX+14, y=e.clientY+16, w=tip.offsetWidth, h=tip.offsetHeight;
+    if(x+w>innerWidth-8) x=e.clientX-w-14;
+    if(y+h>innerHeight-8) y=e.clientY-h-14;
+    tip.style.left=x+'px'; tip.style.top=y+'px';
+  });
+  document.addEventListener('mouseout',function(e){
+    if(e.target.closest('[data-tip]')) tip.style.opacity='0';
+  });
+})();
+"""
 
 
-def _heatmap_html(heat):
+def _tile(label, value, detail="", cls=""):
+    d = f'<div class="d">{detail}</div>' if detail else ""
+    return (f'<div class="tile {cls}"><div class="l">{esc(label)}</div>'
+            f'<div class="v">{value}</div>{d}</div>')
+
+
+def _spark(values):
+    """ヒーロー数字に添える12点スパークライン（軸なし・直近の1点だけ強調）。"""
+    if not values:
+        return ""
+    w, h, pad = 240.0, 34.0, 4.0
+    peak = max(values) or 1
+    n = len(values)
+    step = (w - pad * 2) / max(1, n - 1)
+    pts = [(pad + i * step, pad + (h - pad * 2) * (1 - v / peak)) for i, v in enumerate(values)]
+    line = "M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = f"{line} L{pts[-1][0]:.1f},{h - pad:.1f} L{pts[0][0]:.1f},{h - pad:.1f} Z"
+    lx, ly = pts[-1]
+    return (f'<svg class="spark" viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" '
+            f'aria-hidden="true"><path class="ar" d="{area}"/><path class="ln" d="{line}"/>'
+            f'<circle class="pt" cx="{lx:.1f}" cy="{ly:.1f}" r="3.2"/></svg>')
+
+
+def _trend_svg(daily):
+    """日別の出力トークン推移（面＋線・ホバーで日別の値）。"""
+    days, vals = daily["days"], daily["tokens"]
+    msgs = daily["assistant"]
+    n = len(days)
+    W, H, L, R, T, B = 1100.0, 230.0, 54.0, 16.0, 14.0, 26.0
+    pw, ph = W - L - R, H - T - B
+    base = T + ph
+    peak = max(vals) or 1
+    # y軸上限は切りのいい値へ。ピークの15%上まで取る＝最大値の直接ラベルが軸ラベルと衝突しない
+    want = peak * 1.15
+    unit = next((u for u in (500, 1000, 2000, 5000, 10000, 20000, 50000,
+                             100000, 200000, 500000, 1000000) if want / u <= 6), 2000000)
+    top = -(-want // unit) * unit
+    step = pw / max(1, n - 1)
+
+    def x(i):
+        return L + i * step
+
+    def y(v):
+        return T + ph * (1 - v / top)
+
+    grid, ylab = [], []
+    for f in (0, 0.5, 1):
+        gy = T + ph * (1 - f)
+        cls = "ax" if f == 0 else "gl"
+        grid.append(f'<line class="{cls}" x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}"/>')
+        ylab.append(f'<text x="{L - 8}" y="{gy + 3.5:.1f}" text-anchor="end">{_k(int(top * f))}</text>')
+    pts = [(x(i), y(v)) for i, v in enumerate(vals)]
+    line = "M" + " L".join(f"{px:.1f},{py:.1f}" for px, py in pts)
+    area = f"{line} L{pts[-1][0]:.1f},{base:.1f} L{pts[0][0]:.1f},{base:.1f} Z"
+
+    xlab = []
+    for i, d in enumerate(days):
+        if i % 5 == 0 or i == n - 1:
+            xlab.append(f'<text x="{x(i):.1f}" y="{H - 8:.1f}" text-anchor="middle">'
+                        f'{int(d[5:7])}/{int(d[8:10])}</text>')
+    hits = []
+    for i, d in enumerate(days):
+        wd = WD_LABELS[date.fromisoformat(d).weekday()]
+        tip = f'{d[5:].replace("-", "/")}（{wd}） 出力 {_k(vals[i])} ／ 応答 {msgs[i]}'
+        hits.append(f'<rect class="hit" x="{x(i) - step / 2:.1f}" y="{T}" width="{step:.1f}" '
+                    f'height="{ph:.1f}" data-tip="{esc(tip)}"/>')
+    # 直接ラベルは「最大の日」と「最終日」だけ（全点に数字は置かない）
+    marks = []
+    if max(vals) > 0:
+        imax = vals.index(max(vals))
+        anchor = "end" if imax > n * 0.9 else "start" if imax < n * 0.1 else "middle"
+        marks += [f'<circle class="pt" cx="{x(imax):.1f}" cy="{y(vals[imax]):.1f}" r="4"/>',
+                  f'<text class="lbl" x="{x(imax):.1f}" y="{y(vals[imax]) - 10:.1f}" '
+                  f'text-anchor="{anchor}">{_k(vals[imax])}</text>']
+        if imax != n - 1:
+            marks.append(f'<circle class="pt" cx="{x(n - 1):.1f}" cy="{y(vals[-1]):.1f}" r="4"/>')
+    return (f'<svg viewBox="0 0 {W:.0f} {H:.0f}" style="width:100%;height:auto" '
+            f'role="img" aria-label="日別の出力トークン推移">'
+            f'{"".join(grid)}<path class="ar" d="{area}"/><path class="ln" d="{line}"/>'
+            f'{"".join(marks)}{"".join(ylab)}{"".join(xlab)}{"".join(hits)}</svg>')
+
+
+def _punch_html(punch):
+    """曜日×時間帯の稼働リズム（7×24・単一色相6段）。"""
+    peak = max((c for row in punch for c in row), default=0)
+    cells = ['<div class="h"></div>']
+    for h in range(24):
+        cells.append(f'<div class="h">{h if h % 3 == 0 else ""}</div>')
+    for wd in range(7):
+        cells.append(f'<div class="r">{WD_LABELS[wd]}</div>')
+        for h in range(24):
+            v = punch[wd][h]
+            b = _bin(v, peak)
+            tip = f"{WD_LABELS[wd]}曜 {h:02d}時台 ／ 応答 {v:,}"
+            cells.append(f'<div class="c s{b}" data-tip="{esc(tip)}"></div>')
+    scale = ('<div class="scale">少<i class="s1"></i><i class="s2"></i><i class="s3"></i>'
+             '<i class="s4"></i><i class="s5"></i><i class="s6"></i>多'
+             f'<span style="margin-left:8px">最大 {peak:,}／時</span></div>')
+    # 表ビュー: 曜日ごとの合計と最も濃い時間帯
+    rows = []
+    for wd in range(7):
+        tot = sum(punch[wd])
+        top_h = max(range(24), key=lambda h: punch[wd][h]) if tot else 0
+        rows.append(f'<tr><td class="txt">{WD_LABELS[wd]}</td><td>{tot:,}</td>'
+                    f'<td>{top_h:02d}時台（{punch[wd][top_h]:,}）</td></tr>')
+    table = ('<details class="tv"><summary>数値で見る（曜日別）</summary>'
+             '<table><tr><th>曜日</th><th>応答</th><th>最も濃い時間帯</th></tr>'
+             f'{"".join(rows)}</table></details>')
+    return f'<div class="punch">{"".join(cells)}</div>{scale}{table}'
+
+
+def _heat_html(heat):
     days, rows = heat["days"], heat["rows"][:HEATMAP_MAX_ROWS]
-    peak = max((c for r in rows for c in r["counts"]), default=1) or 1
-    head = []
+    peak = max((c for r in rows for c in r["counts"]), default=0)
+    cols = f"minmax(90px,190px) repeat({len(days)},1fr) 42px"
+    cells = ['<div class="p"></div>']
     for d in days:
         wd = date.fromisoformat(d).weekday()
-        cls = ' class="wk"' if wd >= 5 else ""
-        head.append(f"<th{cls}>{int(d[5:7])}/{int(d[8:10])}</th>")
-    body = []
+        cls = "h wk" if wd >= 5 else "h"
+        cells.append(f'<div class="{cls}">{int(d[5:7])}/{int(d[8:10])}</div>')
+    cells.append('<div class="t">計</div>')
     for r in rows:
-        cells = []
+        cells.append(f'<div class="p" data-tip="{esc(r["project"])}">{esc(r["project"])}</div>')
         for d, c in zip(days, r["counts"]):
-            if c:
-                alpha = 0.12 + 0.88 * c / peak
-                cells.append(f'<td class="hm" style="background:rgba(39,174,96,{alpha:.2f})" '
-                             f'title="{esc(r["project"])} {d}: {c}">{c}</td>')
-            else:
-                cells.append('<td class="hm zero">·</td>')
-        body.append(f'<tr><th class="pn">{esc(r["project"])}</th>{"".join(cells)}'
-                    f'<td class="tot">{r["total"]}</td></tr>')
+            b = _bin(c, peak)
+            tip = f'{r["project"]} {d[5:].replace("-", "/")} ／ 応答 {c}'
+            cells.append(f'<div class="c s{b}" data-tip="{esc(tip)}"></div>')
+        cells.append(f'<div class="t">{r["total"]}</div>')
+    scale = ('<div class="scale">少<i class="s1"></i><i class="s2"></i><i class="s3"></i>'
+             '<i class="s4"></i><i class="s5"></i><i class="s6"></i>多'
+             f'<span style="margin-left:8px">最大 {peak:,}／日</span></div>')
     dropped = len(heat["rows"]) - len(rows)
-    note = (f'<p class="note">※ 表示は上位{HEATMAP_MAX_ROWS}案件（{dropped}案件省略）</p>'
-            if dropped > 0 else "")
-    return (f'<table class="heat"><tr><th></th>{"".join(head)}<td class="tot">計</td></tr>'
-            f'{"".join(body)}</table>{note}')
+    note = f'<p class="note">※ 上位{HEATMAP_MAX_ROWS}案件を表示（{dropped}案件省略）</p>' if dropped > 0 else ""
+    trows = "".join(f'<tr><td class="txt">{esc(r["project"])}</td><td>{r["total"]}</td>'
+                    f'<td>{max(r["counts"])}</td></tr>' for r in heat["rows"])
+    table = ('<details class="tv"><summary>数値で見る（案件別・14日計）</summary><div class="sc">'
+             '<table><tr><th>案件</th><th>応答計</th><th>最大/日</th></tr>'
+             f'{trows}</table></div></details>')
+    return (f'<div class="heat" style="grid-template-columns:{cols}">{"".join(cells)}</div>'
+            f'{scale}{note}{table}')
 
 
-def _token_bars_html(token_rows):
+def _bars_html(token_rows):
     rows = token_rows[:TOKEN_BAR_ROWS]
     peak = max((r["output_tokens"] for r in rows), default=1) or 1
+    total = sum(r["output_tokens"] for r in token_rows) or 1
     out = []
     for r in rows:
-        w = max(1.5, r["output_tokens"] / peak * 100)
+        w = max(0.4, r["output_tokens"] / peak * 100)
+        share = r["output_tokens"] / total * 100
+        tip = (f'{r["project"]} ／ 出力 {r["output_tokens"]:,} tok ／ 全体の {share:.1f}% ／ '
+               f'{r["n_sessions"]}セッション')
         out.append(
-            f'<div class="bar-row"><div class="bar-label">{esc(r["project"])}</div>'
-            f'<div class="bar-track"><div class="bar" style="width:{w:.1f}%"></div></div>'
-            f'<div class="bar-val">{r["output_tokens"] / 1000:,.0f}k'
-            f'<span class="bar-sub">／{r["n_sessions"]}本</span></div></div>')
+            f'<div class="bar" data-tip="{esc(tip)}"><div class="n">{esc(r["project"])}</div>'
+            f'<div class="t"><div class="f" style="width:{w:.1f}%"></div></div>'
+            f'<div class="v">{_k(r["output_tokens"])} <s>{share:.0f}%・{r["n_sessions"]}本</s></div></div>')
     dropped = len(token_rows) - len(rows)
     if dropped > 0:
         rest = sum(r["output_tokens"] for r in token_rows[TOKEN_BAR_ROWS:])
-        out.append(f'<p class="note">※ ほか{dropped}案件・計 {rest / 1000:,.0f}k</p>')
+        out.append(f'<p class="note">※ ほか{dropped}案件・計 {_k(rest)}</p>')
     return "".join(out)
+
+
+def _sources_html(src_counts, matched, unmatched):
+    """マッチ根拠の内訳。「採番100%」の中身（採番/キーワード/WS落ち）を正直に出す。"""
+    kick = sum(v for k, v in src_counts.items() if k in ("ai-title", "first-prompts", "last-prompt"))
+    hint = src_counts.get("title-hint", 0)
+    ws = src_counts.get("workspace", 0)
+    total = matched + unmatched or 1
+    seg = [("k1", "採番合言葉", kick), ("k2", "キーワード", hint), ("k3", "ワークスペース", ws)]
+    if unmatched:
+        seg.append(("", "未分類", unmatched))
+    bars = "".join(
+        f'<i class="{c}" style="width:{n / total * 100:.2f}%;{"background:var(--wash)" if not c else ""}" '
+        f'data-tip="{esc(f"{lab}: {n}本（{n / total * 100:.0f}%）")}"></i>'
+        for c, lab, n in seg if n)
+    lg = "".join(
+        f'<span><i class="{c}" style="{"background:var(--wash)" if not c else ""}"></i>'
+        f'{esc(lab)} <b>{n}</b>本</span>' for c, lab, n in seg)
+    trows = "".join(f'<tr><td class="txt">{esc(lab)}</td><td>{n}</td>'
+                    f'<td>{n / total * 100:.1f}%</td></tr>' for _, lab, n in seg)
+    return (f'<div class="stack">{bars}</div><div class="lg">{lg}</div>'
+            f'<p class="note">「採番合言葉」で始めたセッションだけが地図に S番号付きで並ぶ。'
+            f'ワークスペース落ちは案件が1つに潰れている＝地図の解像度が上がる余地。</p>'
+            '<details class="tv"><summary>数値で見る</summary>'
+            f'<table><tr><th>根拠</th><th>本数</th><th>比率</th></tr>{trows}</table></details>')
+
+
+def _ledger_link(project):
+    """案件名の隣に台帳ページ（counter_gen.py 生成）への 🎫 を添える。無ければ何も出さない。
+
+    summary 内なので stopPropagation を付ける（クリックで details が開閉しないように）。
+    """
+    name = f"{slug(project, 'p-')}.html" if project else ""
+    if not name or not (REPO_ROOT / "reports" / "counter" / name).is_file():
+        return ""
+    return (f'<a class="lgl" href="counter/{name}" title="台帳を見る"'
+            f' onclick="event.stopPropagation()">🎫</a>')
 
 
 def _projects_html(projects):
@@ -213,121 +583,121 @@ def _projects_html(projects):
             if b["n_files"] > 1:
                 sn += f' <span class="xf">×{b["n_files"]}f</span>'
             rows.append(
-                f"<tr><td>{sn}</td><td>{esc(_span(b['first_ts'], b['last_ts']))}</td>"
-                f"<td>{b['n_user_prompts']}</td><td>{b['n_assistant']}</td>"
-                f"<td>{b['n_tool_use']}</td><td>{b['n_subagents'] or '·'}</td>"
-                f"<td>{b['output_tokens'] / 1000:,.0f}</td>"
-                f"<td>{esc('、'.join(b['workspaces']))}</td></tr>")
-        out.append(f"""<details class="proj"{is_open}>
-<summary><b>{esc(p["name"])}</b><span class="meta">{p["n_bundles"]}セッション
-（{p["n_files"]}ファイル）・最終 {_fmt(p["last_ts"])}・出力 {p["output_tokens"] / 1000:,.0f}k</span></summary>
-<table class="sess"><tr><th>S</th><th>期間</th><th>発話</th><th>応答</th><th>ツール</th>
-<th>sub-ag</th><th>出力tok(k)</th><th>WS</th></tr>{"".join(rows)}</table>
-</details>""")
+                f'<tr><td>{sn}</td><td class="txt">{esc(_span(b["first_ts"], b["last_ts"]))}</td>'
+                f'<td>{b["n_user_prompts"]}</td><td>{b["n_assistant"]}</td>'
+                f'<td>{b["n_tool_use"]}</td><td>{b["n_subagents"] or "·"}</td>'
+                f'<td>{b["output_tokens"] / 1000:,.0f}</td>'
+                f'<td class="txt">{esc("、".join(b["workspaces"]))}</td></tr>')
+        out.append(
+            f'<details class="proj"{is_open}><summary><b>{esc(p["name"])}</b>'
+            f'{_ledger_link(p["name"])}'
+            f'<span class="pill">{p["n_bundles"]}セッション</span>'
+            f'<span class="meta">{p["n_files"]}ファイル・最終 {_fmt(p["last_ts"])}'
+            f'・出力 {_k(p["output_tokens"])}</span></summary>'
+            '<table><tr><th>S</th><th>期間</th><th>発話</th><th>応答</th><th>ツール</th>'
+            f'<th>sub-ag</th><th>出力tok(k)</th><th>WS</th></tr>{"".join(rows)}</table></details>')
     return "".join(out)
 
 
 def _unmatched_html(unmatched):
-    rows = []
-    for u in unmatched:
-        title = u["ai_title"] or "（無題）"
-        rows.append(f"<tr><td>{_fmt(u['last_ts'])}</td><td>{esc(title)}</td>"
-                    f"<td>{u['n_user_prompts']}</td><td>{u['size_kb']:,}</td>"
-                    f"<td>{esc(u['workspace'])}</td></tr>")
-    return f"""<details class="proj">
-<summary><b>❓ 未分類セッション</b><span class="meta">{len(unmatched)}本
-（識別は ai-title のみ・本文スニペットは l0_report.py で）</span></summary>
-<table class="sess"><tr><th>最終稼働</th><th>タイトル</th><th>発話</th><th>KB</th><th>WS</th></tr>
-{"".join(rows)}</table>
-</details>"""
+    if not unmatched:
+        return ""
+    rows = "".join(
+        f'<tr><td class="txt">{_fmt(u["last_ts"])}</td>'
+        f'<td class="txt">{esc(u["ai_title"] or "（無題）")}</td>'
+        f'<td>{u["n_user_prompts"]}</td><td>{u["size_kb"]:,}</td>'
+        f'<td class="txt">{esc(u["workspace"])}</td></tr>' for u in unmatched)
+    return (f'<details class="proj"><summary><b>❓ 未分類セッション</b>'
+            f'<span class="pill">{len(unmatched)}本</span>'
+            '<span class="meta">識別は ai-title のみ・本文スニペットは l0_report.py で</span></summary>'
+            '<table><tr><th>最終稼働</th><th>タイトル</th><th>発話</th><th>KB</th><th>WS</th></tr>'
+            f'{rows}</table></details>')
 
 
 def render_html(data):
     t = data["totals"]
-    match_pct = t["matched"] / t["sessions"] * 100 if t["sessions"] else 0
     gen = _fmt(data["generated_at"], "%Y-%m-%d %H:%M")
+    daily = data["daily"]
+    pace, prev = data["pace"]["last7"], data["pace"]["prev7"]
+    if prev:
+        pct = (pace - prev) / prev * 100
+        delta = f'直近7日 <b>{_k(pace)}</b>（前週比 {"+" if pct >= 0 else "−"}{abs(pct):.0f}%）'
+    else:
+        delta = f"直近7日 <b>{_k(pace)}</b>"
+    tools_per = t["tool_use"] / t["user_prompts"] if t["user_prompts"] else 0
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Claude セッションダッシュボード — {gen}</title>
-<style>
-  * {{ box-sizing: border-box; }}
-  body {{ font-family: -apple-system, "Segoe UI", "Yu Gothic", "Meiryo", sans-serif;
-         margin: 0; padding: 24px; background: #f4f6f8; color: #1c2833; }}
-  header {{ margin-bottom: 16px; }}
-  h1 {{ font-size: 20px; margin: 0 0 4px; }}
-  .meta-line {{ color: #888; font-size: 13px; }}
-  .summary {{ display: flex; gap: 16px; margin: 16px 0; flex-wrap: wrap; }}
-  .stat {{ background: #fff; border-radius: 8px; padding: 12px 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }}
-  .stat .n {{ font-size: 26px; font-weight: bold; }}
-  .stat .l {{ font-size: 12px; color: #888; }}
-  .card {{ background: #fff; border-radius: 8px; padding: 16px 18px; margin: 16px 0;
-           box-shadow: 0 1px 3px rgba(0,0,0,.08); }}
-  .card h2 {{ font-size: 15px; margin: 0 0 12px; }}
-  .note {{ color: #999; font-size: 12px; margin: 8px 0 0; }}
-  table.heat {{ border-collapse: collapse; font-size: 12px; }}
-  table.heat th {{ font-weight: normal; color: #666; padding: 3px 6px; text-align: center; }}
-  table.heat th.wk {{ color: #c0392b; }}
-  table.heat th.pn {{ text-align: left; max-width: 220px; overflow: hidden;
-                      text-overflow: ellipsis; white-space: nowrap; color: #1c2833; }}
-  table.heat td.hm {{ width: 34px; text-align: center; padding: 3px 0; border-radius: 3px; }}
-  table.heat td.zero {{ color: #ccc; }}
-  table.heat td.tot {{ padding: 3px 8px; color: #888; text-align: right; }}
-  .bar-row {{ display: flex; align-items: center; gap: 10px; margin: 4px 0; font-size: 13px; }}
-  .bar-label {{ width: 200px; text-align: right; overflow: hidden; text-overflow: ellipsis;
-                white-space: nowrap; flex-shrink: 0; }}
-  .bar-track {{ flex: 1; }}
-  .bar {{ height: 14px; background: #2980b9; border-radius: 3px; min-width: 2px; }}
-  .bar-val {{ width: 130px; flex-shrink: 0; color: #555; }}
-  .bar-sub {{ color: #aaa; font-size: 11px; }}
-  details.proj {{ background: #fff; border-radius: 8px; padding: 10px 18px; margin: 8px 0;
-                  box-shadow: 0 1px 3px rgba(0,0,0,.08); }}
-  details.proj summary {{ cursor: pointer; font-size: 14px; }}
-  details.proj summary .meta {{ color: #888; font-size: 12px; margin-left: 10px; }}
-  table.sess {{ border-collapse: collapse; font-size: 12.5px; margin: 10px 0 6px; }}
-  table.sess th {{ text-align: left; color: #666; font-weight: normal; padding: 3px 12px 3px 0;
-                   border-bottom: 1px solid #e3e8ec; }}
-  table.sess td {{ padding: 4px 12px 4px 0; border-bottom: 1px solid #f0f3f5; }}
-  .xf {{ color: #e67e22; font-size: 11px; }}
-  footer {{ margin-top: 24px; color: #aaa; font-size: 12px; }}
-</style>
+<title>エージェントマップ — {gen}</title>
+<style>{CSS}</style>
 </head>
 <body>
+<div class="wrap">
 <header>
-  <h1>📊 Claude セッションダッシュボード</h1>
-  <div class="meta-line">生成: {gen} ／ 対象: ~/.claude/projects（{t["size_mb"]:,.0f} MB）</div>
+  <div>
+    <h1><span class="dot"></span>エージェントマップ</h1>
+    <div class="sub">生成 {gen} ／ ~/.claude/projects（{t["size_mb"]:,.0f} MB・最終稼働 {_fmt(t["last_ts"])}）</div>
+  </div>
+  <button class="tgl" id="tgl" type="button">☀ ライト</button>
 </header>
 
-<div class="summary">
-  {_stat(t["sessions"], "セッション")}
-  {_stat(t["projects"], "案件", "#2980b9")}
-  {_stat(f"{match_pct:.0f}%", f"採番マッチ（{t['matched']}/{t['sessions']}）", "#27ae60")}
-  {_stat(t["unmatched"], "未分類", "#c0392b")}
-  {_stat(f"{t['output_tokens'] / 1000:,.0f}k", "出力トークン累計", "#8e44ad")}
-  {_stat(t["subagents"], "サブエージェント", "#16a085")}
+<div class="hero-grid">
+  <div class="tile hero">
+    <div class="l">出力トークン累計</div>
+    <div class="v">{_k(t["output_tokens"])}</div>
+    <div class="d">{delta}</div>
+    {_spark(daily["tokens"][-SPARK_DAYS:])}
+  </div>
+  {_tile("セッション", f'{t["sessions"]:,}', f'{t["projects"]} 案件')}
+  {_tile("発話", f'{t["user_prompts"]:,}', f'Claude の応答 {t["assistant"]:,}')}
+  {_tile("ツール呼び出し", f'{t["tool_use"]:,}', f'発話あたり {tools_per:.0f} 回')}
+  {_tile("サブエージェント", f'{t["subagents"]:,}', "delegate した回数")}
 </div>
 
 <div class="card">
-  <h2>🗓️ 日別稼働（直近{HEATMAP_DAYS}日 × 案件・assistant応答数）</h2>
-  {_heatmap_html(data["heatmap"])}
+  <h2>📈 日別の出力トークン（直近{TREND_DAYS}日）</h2>
+  <p class="cap">面＝出力トークン。ホバーでその日の応答数も出る</p>
+  {_trend_svg(daily)}
 </div>
 
 <div class="card">
-  <h2>🔢 案件別 出力トークン（全期間累計・上位{TOKEN_BAR_ROWS}）</h2>
-  {_token_bars_html(data["tokens_by_project"])}
+  <h2>🕐 稼働リズム（曜日 × 時間帯・全期間）</h2>
+  <p class="cap">セルの濃さ＝assistant応答数（√スケール）。自分がいつ Claude を回してるかの地図</p>
+  {_punch_html(data["punch"])}
 </div>
 
-<h2 style="font-size:16px;margin:20px 0 4px;">🗺️ 案件×セッション地図（最終稼働が新しい順・直近{RECENT_OPEN_DAYS}日稼働は展開表示）</h2>
+<div class="card">
+  <h2>🗓️ 案件 × 日（直近{HEATMAP_DAYS}日）</h2>
+  <p class="cap">どの案件がいつ動いたか。濃さ＝その日の応答数</p>
+  {_heat_html(data["heatmap"])}
+</div>
+
+<div class="card">
+  <h2>🔢 案件別 出力トークン（全期間累計）</h2>
+  <p class="cap">1本＝1案件。長さ＝トークン量、右は全体シェアとセッション本数</p>
+  {_bars_html(data["tokens_by_project"])}
+</div>
+
+<div class="card">
+  <h2>🎯 案件マッピングの根拠（{t["matched"]}/{t["sessions"]} 本）</h2>
+  <p class="cap">何を手がかりに案件へ紐付いたか＝この地図の信頼度そのもの</p>
+  {_sources_html(t["match_sources"], t["matched"], t["unmatched"])}
+</div>
+
+<h2 class="sec">🗺️ 案件 × セッション地図</h2>
+<p class="sub" style="margin:0 0 8px">最終稼働が新しい順・直近{RECENT_OPEN_DAYS}日に動いた案件は開いた状態</p>
 {_projects_html(data["projects"])}
 {_unmatched_html(data["unmatched"])}
 
 <footer>
-  抽出ソース内訳: {esc(str(t["match_sources"]))} ／
-  再生成: <code>python claude_dashboard_gen.py</code> ／
-  中間データ: <code>reports/claude_dashboard_data.json</code>（L3 業務ダッシュボード統合用）
+  再生成 <code>python claude_dashboard_gen.py</code> ／ 中間データ <code>reports/claude_dashboard_data.json</code>（L3統合用）<br>
+  ライブ監視は <code>live_board.bat</code>／次のS番号は <code>python session_no.py "&lt;案件名&gt;"</code>
 </footer>
+</div>
+<div id="tip"></div>
+<script>{JS}</script>
 </body>
 </html>"""
 

@@ -25,6 +25,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -32,6 +33,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.parser import _clean_user_text, _iter_text_items
 
@@ -54,7 +56,7 @@ def resolve_state(now_epoch, mtime, hook_state, hook_ts_epoch, fresh_sec):
     hook_state==working は「UserPromptSubmit 済み・まだ Stop していない＝ターン進行中」を意味する。
     これは jsonl の追記が途切れる谷間（長いツール実行・長い生成）でも有効なので、鮮度で足切り
     しない（S5→S6以前は hk_age<fresh_sec で足切りしていたため、長いターンの合間に🟡へ誤落ちして
-    いた＝ふくちゃん報告のバグ）。jsonl mtime は hook 状態が無いセッション（フック配線前 等）の
+    いた＝ユーザー報告のバグ）。jsonl mtime は hook 状態が無いセッション（フック配線前 等）の
     フォールバック。待ち系(Stop/許可待ち)の後に jsonl が新しく動いていれば、境界を跨いだ新ターン
     とみなして working に戻す（UserPromptSubmit を取りこぼした場合の保険）。
     """
@@ -69,10 +71,51 @@ def resolve_state(now_epoch, mtime, hook_state, hook_ts_epoch, fresh_sec):
     return "working" if jsonl_fresh else "waiting_input"
 
 
-def _agents_json():
+_CLI_CACHE = []  # _claude_cli の解決結果（プロセス内で1度だけ探す）
+
+# 拡張版CCが claude 実行ファイルを同梱している場所（バージョン番号付き＝glob で最新を拾う）
+_CLI_GLOBS = [
+    ".cursor/extensions/anthropic.claude-code-*/resources/native-binary/claude.exe",
+    ".vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude.exe",
+    ".vscode-insiders/extensions/anthropic.claude-code-*/resources/native-binary/claude.exe",
+    ".vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude",
+    ".claude/local/claude.exe",
+    ".claude/local/claude",
+]
+
+
+def _claude_cli(cfg=None):
+    """claude 実行ファイルのパスを解決する（config → PATH → 拡張同梱バイナリ）。
+
+    Cursor/VSCode 拡張版CCは claude 本体を拡張ディレクトリ内に同梱し PATH には置かない。
+    素のCLIを別途入れていない環境では `claude agents --json` が command not found になり、
+    ライブボードが「状態ファイルのみ」の縮退表示に落ちる。ディレクトリ名にバージョン番号が
+    入るので glob で拾い、複数あれば mtime が新しい方＝現行版を使う（拡張更新で壊れない）。
+    config.local.json の `claude_cli` に絶対パスを書けばそれを最優先。
+    """
+    if _CLI_CACHE:
+        return _CLI_CACHE[0]
+    exe = (cfg or {}).get("claude_cli") or ""
+    if exe and not Path(exe).exists():
+        exe = ""
+    if not exe:
+        exe = shutil.which("claude") or ""
+    if not exe:
+        home = Path.home()
+        found = [p for g in _CLI_GLOBS for p in home.glob(g) if p.is_file()]
+        if found:
+            exe = str(max(found, key=lambda p: p.stat().st_mtime))
+    _CLI_CACHE.append(exe or None)
+    return _CLI_CACHE[0]
+
+
+def _agents_json(cfg=None):
     """claude agents --json で稼働中セッション一覧を取得（sessionId 重複は新しい方を残す）。"""
+    exe = _claude_cli(cfg)
+    if not exe:
+        return None
     try:
-        r = subprocess.run("claude agents --json", shell=True, capture_output=True,
+        r = subprocess.run([exe, "agents", "--json"], capture_output=True,
                            text=True, encoding="utf-8", errors="replace", timeout=60)
         recs = json.loads(r.stdout)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
@@ -103,6 +146,71 @@ def _load_states(claude_dir: Path):
 def _enc_ws(cwd: str) -> str:
     """cwd → ~/.claude/projects 配下のワークスペースディレクトリ名（非英数字→'-'）。"""
     return re.sub(r"[^A-Za-z0-9]", "-", cwd or "")
+
+
+def _ts_epoch(ts_iso):
+    """UTC ISO(Z) → epoch秒。壊れていたら None。"""
+    if not ts_iso:
+        return None
+    try:
+        return datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+# ─── 委託ジョブ（エージェントグラフ Phase 1）───────────────────────────────
+# 「👋自分待ち／⚙️自分が動く」に「⏳委託が動く」を足す。Claude セッションではない
+# ローカルLLMバッチ等は agents --json にも session_state にも出ない＝死んでも気づけない。
+# agent-graph/agent_job.py が hooks/agent_jobs/<job_id>.json を書き、ここで読む。
+
+def _load_jobs(claude_dir: Path, now_epoch, recent_hours=24):
+    """委託ジョブ台帳を読み、running と直近の done/failed の2リストを返す。
+
+    running の stale ＝最終更新(ts)が stale_sec 以上途絶＝ジョブ死亡の疑い（⚠️強調）。
+    done/failed は recent_hours 時間だけ出す（完了・失敗の見逃し防止。掃除は agent_job 側）。
+    """
+    jobs_dir = claude_dir / "hooks" / "agent_jobs"
+    running, finished = [], []
+    if not jobs_dir.is_dir():
+        return running, finished
+    for p in jobs_dir.glob("*.json"):
+        # 台帳は複数ライター前提の共有ディレクトリ。壊れたファイル（dictでないJSON・
+        # 型のおかしい値・読んだ直後の削除）が1個あっても watcher を殺さない＝
+        # 1ファイル分の処理全体を握って読み飛ばす（死んだジョブの検知装置自身が死なないこと）。
+        try:
+            j = json.loads(p.read_text(encoding="utf-8"))
+            ts_e = _ts_epoch(j.get("ts")) or p.stat().st_mtime
+            started_e = _ts_epoch(j.get("started")) or ts_e
+            upd_sec = max(0, int(now_epoch - ts_e))
+            total = int(j["total"]) if j.get("total") else None
+            cur = int(j.get("cur") or 0)
+            row = {
+                "job_id": j.get("job_id") or p.stem,
+                "state": j.get("state") or "?",
+                "title": j.get("title") or p.stem,
+                "project": j.get("project") or "—",
+                "agent": j.get("agent") or "",
+                "prog": f"{cur}/{total}" if total else "",
+                "pct": min(100, round(cur * 100 / total)) if total else None,
+                "note": j.get("note") or "",
+                "summary": j.get("summary") or "",
+                "elapsed": _dur(max(0, now_epoch - started_e)),
+                "upd_age": _age(epoch_ms=ts_e * 1000),
+                "upd_sec": upd_sec,
+                "stale": upd_sec > int(j.get("stale_sec") or 1800),
+                "ts_epoch": ts_e,
+                "started_epoch": started_e,
+            }
+        except Exception:
+            continue
+        if row["state"] == "running":
+            running.append(row)
+        elif row["state"] in ("done", "failed") and ts_e >= now_epoch - recent_hours * 3600:
+            finished.append(row)
+    # ⚠️応答なし を先頭に固定、次いで開始の古い順（長く走っているものが上）
+    running.sort(key=lambda r: (0 if r["stale"] else 1, r["started_epoch"]))
+    finished.sort(key=lambda r: -r["ts_epoch"])
+    return running, finished
 
 
 # ─── 休眠セッション管理（S7）─────────────────────────────────────────────
@@ -190,7 +298,7 @@ def _dormant_row(sid, summary, mtime, ws, ws_labels, note):
 def _dormant_rows(cfg, claude_dir, live_sids, live_proj_max, pins, mapper, ws_labels, now_epoch):
     """再開予定（ピン済み・プロセス停止中）と再開候補（自動提示）の2リストを返す。
 
-    再開候補の抑制ルール（S7・ふくちゃん方針）:
+    再開候補の抑制ルール（S7・ユーザー方針）:
       - 番号なし単独セッション … 地図（採番）で追えず埋もれやすいので長め（unnumbered）に遡る。
       - 番号付きセッション … 案件ごとの最新Sのみ候補（旧番号は除外）。稼働中に新しいSがあれば
         （live_proj_max）停止中の旧番号は自動的に落ちる＝「S6動いてるならS4/S5は出さない」。
@@ -283,6 +391,33 @@ def _peek(transcript: Path, workspace: str):
     return summary
 
 
+def _peek_model(transcript: Path, tail_bytes=65536):
+    """末尾だけ読んで最後の assistant レコードの model を短縮形で返す（委託のengine表記と対）。
+
+    /model で途中切替されるためヘッダではなく末尾が正。先頭ピーク(_peek)と対称の軽量読み。
+    例: claude-fable-5 → fable-5 / claude-haiku-4-5-20251001 → haiku-4-5
+    """
+    try:
+        with open(transcript, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - tail_bytes))
+            chunk = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    for line in reversed(chunk.splitlines()):
+        if '"model"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # シーク位置で先頭行が欠けている場合など
+        model = (rec.get("message") or {}).get("model") or ""
+        if model and model != "<synthetic>":
+            return re.sub(r"-20\d{6}$", "", re.sub(r"^claude-", "", model))
+    return ""
+
+
 def _age(ts_iso=None, epoch_ms=None):
     now = datetime.now(timezone.utc)
     dt = None
@@ -360,7 +495,7 @@ def build_rows():
     ws_labels = cfg.get("workspace_labels", {})
     mapper = ProjectMapper(cfg)
 
-    agents = _agents_json()
+    agents = _agents_json(cfg)
     states = _load_states(claude_dir)
     pins = _load_pins(cfg)
     pin_sids = {p["sid"] for p in pins}
@@ -407,7 +542,7 @@ def build_rows():
         # 状態判定は resolve_state に集約（hook状態=ターン境界を主軸／jsonl mtimeはフォールバック）。
         # S6で session_notify を python化しCursorでもフックが発火するようになったため、S5の
         # 「jsonl mtime 主軸」から「hook状態 主軸＋jsonl フォールバック」へ。長いターンの谷間で
-        # 🟡へ誤落ちする問題（S7・ふくちゃん報告）を解消。
+        # 🟡へ誤落ちする問題（S7・ユーザー報告）を解消。
         mtime = transcript.stat().st_mtime
         hk_ts_epoch = None
         if st.get("ts"):
@@ -417,7 +552,7 @@ def build_rows():
                 pass
         state = resolve_state(now_epoch, mtime, st.get("state"), hk_ts_epoch, fresh_sec)
 
-        # 待ち状態の「待ち時間」と「新着」判定（A案・S7 ふくちゃん要望＝未確認/確認済みの近似）。
+        # 待ち状態の「待ち時間」と「新着」判定（A案・S7 ユーザー要望＝未確認/確認済みの近似）。
         # 待ちに入った時刻＝hook ts（Stop/Notification 発火時）。無ければ jsonl mtime で近似。
         # 待ち入りから new_wait_sec 秒以内＝🆕新着（≒トーストが出たばかりで未確認の可能性大）。
         wait_sec = None
@@ -440,6 +575,7 @@ def build_rows():
             "is_new": is_new,
             "pinned": sid in pin_sids,  # 稼働中のピン済みは📌印を付ける（休眠セクションには出さない）
             "ws": _ci_get(ws_labels, ws, Path(cwd).name if cwd else ws[:16]),
+            "model": _peek_model(transcript),  # 委託の engine 表記と対（誰が働いているか）
             "pid": rec.get("pid") or "",
         })
     # 待ち状態（🔴許可待ち→🟡確認待ち）を最上部に固定し、各グループ内は更新の新しい順。
@@ -456,19 +592,27 @@ def build_rows():
             live_proj_max[p] = max(live_proj_max.get(p, -1), r["session_no"])
     pinned_rows, suggest_unnum, suggest_num = _dormant_rows(
         cfg, claude_dir, live_sids, live_proj_max, pins, mapper, ws_labels, now_epoch)
-    return rows, skipped, pinned_rows, suggest_unnum, suggest_num
+
+    # 委託ジョブ（agent_jobs 台帳）
+    jobs_running, jobs_finished = _load_jobs(
+        claude_dir, now_epoch, cfg.get("job_recent_done_hours", 24))
+    return rows, skipped, pinned_rows, suggest_unnum, suggest_num, jobs_running, jobs_finished
 
 
-def render(rows, skipped=0, pinned_rows=None, suggest_unnum=None, suggest_num=None):
+def render(rows, skipped=0, pinned_rows=None, suggest_unnum=None, suggest_num=None,
+           jobs_running=None, jobs_finished=None):
     now = datetime.now().strftime("%H:%M:%S")
     n_wait = sum(1 for r in rows if r["state"].startswith("waiting"))
-    print(f"🖥️ Claude ライブボード {now} — 稼働 {len(rows)} セッション（うち待ち {n_wait}）\n")
+    n_jobs = len(jobs_running or [])
+    jobs_note = f"・委託 {n_jobs}" if n_jobs else ""
+    print(f"🖥️ エージェントライブボード {now} — 稼働 {len(rows)} セッション"
+          f"（うち待ち {n_wait}）{jobs_note}\n")
     if not rows:
         print("（稼働中セッションなし）")
     else:
         print(_pad("状態", 18) + _pad("案件", 22) + _pad("S", 5) + _pad("更新", 10)
-              + _pad("WS", 16) + _pad("pid", 7) + "タイトル")
-        print("-" * 116)
+              + _pad("WS", 16) + _pad("model", 13) + _pad("pid", 7) + "タイトル")
+        print("-" * 128)
         for r in rows:
             state = STATE_LABELS.get(r["state"], "⚪ 不明")
             if r.get("wait_sec") is not None:      # 待ち時間を状態に併記
@@ -477,12 +621,32 @@ def render(rows, skipped=0, pinned_rows=None, suggest_unnum=None, suggest_num=No
                 state = "🆕" + state
             project = ("📌" + r["project"]) if r.get("pinned") else r["project"]
             print(_pad(state, 18) + _pad(project, 22) + _pad(r["s_no"], 5)
-                  + _pad(r["updated"], 10) + _pad(r["ws"], 16) + _pad(str(r["pid"]), 7)
+                  + _pad(r["updated"], 10) + _pad(r["ws"], 16)
+                  + _pad(r.get("model") or "", 13) + _pad(str(r["pid"]), 7)
                   + _trim(r["title"], 50))
     if skipped:
         print(f"\n※ 非表示: 会話実体のない空セッション {skipped}件"
               "（Cursor復元時の重複起動プロセス）")
+    _render_jobs(jobs_running or [], jobs_finished or [])
     _render_dormant(pinned_rows or [], suggest_unnum or [], suggest_num or [])
+
+
+def _render_jobs(running, finished):
+    """委託ジョブ（⏳running・直近の完了/失敗）をターミナルに表示。無ければ何も出さない。"""
+    if not running and not finished:
+        return
+    print("\n⏳ 委託中（ローカルLLMバッチ等・agent_jobs 台帳）")
+    for r in running:
+        mark = ("⚠️応答なし " + _dur(r["upd_sec"])) if r["stale"] else "⏳ 実行中"
+        target = r["project"] + (f" → {r['agent']}" if r["agent"] else "")
+        note = f"  {r['note']}" if r["note"] else ""
+        print("  " + _pad(mark, 16) + _pad(target, 34) + _pad(r["prog"], 8)
+              + _pad("経過 " + r["elapsed"], 12) + _pad("更新 " + r["upd_age"], 13)
+              + _trim(r["title"] + note, 44))
+    for r in finished:
+        icon = "✅" if r["state"] == "done" else "❌"
+        summ = f" — {r['summary']}" if r["summary"] else ""
+        print(f"  {icon} {r['upd_age']}  {r['project']}  {_trim(r['title'] + summ, 64)}")
 
 
 def _render_dormant(pinned_rows, suggest_unnum, suggest_num):
@@ -506,11 +670,140 @@ def _render_dormant(pinned_rows, suggest_unnum, suggest_num):
             print(_line(r, False))
 
 
+# 状態色は固定パレット（good/warning/critical）。テーマで振り替えない＝ダーク/ライトで同じ意味。
+# 「色だけに意味を載せない」ため必ずアイコン＋ラベルとセットで出す（ライト面の🟡は3:1未満）。
 STATE_COLORS = {
-    "working": ("#27ae60", "作業中"),
-    "waiting_input": ("#f39c12", "待機中"),
-    "waiting_permission": ("#c0392b", "許可待ち"),
+    "working": ("#0ca30c", "作業中", "🟢"),
+    "waiting_input": ("#fab219", "待機中", "🟡"),
+    "waiting_permission": ("#d03b3b", "許可待ち", "🔴"),
 }
+LONG_WAIT_SEC = 600  # これ以上待たせていたら待ち時間を強調（放置の気づき）
+
+# 静的ダッシュボード（claude_dashboard_gen.py）と同じトークン一式。テーマ切替は変数の差し替えだけ。
+# localStorage のキーも共通（csv-theme）＝2画面で見た目が揃う。
+LIVE_CSS = """
+*{box-sizing:border-box}
+:root{
+  color-scheme:dark;
+  --plane:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --border:rgba(255,255,255,.10); --wash:rgba(255,255,255,.055);
+  --newrow:rgba(255,255,255,.05); --cat-1:#3987e5;
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --plane:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --border:rgba(11,11,11,.10); --wash:rgba(11,11,11,.045);
+  --newrow:rgba(11,11,11,.035); --cat-1:#2a78d6;
+}
+body{margin:0;padding:22px 20px 44px;background:var(--plane);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI","Yu Gothic UI",Meiryo,sans-serif;
+  font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto}
+header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
+h1{font-size:17px;font-weight:600;margin:0;letter-spacing:.01em}
+.sub{color:var(--muted);font-size:11.5px;margin-top:3px}
+.tgl{background:none;border:1px solid var(--border);color:var(--ink2);border-radius:999px;
+  padding:5px 13px;font-size:11.5px;cursor:pointer;font-family:inherit;white-space:nowrap;
+  text-decoration:none;display:inline-block}
+.tgl:hover{background:var(--wash);color:var(--ink)}
+/* 次の更新までの鼓動（アニメ長＝リフレッシュ間隔。止まって見えたら watcher が死んでいる） */
+.pulse{height:2px;background:var(--grid);border-radius:2px;overflow:hidden;margin:13px 0 14px}
+.pulse i{display:block;height:2px;width:0;background:var(--cat-1);
+  animation:fill linear forwards;opacity:.85}
+@keyframes fill{from{width:0}to{width:100%}}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:10px;margin-bottom:18px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:12px 15px}
+.tile .l{color:var(--muted);font-size:11px}
+.tile .v{font-size:30px;font-weight:600;line-height:1.15;margin-top:1px;color:var(--ink)}
+.tile.zzz .v{color:var(--ink2)}
+h2{font-size:12.5px;font-weight:600;margin:20px 0 7px;letter-spacing:.02em}
+h2 .s{font-weight:400;font-size:11px;color:var(--muted);margin-left:6px}
+h2 code{background:var(--wash);border-radius:4px;padding:1px 6px;font-size:10.5px}
+table{border-collapse:separate;border-spacing:0 3px;width:100%;font-size:12.5px}
+td{background:var(--surface);padding:9px 12px;vertical-align:middle}
+td:first-child{border-radius:9px 0 0 9px;border-left:3px solid var(--rail,transparent);
+  white-space:nowrap}
+td:last-child{border-radius:0 9px 9px 0}
+tr.new td{background:var(--newrow)}
+/* 状態は「アイコン＋ラベル＋左レール」の3重表現。色だけに意味を載せない */
+.badge{color:var(--ink2);white-space:nowrap}
+.wait{color:var(--muted);font-size:11px;margin-left:5px}
+.wait.long{color:var(--ink);font-weight:600}
+.nb{margin-right:4px}
+.pj{font-weight:600;white-space:nowrap}
+/* 案件名→エージェントカウンターの台帳ページ（生成済みのときだけリンクになる） */
+.pj a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--border)}
+.pj a:hover{border-bottom-color:var(--cat-1);color:var(--cat-1)}
+.sn{color:var(--muted);font-variant-numeric:tabular-nums}
+.up,.ws{color:var(--ink2);white-space:nowrap}
+.title{color:var(--muted);width:99%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  max-width:0}
+.empty{background:var(--surface);border:1px solid var(--border);border-radius:11px;
+  padding:14px 16px;color:var(--muted);font-size:12px}
+.note{color:var(--muted);font-size:11px;margin-top:10px}
+table.dormant{font-size:12px}
+table.dormant td{padding:7px 12px}
+.sid{font-family:ui-monospace,Consolas,monospace;color:var(--muted);font-size:11px}
+.dnote{color:var(--ink2)}
+/* 委託ジョブ: 進捗ミニバーとエンジン名。色はセッション状態と同じ固定パレット */
+.jbar{height:4px;background:var(--grid);border-radius:2px;overflow:hidden;max-width:130px;
+  margin-top:4px}
+.jbar i{display:block;height:100%;background:var(--cat-1)}
+.jagent{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--muted)}
+footer{margin-top:24px;color:var(--muted);font-size:11px;line-height:1.8}
+@media (max-width:760px){.tiles{grid-template-columns:repeat(2,1fr)}.ws{display:none}}
+"""
+
+LIVE_JS = """
+(function(){
+  var root=document.documentElement, btn=document.getElementById('tgl');
+  function lab(){btn.textContent = root.dataset.theme==='light' ? '☾ ダーク' : '☀ ライト';}
+  lab();
+  btn.onclick=function(){
+    root.dataset.theme = root.dataset.theme==='light' ? 'dark' : 'light';
+    try{localStorage.setItem('csv-theme', root.dataset.theme);}catch(e){}
+    lab();
+  };
+})();
+"""
+# 自動リロード（meta refresh）でテーマが一瞬戻るのを防ぐため、描画前に data-theme を当てる
+LIVE_HEAD_JS = "try{var t=localStorage.getItem('csv-theme');" \
+               "if(t)document.documentElement.dataset.theme=t;}catch(e){}"
+
+
+def _pj_cell(project, pin=""):
+    """案件名セル。台帳ページ（counter_gen.py 生成）があればそこへリンクする。
+
+    存在チェックはファイル名の有無だけ＝台帳の中身は読まない（watch ループで毎秒回るため）。
+    ページが無い案件はただの文字列に戻るので、カウンター未生成でも板は壊れない。
+    """
+    esc = html_mod.escape
+    name = f"{slug(project, 'p-')}.html" if project else ""
+    if name and (REPO_ROOT / "reports" / "counter" / name).is_file():
+        return f'<td class="pj">{pin}<a href="counter/{name}">{esc(project)}</a></td>'
+    return f'<td class="pj">{pin}{esc(project)}</td>'
+
+
+def _live_rows_html(rows):
+    esc = html_mod.escape
+    out = []
+    for r in rows:
+        color, label, icon = STATE_COLORS.get(r["state"], ("#898781", "不明", "⚪"))
+        wait = ""
+        if r.get("wait_sec") is not None:  # 待ち時間を併記し、長引いたら強調（放置の気づき）
+            cls = "wait long" if r["wait_sec"] >= LONG_WAIT_SEC else "wait"
+            wait = f'<span class="{cls}">{_dur(r["wait_sec"])}</span>'
+        newbadge = '<span class="nb">🆕</span>' if r.get("is_new") else ''  # 新着＝未確認の目印
+        pin = '📌' if r.get("pinned") else ''  # 稼働中のピン済み
+        out.append(
+            f'<tr class="{"new" if r.get("is_new") else ""}" style="--rail:{color}">'
+            f'<td>{newbadge}<span class="badge">{icon} {label}</span>{wait}</td>'
+            f'{_pj_cell(r["project"], pin)}'
+            f'<td class="sn">{esc(r["s_no"])}</td>'
+            f'<td class="up">{esc(r["updated"])}</td><td class="ws">{esc(r["ws"])}</td>'
+            f'<td class="ws"><span class="jagent">{esc(r.get("model") or "")}</span></td>'
+            f'<td class="title">{esc(_trim(r["title"], 90))}</td></tr>')
+    return "".join(out)
 
 
 def _dormant_html(pinned_rows, suggest_unnum, suggest_num):
@@ -524,91 +817,147 @@ def _dormant_html(pinned_rows, suggest_unnum, suggest_num):
                     if (with_note and r["note"]) else '')
             out.append(
                 f'<tr><td class="sid">{esc(r["sid_short"])}</td>'
-                f'<td class="pj">{esc(r["project"])}</td><td>{esc(r["s_no"])}</td>'
-                f'<td>最終 {esc(r["last_age"])}</td>'
-                f'<td class="title">{esc(_trim(r["title"], 60))} {note}</td></tr>')
+                f'{_pj_cell(r["project"])}<td class="sn">{esc(r["s_no"])}</td>'
+                f'<td class="up">最終 {esc(r["last_age"])}</td>'
+                f'<td class="title">{esc(_trim(r["title"], 70))} {note}</td></tr>')
         return "".join(out)
 
     sections = []
     if pinned_rows:
         sections.append(
-            '<h2>📌 再開予定 <span class="sub">（ピン済み・プロセス停止中）</span></h2>'
+            '<h2>📌 再開予定<span class="s">ピン済み・プロセス停止中</span></h2>'
             f'<table class="dormant">{_rows_html(pinned_rows, True)}</table>')
     if suggest_num:
         sections.append(
-            '<h2>💤 再開候補・番号付き <span class="sub">（案件の最新Sのみ・未ピン）'
-            '　ピン <code>live_board.py pin &lt;sid&gt;</code></span></h2>'
+            '<h2>💤 再開候補・番号付き<span class="s">案件の最新Sのみ・未ピン　'
+            'ピン <code>live_board.py pin &lt;sid&gt;</code></span></h2>'
             f'<table class="dormant">{_rows_html(suggest_num, False)}</table>')
     if suggest_unnum:
         sections.append(
-            '<h2>💤 再開候補・番号なし単独 <span class="sub">（長め遡り・未ピン）'
-            '　もっと遡る <code>live_board.py candidates --days N</code></span></h2>'
+            '<h2>💤 再開候補・番号なし単独<span class="s">長め遡り・未ピン　'
+            'もっと遡る <code>live_board.py candidates --days N</code></span></h2>'
             f'<table class="dormant">{_rows_html(suggest_unnum, False)}</table>')
     return "".join(sections)
 
 
-def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
-                suggest_unnum=None, suggest_num=None):
+JOB_COLORS = {"running": "#3987e5", "stale": "#d03b3b", "done": "#0ca30c", "failed": "#d03b3b"}
+
+
+def _jobs_html(running, finished):
+    """委託ジョブの HTML テーブル（running → 直近の done/failed の順）。"""
     esc = html_mod.escape
+    if not running and not finished:
+        return ('<div class="empty">なし — 委託ジョブは動いていない'
+                '（配線: agent-graph/agent_job.py）</div>')
+    out = []
+    for r in running:
+        color = JOB_COLORS["stale" if r["stale"] else "running"]
+        if r["stale"]:  # 最終更新が stale_sec 途絶＝死んだ疑い。ボードを見る動機の本丸
+            badge = ('<span class="badge">⚠️ 応答なし</span>'
+                     f'<span class="wait long">{_dur(r["upd_sec"])}</span>')
+        else:
+            badge = ('<span class="badge">⏳ 実行中</span>'
+                     f'<span class="wait">経過 {esc(r["elapsed"])}</span>')
+        bar = (f'<div class="jbar"><i style="width:{r["pct"]}%"></i></div>'
+               if r["pct"] is not None else "")
+        note = f' — {esc(r["note"])}' if r["note"] else ""
+        out.append(
+            f'<tr style="--rail:{color}">'
+            f'<td>{badge}</td>'
+            f'<td class="pj">{esc(r["project"])}</td>'
+            f'<td class="sn">{esc(r["prog"])}{bar}</td>'
+            f'<td class="up">更新 {esc(r["upd_age"])}</td>'
+            f'<td class="ws"><span class="jagent">{esc(r["agent"])}</span></td>'
+            f'<td class="title">{esc(_trim(r["title"], 60))}{note}</td></tr>')
+    for r in finished:
+        ok = r["state"] == "done"
+        summ = f' — {esc(r["summary"])}' if r["summary"] else ""
+        out.append(
+            f'<tr style="--rail:{JOB_COLORS["done" if ok else "failed"]}">'
+            f'<td><span class="badge">{"✅ 完了" if ok else "❌ 失敗"}</span></td>'
+            f'<td class="pj">{esc(r["project"])}</td>'
+            f'<td class="sn">{esc(r["prog"])}</td>'
+            f'<td class="up">{esc(r["upd_age"])}</td>'
+            f'<td class="ws"><span class="jagent">{esc(r["agent"])}</span></td>'
+            f'<td class="title">{esc(_trim(r["title"], 60))}{summ}</td></tr>')
+    return f'<table>{"".join(out)}</table>'
+
+
+def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
+                suggest_unnum=None, suggest_num=None,
+                jobs_running=None, jobs_finished=None):
     now = datetime.now().strftime("%H:%M:%S")
-    n_wait = sum(1 for r in rows if r["state"].startswith("waiting"))
+    pinned_rows, suggest_unnum = pinned_rows or [], suggest_unnum or []
+    suggest_num = suggest_num or []
+    jobs_running, jobs_finished = jobs_running or [], jobs_finished or []
+    n_stale = sum(1 for r in jobs_running if r["stale"])
+    # セクション順は ⚙️動いてる → ⏳委託中 → 👋あなた待ち（2026-08-02 ユーザー要望で入替。
+    # 「要対応の即答」は上部の状態タイルが担うので、警報機能はタイル側で維持される整理）
+    need_me = [r for r in rows if r["state"].startswith("waiting")]
+    running = [r for r in rows if not r["state"].startswith("waiting")]
+    n_perm = sum(1 for r in need_me if r["state"] == "waiting_permission")
+    n_input = len(need_me) - n_perm
+
+    def tile(label, n, cls=""):
+        return (f'<div class="tile {cls}"><div class="l">{label}</div>'
+                f'<div class="v">{n}</div></div>')
+
+    tiles = (tile("🔴 許可待ち", n_perm) + tile("🟡 待機中", n_input)
+             + tile("⚠️ 委託応答なし" if n_stale else "⏳ 委託中",
+                    n_stale if n_stale else len(jobs_running),
+                    "" if jobs_running else "zzz")
+             + tile("🟢 作業中", len(running))
+             + tile("💤 休眠（ピン＋候補）",
+                    len(pinned_rows) + len(suggest_num) + len(suggest_unnum), "zzz"))
+
+    if need_me:
+        need_html = f'<table>{_live_rows_html(need_me)}</table>'
+    else:
+        need_html = '<div class="empty">なし — いま手を止めて待っているセッションはない</div>'
+    run_html = (f'<table>{_live_rows_html(running)}</table>' if running else
+                '<div class="empty">なし — 動いているセッションはない</div>')
     footnote = (f'<div class="note">※ 非表示: 会話実体のない空セッション {skipped}件'
                 "（Cursor復元時の重複起動プロセス）</div>") if skipped else ""
-    body = []
-    for r in rows:
-        color, label = STATE_COLORS.get(r["state"], ("#95a5a6", "不明"))
-        if r.get("wait_sec") is not None:      # 待ち時間を状態に併記
-            label += f" {_dur(r['wait_sec'])}"
-        newbadge = '<span class="new">🆕</span>' if r.get("is_new") else ''  # 新着＝未確認の目印
-        pin = '<span class="pin">📌</span>' if r.get("pinned") else ''  # 稼働中のピン済み
-        body.append(
-            f'<tr class="{"newrow" if r.get("is_new") else ""}">'
-            f'<td>{newbadge}<span class="badge" style="background:{color}">{label}</span></td>'
-            f'<td class="pj">{pin}{esc(r["project"])}</td><td>{esc(r["s_no"])}</td>'
-            f'<td>{esc(r["updated"])}</td><td>{esc(r["ws"])}</td>'
-            f'<td class="title">{esc(_trim(r["title"], 70))}</td></tr>')
-    dormant = _dormant_html(pinned_rows or [], suggest_unnum or [], suggest_num or [])
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="refresh" content="{refresh_sec}">
-<title>Claude ライブボード</title>
-<style>
-  body {{ font-family: -apple-system, "Segoe UI", "Yu Gothic", "Meiryo", sans-serif;
-         margin: 0; padding: 20px; background: #f4f6f8; color: #1c2833; }}
-  h1 {{ font-size: 17px; margin: 0 0 2px; }}
-  .meta {{ color: #888; font-size: 12px; margin-bottom: 14px; }}
-  table {{ border-collapse: collapse; background: #fff; border-radius: 8px;
-           box-shadow: 0 1px 3px rgba(0,0,0,.08); font-size: 13px; width: 100%; }}
-  th {{ text-align: left; color: #666; font-weight: normal; padding: 8px 12px;
-        border-bottom: 1px solid #e3e8ec; }}
-  td {{ padding: 7px 12px; border-bottom: 1px solid #f0f3f5; }}
-  .badge {{ color: #fff; border-radius: 10px; padding: 2px 10px; font-size: 12px;
-            white-space: nowrap; }}
-  .pj {{ font-weight: bold; }}
-  .title {{ color: #666; }}
-  .note {{ color: #999; font-size: 12px; margin-top: 10px; }}
-  .new {{ margin-right: 5px; }}
-  .newrow {{ background: #fffbe6; }}
-  .pin {{ margin-right: 4px; }}
-  h2 {{ font-size: 14px; margin: 22px 0 6px; color: #555; }}
-  h2 .sub {{ font-weight: normal; font-size: 12px; color: #999; }}
-  h2 code {{ background: #eef1f4; padding: 1px 5px; border-radius: 4px; font-size: 11px; }}
-  table.dormant {{ font-size: 12px; }}
-  table.dormant .sid {{ font-family: ui-monospace, "Consolas", monospace; color: #999; }}
-  .dnote {{ color: #b7791f; }}
-</style>
+<title>{"⚠️" if n_stale else ""}エージェントライブボード — 待ち {len(need_me)} / 委託 {len(jobs_running)} / 稼働 {len(rows)}</title>
+<script>{LIVE_HEAD_JS}</script>
+<style>{LIVE_CSS}</style>
 </head>
 <body>
-<h1>🖥️ Claude ライブボード — 稼働 {len(rows)} セッション（うち待ち {n_wait}）</h1>
-<div class="meta">生成 {now} ／ {refresh_sec}秒ごと自動更新（裏で live_board.py --html --watch が動いている前提）</div>
-<table>
-<tr><th>状態</th><th>案件</th><th>S</th><th>更新</th><th>WS</th><th>タイトル</th></tr>
-{"".join(body)}
-</table>
+<div class="wrap">
+<header>
+  <div>
+    <h1>🖥️ エージェントライブボード</h1>
+    <div class="sub">生成 {now} ／ {refresh_sec}秒ごと自動更新（裏で <code>live_board.py --html --watch</code>）</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <a class="tgl" href="counter.html">🎫 カウンター</a>
+    <button class="tgl" id="tgl" type="button">☀ ライト</button>
+  </div>
+</header>
+<div class="pulse"><i style="animation-duration:{refresh_sec}s"></i></div>
+<div class="tiles">{tiles}</div>
+
+<h2>⚙️ 動いてる<span class="s">更新の新しい順</span></h2>
+{run_html}
+
+<h2>⏳ 委託中<span class="s">ローカルLLMバッチ等（agent_jobs 台帳）・応答なしは ⚠️</span></h2>
+{_jobs_html(jobs_running, jobs_finished)}
+
+<h2>👋 あなた待ち<span class="s">許可待ち → 待機中の順・新しいものが上</span></h2>
+{need_html}
 {footnote}
-{dormant}
+{_dormant_html(pinned_rows, suggest_unnum, suggest_num)}
+<footer>
+  ピン <code>python live_board.py pin &lt;sid&gt; [メモ]</code>
+  ／ 全体の地図は <code>claude_dashboard.bat</code>
+</footer>
+</div>
+<script>{LIVE_JS}</script>
 </body>
 </html>"""
 
@@ -760,18 +1109,20 @@ def main():
             print(f"既存の監視プロセス {n}件を停止（多重起動の掃除）")
     out_path = REPO_ROOT / "reports" / "live_board.html"
     while True:
-        rows, skipped, pinned_rows, suggest_unnum, suggest_num = build_rows()
+        (rows, skipped, pinned_rows, suggest_unnum, suggest_num,
+         jobs_running, jobs_finished) = build_rows()
         if html_mode:
             out_path.parent.mkdir(exist_ok=True)
             out_path.write_text(
                 render_html(rows, watch or 10, skipped, pinned_rows,
-                            suggest_unnum, suggest_num),
+                            suggest_unnum, suggest_num, jobs_running, jobs_finished),
                 encoding="utf-8")
             print(f"{datetime.now().strftime('%H:%M:%S')} updated -> {out_path}")
         else:
             if watch:
                 os.system("cls" if os.name == "nt" else "clear")
-            render(rows, skipped, pinned_rows, suggest_unnum, suggest_num)
+            render(rows, skipped, pinned_rows, suggest_unnum, suggest_num,
+                   jobs_running, jobs_finished)
         if not watch:
             break
         time.sleep(watch)
