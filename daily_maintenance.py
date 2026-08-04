@@ -51,6 +51,7 @@ def _job(method, *args, **kwargs):
 
 STEPS = [
     ("dashboard", [PY, str(REPO / "claude_dashboard_gen.py")]),
+    ("track_record", [PY, str(REPO / "track_record_gen.py"), "--no-open"]),
     ("backup", [PY, str(REPO / "backup_config.py")]),
 ]
 

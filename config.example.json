@@ -26,5 +26,14 @@
   ],
   "workspace_hints": {
     "エンコード済みワークスペースディレクトリ名": "案件名"
-  }
+  },
+  "_project_dirs_comment": "track_record_gen 専用: セッション履歴（🔢 セッション履歴）セクションを持つプロジェクト管理ファイルが入ったディレクトリ。path（必須）と label（表示用ラベル）を指定。OneDriveのprojects/フォルダ等を指定する。",
+  "project_dirs": [
+    { "path": "~/OneDrive - 株式会社グーフ/業務/業務マップ/projects", "label": "業務マップ" }
+  ],
+  "_extra_track_files_comment": "track_record_gen 専用: gitリポジトリや特定パスにある個別のプロジェクト管理ファイル（直接指定）。各エントリに path と label（表示用）を指定する。",
+  "extra_track_files": [
+    { "path": "C:/source/git-h.fukuda1207/claude-session-visualizer/docs/00-現在地.md", "label": "git-repo" },
+    { "path": "C:/source/git-h.fukuda1207/shopify-ai-marketing-suite/docs/01-project-management/00-現在地.md", "label": "git-repo" }
+  ]
 }

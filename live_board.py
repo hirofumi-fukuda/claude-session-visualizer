@@ -939,6 +939,7 @@ def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
   </div>
   <div style="display:flex;gap:8px;align-items:center">
     <a class="tgl" href="counter.html">🎫 カウンター</a>
+    <a class="tgl" href="track_record.html">🏆 戦績</a>
     <button class="tgl" id="tgl" type="button">☀ ライト</button>
   </div>
 </header>
