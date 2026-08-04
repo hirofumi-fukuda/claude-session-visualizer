@@ -20,6 +20,7 @@ any error is swallowed and the process exits 0.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -28,6 +29,20 @@ HOOK_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(HOOK_DIR, "session_state")
 PRUNE_DAYS = 7
 FULL_POWERSHELL = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+
+# Environment tag blocks (IDE notices, system reminders, command wrappers) are
+# stripped from user text before use -- same regex as claude_sv/parser.py.
+# (This file must stay standalone: it runs from ~/.claude/hooks without the repo.)
+_TAG_RE = re.compile(
+    r"<(ide_opened_file|ide_selection|ide_diagnostics|system-reminder|"
+    r"command-name|command-message|command-args|local-command-stdout|"
+    r"local-command-caveat|task-notification)"
+    r"[^>]*>.*?</\1>",
+    re.DOTALL,
+)
+
+# Injected non-human user messages that must never become the session title.
+_INJECTED_PREFIXES = ("Base directory for this skill:", "Launching skill:")
 
 
 def read_hook_input():
@@ -38,8 +53,32 @@ def read_hook_input():
     return json.loads(raw.decode("utf-8", "replace"))
 
 
+def _clean_user_text(text):
+    """Strip environment tag blocks, collapse whitespace (parser-equivalent)."""
+    return " ".join(_TAG_RE.sub("", text).split()).strip()
+
+
+def _record_texts(content):
+    """Yield every text item of a user record (str or list-of-parts content)."""
+    if isinstance(content, str):
+        yield content
+    elif isinstance(content, list):
+        for c in content:
+            if isinstance(c, dict) and c.get("type") == "text":
+                yield c.get("text", "")
+
+
 def resolve_title(transcript_path, prompt, cwd):
-    """First real user message in the transcript, else the prompt, else cwd."""
+    """First real user message in the transcript, else the prompt, else cwd.
+
+    Fix (S10 2026-08-04): the old logic looked only at the FIRST text item of
+    each user record and skipped anything starting with "<". Cursor prepends
+    <ide_opened_file>/<system-reminder> items BEFORE the typed text, so the
+    real prompt was discarded and the next plain-text record -- usually a
+    skill expansion ("Base directory for this skill: ...") -- became the
+    title. Now: scan ALL text items, strip tag blocks (parser-equivalent),
+    skip isMeta records and injected skill texts.
+    """
     title = ""
     if transcript_path and os.path.exists(transcript_path):
         try:
@@ -54,23 +93,20 @@ def resolve_title(transcript_path, prompt, cwd):
                         obj = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    content = obj.get("message", {}).get("content", "")
-                    text = ""
-                    if isinstance(content, str):
-                        text = content
-                    elif isinstance(content, list):
-                        for c in content:
-                            if isinstance(c, dict) and c.get("type") == "text":
-                                text = c.get("text", "")
-                                break
-                    text = " ".join(text.split()).strip()
-                    # skip system-ish / command wrapper messages
-                    if text and not text.startswith("<") and len(text) > 1:
+                    if obj.get("type") != "user" or obj.get("isMeta") \
+                            or obj.get("isSidechain"):
+                        continue
+                    for raw in _record_texts(obj.get("message", {}).get("content", "")):
+                        text = _clean_user_text(raw)
+                        if (not text or len(text) <= 1 or text.startswith("<")
+                                or text.startswith(_INJECTED_PREFIXES)):
+                            continue
                         title = text[:60] + "..." if len(text) > 60 else text
+                        break
         except OSError:
             pass
     if not title and prompt:
-        p = " ".join(prompt.split()).strip()
+        p = _clean_user_text(prompt)
         title = p[:60] + "..." if len(p) > 60 else p
     if not title:
         title = os.path.basename(cwd.rstrip("\\/")) if cwd else "Claude Code"

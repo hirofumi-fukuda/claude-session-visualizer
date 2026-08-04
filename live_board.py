@@ -561,7 +561,10 @@ def build_rows():
             wait_sec = max(0, int(now_epoch - since))
         is_new = wait_sec is not None and wait_sec < new_wait_sec
 
-        title = (st.get("title") or summary["first_user_text"] or rec.get("name")
+        # 概要は first_user_text（parser の全アイテム走査＋タグ除去＝正確）を最優先。
+        # hook state の title は resolve_title の旧ロジック汚染（skill展開文
+        # 「Base directory for this skill:...」等）が残り得るためフォールバックに降格（S10）。
+        title = (summary["first_user_text"] or st.get("title") or rec.get("name")
                  or (Path(cwd).name if cwd else "?"))
         rows.append({
             "state": state,
