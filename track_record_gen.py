@@ -24,8 +24,11 @@ from pathlib import Path
 
 from claude_sv.ledger import (
     load_extra_files, load_ledgers, load_project_dirs, load_track_file,
+    parse_frontmatter, slug,
 )
 from claude_sv.mapping import ProjectMapper, load_config
+from claude_sv.mdlite import render as md_render
+from claude_sv.nav import nav_html
 
 REPO_ROOT = Path(__file__).parent
 OUT_DIR = REPO_ROOT / "reports"
@@ -102,6 +105,7 @@ h1{font-size:17px;font-weight:600;margin:0;letter-spacing:.01em}
   padding:5px 13px;font-size:11.5px;cursor:pointer;font-family:inherit;white-space:nowrap;
   text-decoration:none;display:inline-block}
 .tgl:hover{background:var(--wash);color:var(--ink)}
+.tgl.cur{background:var(--wash);color:var(--ink);cursor:default}
 h2{font-size:12.5px;font-weight:600;color:var(--ink2);margin:28px 0 12px;
   letter-spacing:.04em;display:flex;align-items:center;gap:9px}
 h2 .n{color:var(--muted);font-weight:400;font-size:11px}
@@ -151,14 +155,40 @@ footer{color:var(--muted);font-size:11px;margin-top:34px;border-top:1px solid va
   padding-top:11px}
 .ws-label{color:var(--muted);font-size:10.5px;font-family:ui-monospace,Consolas,monospace;
   background:var(--wash);border-radius:4px;padding:0 5px;margin-left:4px}
+/* トラック名リンク（カード→個別ページ） */
+a.track-name{color:var(--ink);text-decoration:none}
+a.track-name:hover{color:var(--cat-1);text-decoration:underline}
+.section-next .section-label{color:var(--hot)}
+/* 個別ページ */
+.detail-card{max-width:900px;margin:0 auto}
+.detail-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:9px;margin-bottom:4px}
+.detail-title{font-size:16px;font-weight:600;margin:0;color:var(--ink)}
+.where{color:var(--muted);font-size:11px;font-family:ui-monospace,Consolas,monospace;margin-top:8px}
+details.detail-full{border-top:1px solid var(--border);padding-top:8px;margin-top:2px}
+details.detail-full summary{cursor:pointer;color:var(--muted);font-size:11.5px;padding:5px 0;list-style:revert}
+/* 台帳全文（md） */
+.md{color:var(--ink2);font-size:12.5px;margin-top:8px}
+.md p{margin:.35em 0}
+.md ul{margin:.3em 0;padding-left:1.25em}
+.md li{margin:.16em 0}
+.md h3,.md h4{font-size:12.5px;color:var(--ink);margin:1.1em 0 .35em}
+.md code{background:var(--wash);border-radius:4px;padding:1px 5px;font-size:11.5px;
+  font-family:ui-monospace,Consolas,monospace}
+.md pre{background:var(--wash);border-radius:7px;padding:9px 12px;overflow-x:auto;
+  font-size:11.5px;font-family:ui-monospace,Consolas,monospace}
+.md a{color:var(--cat-1)}
+.md .wiki{color:var(--cat-1);opacity:.85}
+.md table{border-collapse:collapse;margin:.5em 0;font-size:11.5px;display:block;overflow-x:auto}
+.md th,.md td{border:1px solid var(--border);padding:4px 9px;text-align:left}
+.md th{background:var(--wash)}
+.md hr{border:0;border-top:1px solid var(--border);margin:.8em 0}
 """
 
 
 # ── ページ組み立て ─────────────────────────────────────────────
-def _page(title: str, body: str) -> str:
-    nav = ('<a class="tgl" href="live_board.html">🖥️ ライブボード</a>'
-           '<a class="tgl" href="claude_dashboard.html">🗺️ マップ</a>'
-           '<a class="tgl" href="counter.html">🎫 カウンター</a>')
+def _page(title: str, body: str, nav: str = "") -> str:
+    if not nav:  # 戦績ボード（reports 直下）を現在地とする統一ナビ
+        nav = nav_html("record")
     return (f'<!doctype html><html lang="ja"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{html_mod.escape(title)}</title><script>{HEAD_JS}</script>'
@@ -171,12 +201,38 @@ def _page(title: str, body: str) -> str:
             f'</header>{body}</div><script>{TGL_JS}</script></body></html>')
 
 
+# ── 案件名の正規化（live_board とリンクを繋ぐ肝）───────────────────
+def _canonical_key(led, mapper) -> str:
+    """live_board と同じ alias テーブル（_resolve_project・title_hints は使わない）で正規化。
+
+    フル案件名は完全一致でそのまま保持し、memory台帳の stem・別名だけ canonical 名に寄せる
+    （kanademono-dev → KANADEMONO開発 / KANADEMONO-ウェルカムDM → ウェルカムDM 等）。
+    live_board の r["project"]（map_session の canonical）と同じテーブルに着地するので、
+    slug() が一致してトラック名リンクが個別ページに繋がる。
+    title_hints を使うと「GEMiNX本体開発→GEMiNX」と粒度が粗くなり衝突するので使わない。
+    """
+    if mapper is not None:
+        for cand in (led.project, led.name, led.path.stem):
+            if cand:
+                r = mapper._resolve_project(cand)
+                if r and mapper._norm(r) != mapper._norm(cand):
+                    return r
+    return led.project or led.name or led.path.stem
+
+
 # ── カード HTML ───────────────────────────────────────────────
-def _session_row_html(entry) -> str:
+def _track_slug(led) -> str:
+    """個別ページのファイル名・カードのアンカー id に使うスラッグ。
+    live_board.py も同じ slug() で `r["project"]` から同一スラッグを組む（一致すればリンクが繋がる）。
+    led.project は build() で canonical に揃え済み。"""
+    return slug((led.project or led.name or led.path.stem).strip())
+
+
+def _session_row_html(entry, sum_len: int = 55) -> str:
     date_short = entry.date[5:] if len(entry.date) >= 10 else entry.date  # "08-04"
     icon = "✅" if entry.is_done else "⏳"
     row_cls = "done" if entry.is_done else "pending"
-    summary = entry.summary[:55] + ("…" if len(entry.summary) > 55 else "")
+    summary = entry.summary[:sum_len] + ("…" if len(entry.summary) > sum_len else "")
     result_text = re.sub(r"✅\s*", "", entry.result)[:35] if entry.result else "—"
     return (f'<div class="s-row {row_cls}">'
             f'<span class="s-icon">{icon}</span>'
@@ -208,9 +264,10 @@ def _track_card_html(led) -> str:
     # ソース表示（ws_label）
     ws_span = f'<span class="ws-label">{html_mod.escape(led.ws_label)}</span>' if led.ws_label else ""
 
-    # ヘッダー
+    # ヘッダー（トラック名は個別ページへのリンク）
+    tslug = _track_slug(led)
     header = (f'<div class="track-header">'
-              f'<span class="track-name">{html_mod.escape(led.label)}</span>{ws_span}'
+              f'<a class="track-name" href="track/{tslug}.html">{html_mod.escape(led.label)}</a>{ws_span}'
               f'<span class="status-badge {status_cls}">{status_label}</span>'
               f'<span class="track-stats">{html_mod.escape(stats)}</span>'
               f'</div>')
@@ -243,7 +300,71 @@ def _track_card_html(led) -> str:
     else:
         history_html = '<div class="track-history"><div class="history-label">（記録なし）</div></div>'
 
-    return f'<div class="track-card">{header}{now_html}{blocked_html}{history_html}</div>'
+    return (f'<div class="track-card" id="track-{tslug}">'
+            f'{header}{now_html}{blocked_html}{history_html}</div>')
+
+
+# ── 個別ページ HTML ───────────────────────────────────────────
+def _detail_page(led) -> str:
+    """1トラック=1ページの詳細（ライブボードのトラック名リンク先）。
+    上部＝構造化サマリ（現在地/Next/Blocked/全セッション履歴）、下部＝台帳全文（折りたたみ）。"""
+    label = led.label
+    latest = led.latest_session_date()
+    status_label, status_cls = _activity_status(latest)
+    hist = [e for e in led.session_history() if not e.is_reserved]
+    count = len(hist)
+    since = led.active_since()
+
+    stats_parts = [f"累計 {count}S"]
+    if since:
+        stats_parts.append(since[5:])
+        if latest and latest != since:
+            stats_parts.append(f"〜 {latest[5:]}")
+    stats = " | ".join(stats_parts)
+    ws_span = (f'<span class="ws-label">{html_mod.escape(led.ws_label)}</span>'
+               if led.ws_label else "")
+
+    header = (f'<div class="detail-head">'
+              f'<h1 class="detail-title">🗂️ {html_mod.escape(label)}</h1>{ws_span}'
+              f'<span class="status-badge {status_cls}">{status_label}</span>'
+              f'<span class="track-stats">{html_mod.escape(stats)}</span></div>')
+
+    def section(lbl, cls, text):
+        if not text:
+            return ""
+        return (f'<div class="track-section {cls}">'
+                f'<div class="section-label">{lbl}</div>'
+                f'<div class="section-text">{_simple_html(text)}</div></div>')
+    now_html = section("▶️ 現在地", "section-now", led.track_now(4))
+    next_html = section("▶️ Next", "section-next", led.next_up(3))
+    blocked_html = section("⛔ Blocked", "section-blocked", led.blockers(2))
+
+    # セッション履歴（全件・新しい順）
+    if hist:
+        rows = "".join(_session_row_html(e, 90) for e in reversed(hist))
+        history_html = (f'<div class="track-history">'
+                        f'<div class="history-label">📜 セッション履歴（全{count}S）</div>'
+                        f'{rows}</div>')
+    else:
+        history_html = ('<div class="track-history">'
+                        '<div class="history-label">（セッション履歴なし）</div></div>')
+
+    # 台帳全文（折りたたみ）
+    try:
+        full = parse_frontmatter(led.path.read_text(encoding="utf-8"))[1]
+    except (OSError, UnicodeDecodeError):
+        full = ""
+    full_html = ""
+    if full.strip():
+        full_html = (f'<details class="detail-full"><summary>📄 台帳全文を開く</summary>'
+                     f'<div class="md">{md_render(full)}</div>'
+                     f'<div class="where">正本: {html_mod.escape(str(led.path))}</div>'
+                     f'</details>')
+
+    nav = nav_html("", rel="../")   # 個別ページ＝3点全部リンク（ボード=同一タブ / マップ・戦績=新タブ）
+    body = (f'<div class="track-card detail-card">{header}{now_html}{next_html}'
+            f'{blocked_html}{history_html}{full_html}</div>')
+    return _page(f"🗂️ {label}", body, nav=nav)
 
 
 # ── ビルド ────────────────────────────────────────────────────
@@ -275,6 +396,11 @@ def build(open_browser: bool = True) -> Path:
             led = load_track_file(f, "ext-file", label, mapper)
             if led:
                 ledgers.append(led)
+
+    # live_board と同じ正規化でトラック名を canonical に揃える（リンク繋ぎ＋表示統一）。
+    # memory台帳の stem（kanademono-dev 等）を KANADEMONO開発 等の正規名に寄せる。
+    for l in ledgers:
+        l.project = _canonical_key(l, mapper)
 
     # セッション履歴があるものだけ対象
     with_hist = [l for l in ledgers if l.session_count() > 0]
@@ -324,7 +450,20 @@ def build(open_browser: bool = True) -> Path:
     out = OUT_DIR / "track_record.html"
     out.write_text(_page("🏆 トラック戦績ボード", "".join(body_parts)), encoding="utf-8")
 
-    print(f"✅ {out}  （{len(tracks)} トラック / {total_s}S）")
+    # 個別ページ（1トラック1枚＝ライブボードのトラック名リンク先 reports/track/<slug>.html）
+    track_dir = OUT_DIR / "track"
+    track_dir.mkdir(exist_ok=True)
+    for old in track_dir.glob("*.html"):   # 前回の stale（canonical 変更・トラック消滅・改名）を掃除
+        old.unlink()
+    seen = set()
+    for led in tracks:
+        fname = _track_slug(led) + ".html"
+        if fname in seen:   # by_name で案件名は一意だが 60字 truncate 衝突の保険（先勝ち）
+            continue
+        seen.add(fname)
+        (track_dir / fname).write_text(_detail_page(led), encoding="utf-8")
+
+    print(f"✅ {out}  （{len(tracks)} トラック / {total_s}S / 個別ページ {len(seen)}枚）")
     if open_browser:
         webbrowser.open(out.as_uri())
     return out

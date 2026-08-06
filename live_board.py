@@ -35,6 +35,7 @@ from pathlib import Path
 
 from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
+from claude_sv.nav import nav_html
 from claude_sv.parser import _clean_user_text, _iter_text_items
 
 REPO_ROOT = Path(__file__).parent
@@ -709,6 +710,7 @@ h1{font-size:17px;font-weight:600;margin:0;letter-spacing:.01em}
   padding:5px 13px;font-size:11.5px;cursor:pointer;font-family:inherit;white-space:nowrap;
   text-decoration:none;display:inline-block}
 .tgl:hover{background:var(--wash);color:var(--ink)}
+.tgl.cur{background:var(--wash);color:var(--ink);cursor:default}
 /* 次の更新までの鼓動（アニメ長＝リフレッシュ間隔。止まって見えたら watcher が死んでいる） */
 .pulse{height:2px;background:var(--grid);border-radius:2px;overflow:hidden;margin:13px 0 14px}
 .pulse i{display:block;height:2px;width:0;background:var(--cat-1);
@@ -775,15 +777,16 @@ LIVE_HEAD_JS = "try{var t=localStorage.getItem('csv-theme');" \
 
 
 def _pj_cell(project, pin=""):
-    """案件名セル。台帳ページ（counter_gen.py 生成）があればそこへリンクする。
+    """案件名セル。トラック個別ページ（track_record_gen.py 生成）があればそこへリンクする。
 
     存在チェックはファイル名の有無だけ＝台帳の中身は読まない（watch ループで毎秒回るため）。
-    ページが無い案件はただの文字列に戻るので、カウンター未生成でも板は壊れない。
+    slug() は track_record_gen.py と共有＝案件名が一致すれば同じファイル名を指す。
+    ページが無い案件はただの文字列に戻るので、個別ページ未生成でも板は壊れない。
     """
     esc = html_mod.escape
-    name = f"{slug(project, 'p-')}.html" if project else ""
-    if name and (REPO_ROOT / "reports" / "counter" / name).is_file():
-        return f'<td class="pj">{pin}<a href="counter/{name}">{esc(project)}</a></td>'
+    name = f"{slug(project)}.html" if project else ""
+    if name and (REPO_ROOT / "reports" / "track" / name).is_file():
+        return f'<td class="pj">{pin}<a href="track/{name}">{esc(project)}</a></td>'
     return f'<td class="pj">{pin}{esc(project)}</td>'
 
 
@@ -938,8 +941,7 @@ def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
     <div class="sub">生成 {now} ／ {refresh_sec}秒ごと自動更新（裏で <code>live_board.py --html --watch</code>）</div>
   </div>
   <div style="display:flex;gap:8px;align-items:center">
-    <a class="tgl" href="counter.html">🎫 カウンター</a>
-    <a class="tgl" href="track_record.html">🏆 戦績</a>
+    {nav_html("board")}
     <button class="tgl" id="tgl" type="button">☀ ライト</button>
   </div>
 </header>

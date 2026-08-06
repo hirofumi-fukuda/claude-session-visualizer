@@ -24,6 +24,7 @@ from pathlib import Path
 
 from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
+from claude_sv.nav import nav_html
 from claude_sv.scan import scan_all
 
 REPO_ROOT = Path(__file__).parent
@@ -239,6 +240,9 @@ h1 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:v
 .tgl{background:none;border:1px solid var(--border);color:var(--ink2);border-radius:999px;
   padding:5px 13px;font-size:11.5px;cursor:pointer;font-family:inherit;white-space:nowrap}
 .tgl:hover{background:var(--wash);color:var(--ink)}
+.tgl.cur{background:var(--wash);color:var(--ink);cursor:default}
+a.tgl{text-decoration:none;display:inline-block}
+.nav{display:flex;gap:8px;align-items:center}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;
   padding:17px 19px 15px;margin:12px 0}
 .card h2{font-size:12.5px;font-weight:600;margin:0 0 2px;letter-spacing:.02em}
@@ -640,7 +644,7 @@ def render_html(data):
     <h1><span class="dot"></span>エージェントマップ</h1>
     <div class="sub">生成 {gen} ／ ~/.claude/projects（{t["size_mb"]:,.0f} MB・最終稼働 {_fmt(t["last_ts"])}）</div>
   </div>
-  <button class="tgl" id="tgl" type="button">☀ ライト</button>
+  <div class="nav">{nav_html("map")}<button class="tgl" id="tgl" type="button">☀ ライト</button></div>
 </header>
 
 <div class="hero-grid">
