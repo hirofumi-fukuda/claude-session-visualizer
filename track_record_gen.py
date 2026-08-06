@@ -1,8 +1,8 @@
-"""トラック戦績ボード: 各案件の「今」と「あゆみ」を1画面に。
+"""トラックレコード: 各案件の「今」と「あゆみ」を1画面に。
 
-3点セットの「戦績=あゆみ」担当。
-  ボード=いま（live_board.html）  マップ=ぜんたい（claude_dashboard.html）
-  戦績=あゆみ（track_record.html）← このスクリプト
+3点セットの「あゆみ」担当。
+  ボード=いま（live_board.html）  アクティビティ=ぜんたい（claude_dashboard.html）
+  トラックレコード=あゆみ（track_record.html）← このスクリプト
 
 データ源:
   1. メモリ台帳（~/.claude/projects/*/memory/ の type:project）
@@ -146,7 +146,7 @@ h2 .n{color:var(--muted);font-weight:400;font-size:11px}
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .s-row.done .s-num{color:var(--hot)}
 .s-row.pending .s-num{color:var(--muted)}
-/* 戦績なし */
+/* 記録なし */
 .no-hist{display:flex;flex-wrap:wrap;gap:8px;padding:8px 0}
 .no-hist-item{color:var(--muted);font-size:11.5px;background:var(--wash);
   border-radius:6px;padding:3px 10px}
@@ -420,7 +420,7 @@ def build(open_browser: bool = True) -> Path:
     # HTML生成
     body_parts = []
     body_parts.append(
-        f'<h2>🏆 トラック戦績ボード<span class="n">{len(tracks)} トラック</span></h2>')
+        f'<h2>🏆 トラックレコード<span class="n">{len(tracks)} トラック</span></h2>')
     body_parts.append('<div class="track-grid">')
     body_parts.append("".join(_track_card_html(l) for l in tracks))
     body_parts.append('</div>')
@@ -437,18 +437,18 @@ def build(open_browser: bool = True) -> Path:
             f'<span class="no-hist-item">{html_mod.escape(l.label)}</span>'
             for l in sorted(no_hist, key=lambda l: l.label))
         body_parts.append(
-            f'<h2>📁 戦績なし<span class="n">セッション履歴が見つからない台帳 {len(no_hist)}本</span></h2>'
+            f'<h2>📁 記録なし<span class="n">セッション履歴が見つからない台帳 {len(no_hist)}本</span></h2>'
             f'<div class="no-hist">{items}</div>')
 
     total_s = sum(l.session_count() for l in tracks)
     body_parts.append(
-        f'<footer>台帳 {len(ledgers)}本を走査 → 戦績ありトラック {len(tracks)}本 / '
+        f'<footer>台帳 {len(ledgers)}本を走査 → 記録ありトラック {len(tracks)}本 / '
         f'合計 {total_s}セッション。'
         f'CLI: <code>python track_record_gen.py [--no-open]</code></footer>')
 
     OUT_DIR.mkdir(exist_ok=True)
     out = OUT_DIR / "track_record.html"
-    out.write_text(_page("🏆 トラック戦績ボード", "".join(body_parts)), encoding="utf-8")
+    out.write_text(_page("🏆 トラックレコード", "".join(body_parts)), encoding="utf-8")
 
     # 個別ページ（1トラック1枚＝ライブボードのトラック名リンク先 reports/track/<slug>.html）
     track_dir = OUT_DIR / "track"

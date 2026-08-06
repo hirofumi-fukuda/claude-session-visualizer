@@ -9,8 +9,8 @@ CSS の .tgl / .tgl.cur / .nav は各ジェネレータ側に定義済み（同�
 # (key, ファイル名, ラベル, 新タブで開くか)
 _ITEMS = [
     ("board",  "live_board.html",       "🖥️ ライブボード", False),
-    ("map",    "claude_dashboard.html", "🗺️ マップ",       True),
-    ("record", "track_record.html",     "🏆 戦績",         True),
+    ("map",    "claude_dashboard.html", "📊 アクティビティ", True),
+    ("record", "track_record.html",     "🏆 トラックレコード", True),
 ]
 
 

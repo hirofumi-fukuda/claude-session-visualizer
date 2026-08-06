@@ -634,14 +634,14 @@ def render_html(data):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>エージェントマップ — {gen}</title>
+<title>アクティビティ — {gen}</title>
 <style>{CSS}</style>
 </head>
 <body>
 <div class="wrap">
 <header>
   <div>
-    <h1><span class="dot"></span>エージェントマップ</h1>
+    <h1><span class="dot"></span>アクティビティ</h1>
     <div class="sub">生成 {gen} ／ ~/.claude/projects（{t["size_mb"]:,.0f} MB・最終稼働 {_fmt(t["last_ts"])}）</div>
   </div>
   <div class="nav">{nav_html("map")}<button class="tgl" id="tgl" type="button">☀ ライト</button></div>
