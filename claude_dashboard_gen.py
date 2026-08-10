@@ -24,6 +24,7 @@ from pathlib import Path
 
 from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
+from claude_sv.modelbadge import MDL_CSS, model_badge, shorten
 from claude_sv.nav import nav_html
 from claude_sv.scan import scan_all
 
@@ -94,7 +95,7 @@ def build_data(sessions, cfg):
             "session_no": s["session_no"], "n_files": 0,
             "first_ts": None, "last_ts": None,
             "n_user_prompts": 0, "n_assistant": 0, "n_tool_use": 0, "n_subagents": 0,
-            "output_tokens": 0, "workspaces": set(),
+            "output_tokens": 0, "workspaces": set(), "models": set(),
         })
         b["n_files"] += 1
         if s["first_ts"] and (b["first_ts"] is None or s["first_ts"] < b["first_ts"]):
@@ -105,22 +106,27 @@ def build_data(sessions, cfg):
             b[k] += s[k]
         b["n_subagents"] += s.get("n_subagents", 0)
         b["workspaces"].add(ws_labels.get(s["workspace"], s["workspace"]))
+        if s.get("model"):  # /clear 分割の各ファイルの最終モデル（普段は1つ・切替セッションは複数）
+            b["models"].add(shorten(s["model"]))
 
     by_project = defaultdict(list)
     for (proj, _), b in bundles.items():
         b["workspaces"] = sorted(b["workspaces"])
+        b["models"] = sorted(b["models"])
         by_project[proj].append(b)
 
     projects = []
     for name, blist in by_project.items():
         blist.sort(key=lambda b: (b["session_no"] is None, b["session_no"] or 0,
                                   b["first_ts"] or ""))
+        latest_b = max(blist, key=lambda b: b["last_ts"] or "")
         projects.append({
             "name": name,
             "last_ts": max(b["last_ts"] or "" for b in blist),
             "n_bundles": len(blist),
             "n_files": sum(b["n_files"] for b in blist),
             "output_tokens": sum(b["output_tokens"] for b in blist),
+            "model": latest_b["models"][-1] if latest_b["models"] else None,  # 直近Sのモデル
             "bundles": blist,
         })
     projects.sort(key=lambda p: p["last_ts"], reverse=True)
@@ -344,7 +350,7 @@ code{background:var(--wash);border-radius:4px;padding:1px 5px;font-size:11px}
   .hero-grid{grid-template-columns:repeat(2,1fr)}
   .bar{grid-template-columns:minmax(70px,110px) 1fr 96px}
 }
-"""
+""" + MDL_CSS
 
 JS = """
 (function(){
@@ -586,8 +592,10 @@ def _projects_html(projects):
             sn = f"S{b['session_no']}" if b["session_no"] is not None else "—"
             if b["n_files"] > 1:
                 sn += f' <span class="xf">×{b["n_files"]}f</span>'
+            mdl = " ".join(model_badge(m) for m in b.get("models", [])) or "·"
             rows.append(
-                f'<tr><td>{sn}</td><td class="txt">{esc(_span(b["first_ts"], b["last_ts"]))}</td>'
+                f'<tr><td>{sn}</td><td class="txt">{mdl}</td>'
+                f'<td class="txt">{esc(_span(b["first_ts"], b["last_ts"]))}</td>'
                 f'<td>{b["n_user_prompts"]}</td><td>{b["n_assistant"]}</td>'
                 f'<td>{b["n_tool_use"]}</td><td>{b["n_subagents"] or "·"}</td>'
                 f'<td>{b["output_tokens"] / 1000:,.0f}</td>'
@@ -596,9 +604,10 @@ def _projects_html(projects):
             f'<details class="proj"{is_open}><summary><b>{esc(p["name"])}</b>'
             f'{_ledger_link(p["name"])}'
             f'<span class="pill">{p["n_bundles"]}セッション</span>'
+            f'{model_badge(p.get("model"), note="直近セッションのモデル")}'
             f'<span class="meta">{p["n_files"]}ファイル・最終 {_fmt(p["last_ts"])}'
             f'・出力 {_k(p["output_tokens"])}</span></summary>'
-            '<table><tr><th>S</th><th>期間</th><th>発話</th><th>応答</th><th>ツール</th>'
+            '<table><tr><th>S</th><th>model</th><th>期間</th><th>発話</th><th>応答</th><th>ツール</th>'
             f'<th>sub-ag</th><th>出力tok(k)</th><th>WS</th></tr>{"".join(rows)}</table></details>')
     return "".join(out)
 

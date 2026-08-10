@@ -35,6 +35,7 @@ from pathlib import Path
 
 from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
+from claude_sv.modelbadge import MDL_CSS, model_badge
 from claude_sv.nav import nav_html
 from claude_sv.parser import _clean_user_text, _iter_text_items
 
@@ -755,18 +756,9 @@ table.dormant td{padding:7px 12px}
   margin-top:4px}
 .jbar i{display:block;height:100%;background:var(--cat-1)}
 .jagent{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--muted)}
-/* モデルバッジ: 系統ごとに色分け（状態色と同じくダーク/ライト共通の固定色）。
-   系統名（Opus/Sonnet/Haiku/Fable）併記＝色だけに意味を載せない。「今どのモデルで焚くか」を一目 */
-.mdl{display:inline-block;font-size:10.5px;font-weight:600;line-height:1.7;
-  padding:0 8px;border-radius:999px;border:1px solid;white-space:nowrap}
-.mdl-opus{color:#b083f0;background:rgba(176,131,240,.14);border-color:rgba(176,131,240,.36)}
-.mdl-sonnet{color:#4a90e2;background:rgba(74,144,226,.14);border-color:rgba(74,144,226,.36)}
-.mdl-haiku{color:#d99423;background:rgba(217,148,35,.14);border-color:rgba(217,148,35,.36)}
-.mdl-fable{color:#e0648c;background:rgba(224,100,140,.14);border-color:rgba(224,100,140,.36)}
-.mdl-unk{color:var(--muted);background:var(--wash);border-color:var(--border)}
 footer{margin-top:24px;color:var(--muted);font-size:11px;line-height:1.8}
 @media (max-width:760px){.tiles{grid-template-columns:repeat(2,1fr)}.ws{display:none}}
-"""
+""" + MDL_CSS
 
 LIVE_JS = """
 (function(){
@@ -799,26 +791,6 @@ def _pj_cell(project, pin=""):
     return f'<td class="pj">{pin}{esc(project)}</td>'
 
 
-# モデル系統ごとの色分けバッジ。_peek_model が返す短縮形（opus-4-8 / sonnet-4-6 /
-# haiku-4-5 / fable-5）の先頭語で系統を決め、残りをバージョン(4-8→4.8)に。色は状態色と
-# 同じくダーク/ライト共通の固定パレット。「色だけに意味を載せない」ため系統名を必ず併記。
-_MODEL_FAMILY = {"opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku", "fable": "Fable"}
-
-
-def _model_badge(model):
-    if not model:
-        return ""
-    family = model.split("-", 1)[0]
-    label_base = _MODEL_FAMILY.get(family)
-    cls = family if label_base else "unk"
-    if not label_base:
-        label_base = family.capitalize()
-    ver = model[len(family) + 1:].replace("-", ".") if len(model) > len(family) + 1 else ""
-    label = f"{label_base} {ver}".strip()
-    esc = html_mod.escape
-    return f'<span class="mdl mdl-{cls}" title="{esc(model)}">{esc(label)}</span>'
-
-
 def _live_rows_html(rows):
     esc = html_mod.escape
     out = []
@@ -836,7 +808,7 @@ def _live_rows_html(rows):
             f'{_pj_cell(r["project"], pin)}'
             f'<td class="sn">{esc(r["s_no"])}</td>'
             f'<td class="up">{esc(r["updated"])}</td><td class="ws">{esc(r["ws"])}</td>'
-            f'<td>{_model_badge(r.get("model"))}</td>'
+            f'<td>{model_badge(r.get("model"))}</td>'
             f'<td class="title">{esc(_trim(r["title"], 90))}</td></tr>')
     return "".join(out)
 

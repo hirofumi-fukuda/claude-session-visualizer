@@ -4,7 +4,7 @@ from pathlib import Path
 
 from .parser import parse_session, count_subagents
 
-CACHE_VERSION = 2  # parser の出力形式を変えたら上げる（全再パース）。2: days_tokens/hours_active 追加
+CACHE_VERSION = 3  # parser の出力形式を変えたら上げる（全再パース）。3: model 追加
 
 
 def scan_all(claude_dir: Path, cache_path: Path, workspaces: list[str] | None = None,

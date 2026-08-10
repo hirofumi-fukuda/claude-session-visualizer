@@ -28,7 +28,9 @@ from claude_sv.ledger import (
 )
 from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.mdlite import render as md_render
+from claude_sv.modelbadge import MDL_CSS, model_badge
 from claude_sv.nav import nav_html
+from claude_sv.scan import scan_all
 
 REPO_ROOT = Path(__file__).parent
 OUT_DIR = REPO_ROOT / "reports"
@@ -182,7 +184,7 @@ details.detail-full summary{cursor:pointer;color:var(--muted);font-size:11.5px;p
 .md th,.md td{border:1px solid var(--border);padding:4px 9px;text-align:left}
 .md th{background:var(--wash)}
 .md hr{border:0;border-top:1px solid var(--border);margin:.8em 0}
-"""
+""" + MDL_CSS
 
 
 # ── ページ組み立て ─────────────────────────────────────────────
@@ -220,6 +222,32 @@ def _canonical_key(led, mapper) -> str:
     return led.project or led.name or led.path.stem
 
 
+# ── トラック→直近セッションの model（S14）──────────────────────
+def _latest_models(cfg, mapper) -> dict:
+    """案件(canonical)→直近セッションの model。台帳md に model 情報は無いので jsonl scan から引く。
+
+    scan_all はアクティビティと同じ差分キャッシュ（daily_maintenance は dashboard→ここ の順
+    ＝温まった状態で走る）。採番セッションの案件名は同じ alias テーブルで canonical に落ちる
+    ので _canonical_key と突合できる。model は飾り＝scan が死んでも本体は生成する。
+    """
+    latest = {}
+    try:
+        sessions = scan_all(
+            Path(cfg.get("claude_dir", "~/.claude")).expanduser(),
+            cache_path=REPO_ROOT / "cache" / "scan_cache.json",
+            workspaces=cfg.get("workspaces") or None)
+    except OSError:
+        return latest
+    best_ts = {}
+    for s in sessions:
+        mapper.map_session(s)
+        p, ts = s.get("project"), s.get("last_ts") or ""
+        if p and s.get("model") and ts > best_ts.get(p, ""):
+            best_ts[p] = ts
+            latest[p] = s["model"]
+    return latest
+
+
 # ── カード HTML ───────────────────────────────────────────────
 def _track_slug(led) -> str:
     """個別ページのファイル名・カードのアンカー id に使うスラッグ。
@@ -244,7 +272,7 @@ def _session_row_html(entry, sum_len: int = 55) -> str:
             f'</div>')
 
 
-def _track_card_html(led) -> str:
+def _track_card_html(led, model=None) -> str:
     hist = [e for e in led.session_history() if not e.is_reserved]
     last3 = list(reversed(hist[-3:]))  # 新しい順 (最大3件)
     count = len(hist)
@@ -269,6 +297,7 @@ def _track_card_html(led) -> str:
     header = (f'<div class="track-header">'
               f'<a class="track-name" href="track/{tslug}.html">{html_mod.escape(led.label)}</a>{ws_span}'
               f'<span class="status-badge {status_cls}">{status_label}</span>'
+              f'{model_badge(model, note="直近セッションのモデル")}'
               f'<span class="track-stats">{html_mod.escape(stats)}</span>'
               f'</div>')
 
@@ -305,7 +334,7 @@ def _track_card_html(led) -> str:
 
 
 # ── 個別ページ HTML ───────────────────────────────────────────
-def _detail_page(led) -> str:
+def _detail_page(led, model=None) -> str:
     """1トラック=1ページの詳細（ライブボードのトラック名リンク先）。
     上部＝構造化サマリ（現在地/Next/Blocked/全セッション履歴）、下部＝台帳全文（折りたたみ）。"""
     label = led.label
@@ -327,6 +356,7 @@ def _detail_page(led) -> str:
     header = (f'<div class="detail-head">'
               f'<h1 class="detail-title">🗂️ {html_mod.escape(label)}</h1>{ws_span}'
               f'<span class="status-badge {status_cls}">{status_label}</span>'
+              f'{model_badge(model, note="直近セッションのモデル")}'
               f'<span class="track-stats">{html_mod.escape(stats)}</span></div>')
 
     def section(lbl, cls, text):
@@ -417,12 +447,18 @@ def build(open_browser: bool = True) -> Path:
     # 最終セッション日が新しい順にソート
     tracks.sort(key=lambda l: l.latest_session_date() or "0", reverse=True)
 
+    # トラック→直近セッションの model（jsonl scan・キャッシュ利用）
+    models = _latest_models(cfg, mapper)
+
+    def _model_of(led):
+        return models.get((led.project or led.name or led.path.stem).strip())
+
     # HTML生成
     body_parts = []
     body_parts.append(
         f'<h2>🏆 トラックレコード<span class="n">{len(tracks)} トラック</span></h2>')
     body_parts.append('<div class="track-grid">')
-    body_parts.append("".join(_track_card_html(l) for l in tracks))
+    body_parts.append("".join(_track_card_html(l, _model_of(l)) for l in tracks))
     body_parts.append('</div>')
 
     # 戦績なし（type:project だがセッション履歴ゼロ）
@@ -461,7 +497,7 @@ def build(open_browser: bool = True) -> Path:
         if fname in seen:   # by_name で案件名は一意だが 60字 truncate 衝突の保険（先勝ち）
             continue
         seen.add(fname)
-        (track_dir / fname).write_text(_detail_page(led), encoding="utf-8")
+        (track_dir / fname).write_text(_detail_page(led, _model_of(led)), encoding="utf-8")
 
     print(f"✅ {out}  （{len(tracks)} トラック / {total_s}S / 個別ページ {len(seen)}枚）")
     if open_browser:

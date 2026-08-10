@@ -55,6 +55,7 @@ def parse_session(path: Path) -> dict:
         "n_tool_use": 0,
         "output_tokens": 0,
         "input_tokens": 0,
+        "model": None,  # 最後の assistant の model（/model 途中切替に追従＝live_board._peek_model と同義）
         "cwd": None,
         "version": None,
         "days_active": {},  # "YYYY-MM-DD" -> assistantメッセージ数
@@ -106,6 +107,8 @@ def parse_session(path: Path) -> dict:
                     continue
                 summary["n_assistant"] += 1
                 msg = rec.get("message") or {}
+                if msg.get("model") and msg["model"] != "<synthetic>":
+                    summary["model"] = msg["model"]
                 usage = msg.get("usage") or {}
                 out_tok = usage.get("output_tokens") or 0
                 summary["output_tokens"] += out_tok
