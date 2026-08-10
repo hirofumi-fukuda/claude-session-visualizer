@@ -8,6 +8,10 @@ cache/
 # 個人設定（採番規約・案件マッピング等。サンプルは config.example.* で共有）
 config.local.*
 .env
+claude-wt/workspaces.json
+
+# claude-wt のスクショ一時置き場（clip2file が生成・14日で自動掃除）
+claude-wt/clips/
 
 # Python
 __pycache__/

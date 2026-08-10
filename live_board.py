@@ -32,6 +32,7 @@ import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
@@ -86,28 +87,43 @@ _CLI_GLOBS = [
 ]
 
 
+def _probe_cli(exe):
+    """候補が「実在するのに壊れている」ことがある（PATH の Volta/npm shim の実体が
+    自動更新失敗で消失＝2026-08-10 実地）ため、--version が通るものだけを採用する。"""
+    try:
+        r = subprocess.run([exe, "--version"], capture_output=True, timeout=30)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _claude_cli(cfg=None):
-    """claude 実行ファイルのパスを解決する（config → PATH → 拡張同梱バイナリ）。
+    """claude 実行ファイルのパスを解決する（config → PATH → 素CLI標準 → 拡張同梱バイナリ）。
 
     Cursor/VSCode 拡張版CCは claude 本体を拡張ディレクトリ内に同梱し PATH には置かない。
     素のCLIを別途入れていない環境では `claude agents --json` が command not found になり、
     ライブボードが「状態ファイルのみ」の縮退表示に落ちる。ディレクトリ名にバージョン番号が
     入るので glob で拾い、複数あれば mtime が新しい方＝現行版を使う（拡張更新で壊れない）。
     config.local.json の `claude_cli` に絶対パスを書けばそれを最優先。
+    候補は --version プローブが通った最初のものをプロセス内キャッシュ（壊れ候補スキップ）。
     """
     if _CLI_CACHE:
         return _CLI_CACHE[0]
+    cands = []
     exe = (cfg or {}).get("claude_cli") or ""
-    if exe and not Path(exe).exists():
-        exe = ""
-    if not exe:
-        exe = shutil.which("claude") or ""
-    if not exe:
-        home = Path.home()
-        found = [p for g in _CLI_GLOBS for p in home.glob(g) if p.is_file()]
-        if found:
-            exe = str(max(found, key=lambda p: p.stat().st_mtime))
-    _CLI_CACHE.append(exe or None)
+    if exe and Path(exe).exists():
+        cands.append(exe)
+    w = shutil.which("claude")
+    if w:
+        cands.append(w)
+    home = Path.home()
+    native = home / ".local" / "bin" / "claude.exe"  # 公式スタンドアロン版の標準配置
+    if native.is_file():
+        cands.append(str(native))
+    found = [p for g in _CLI_GLOBS for p in home.glob(g) if p.is_file()]
+    if found:
+        cands.append(str(max(found, key=lambda p: p.stat().st_mtime)))
+    _CLI_CACHE.append(next((c for c in cands if _probe_cli(c)), None))
     return _CLI_CACHE[0]
 
 
@@ -505,6 +521,7 @@ def build_rows():
     new_wait_sec = cfg.get("new_waiting_sec", 180)  # 待ち入りからこの秒数以内は「新着」🆕
     now_epoch = datetime.now(timezone.utc).timestamp()
 
+    degraded = agents is None  # 縮退＝稼働/休眠の区別が hook 状態の近似になる（画面にも明示する）
     if agents is None:
         # claude CLI が使えない場合は直近24hの状態ファイルだけで表示
         print("⚠️ claude agents --json が実行できないため状態ファイルのみで表示")
@@ -582,6 +599,8 @@ def build_rows():
             "ws": _ci_get(ws_labels, ws, Path(cwd).name if cwd else ws[:16]),
             "model": _peek_model(transcript),  # 委託の engine 表記と対（誰が働いているか）
             "pid": rec.get("pid") or "",
+            "sid": sid,   # タブ復元スナップショット用（claude-wt/restore_tabs.ps1）
+            "cwd": cwd,
         })
     # 待ち状態（🔴許可待ち→🟡確認待ち）を最上部に固定し、各グループ内は更新の新しい順。
     # 作業中も新しい順＝いま動いているセッションが上に来る（見逃し防止と「今どれ」を両立）。
@@ -601,17 +620,21 @@ def build_rows():
     # 委託ジョブ（agent_jobs 台帳）
     jobs_running, jobs_finished = _load_jobs(
         claude_dir, now_epoch, cfg.get("job_recent_done_hours", 24))
-    return rows, skipped, pinned_rows, suggest_unnum, suggest_num, jobs_running, jobs_finished
+    return (rows, skipped, pinned_rows, suggest_unnum, suggest_num,
+            jobs_running, jobs_finished, degraded)
 
 
 def render(rows, skipped=0, pinned_rows=None, suggest_unnum=None, suggest_num=None,
-           jobs_running=None, jobs_finished=None):
+           jobs_running=None, jobs_finished=None, degraded=False):
     now = datetime.now().strftime("%H:%M:%S")
     n_wait = sum(1 for r in rows if r["state"].startswith("waiting"))
     n_jobs = len(jobs_running or [])
     jobs_note = f"・委託 {n_jobs}" if n_jobs else ""
     print(f"🖥️ エージェントライブボード {now} — 稼働 {len(rows)} セッション"
           f"（うち待ち {n_wait}）{jobs_note}\n")
+    if degraded:
+        print("⚠️ 縮退表示: claude agents --json 不可のため hook 状態(24h)の近似"
+              "＝稼働/休眠の区別が不正確。watcher 再起動か claude CLI を確認\n")
     if not rows:
         print("（稼働中セッションなし）")
     else:
@@ -747,10 +770,25 @@ tr.new td{background:var(--newrow)}
 .empty{background:var(--surface);border:1px solid var(--border);border-radius:11px;
   padding:14px 16px;color:var(--muted);font-size:12px}
 .note{color:var(--muted);font-size:11px;margin-top:10px}
+/* 縮退表示の警告帯: agents --json 不可＝稼働/休眠が近似になっている時だけ出す */
+.degrade{background:rgba(208,59,59,.12);border:1px solid rgba(208,59,59,.45);
+  border-radius:9px;padding:9px 14px;margin-bottom:14px;font-size:12px;color:var(--ink)}
+/* 新規WTタブのボタン列: 新規は「どのWSで焚くか」が必須入力＝WS別ボタン（claude-wt://new/） */
+.newbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:14px;font-size:12px}
+.newbar .s{color:var(--muted);font-size:11px;margin-right:2px}
+.newbar a{display:inline-block;border:1px solid var(--border);border-radius:6px;
+  padding:2px 10px;color:var(--ink2);text-decoration:none}
+.newbar a:hover{background:var(--wash);color:var(--ink)}
 table.dormant{font-size:12px}
 table.dormant td{padding:7px 12px}
 .sid{font-family:ui-monospace,Consolas,monospace;color:var(--muted);font-size:11px}
 .dnote{color:var(--ink2)}
+/* 休眠行の再開アクション: ▶=claude-wt://（レジストリ登録済み環境のみ動く）／📋=resumeコマンドをコピー */
+.act{white-space:nowrap;text-align:right}
+.act a,.act .cp{display:inline-block;border:1px solid var(--border);border-radius:6px;
+  padding:1px 8px;font-size:11px;color:var(--ink2);background:none;cursor:pointer;
+  text-decoration:none;font-family:inherit;line-height:1.7}
+.act a:hover,.act .cp:hover{background:var(--wash);color:var(--ink)}
 /* 委託ジョブ: 進捗ミニバーとエンジン名。色はセッション状態と同じ固定パレット */
 .jbar{height:4px;background:var(--grid);border-radius:2px;overflow:hidden;max-width:130px;
   margin-top:4px}
@@ -770,6 +808,15 @@ LIVE_JS = """
     try{localStorage.setItem('csv-theme', root.dataset.theme);}catch(e){}
     lab();
   };
+  // 📋: resume コマンドをコピー（file:// も secure context 扱いで clipboard API が使える）
+  document.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('.cp') : null;
+    if(!b) return;
+    navigator.clipboard.writeText('claude --resume ' + b.dataset.sid).then(function(){
+      b.textContent = '✓';  // meta refresh で数秒後に元へ戻るので戻し処理は最小限
+      setTimeout(function(){ b.textContent = '📋'; }, 1500);
+    });
+  });
 })();
 """
 # 自動リロード（meta refresh）でテーマが一瞬戻るのを防ぐため、描画前に data-theme を当てる
@@ -813,6 +860,30 @@ def _live_rows_html(rows):
     return "".join(out)
 
 
+def _newtab_html():
+    """「➕ 新規WTタブ」ボタン列（claude-wt://new/<WS名>）を claude-wt/workspaces.json から作る。
+
+    resume と違い、新規セッションは「どのワークスペースで焚くか」が必須入力
+    （cwd がセッションの所属先＝採番・メモリ・地図の入り口を決める）ので WS別ボタンにする。
+    選択肢とハンドラ側の検証ホワイトリストは同じ workspaces.json＝定義の一本化。
+    ファイルが無い/壊れている環境ではボタン列ごと消えるだけで板は壊れない。
+    """
+    esc = html_mod.escape
+    path = REPO_ROOT / "claude-wt" / "workspaces.json"
+    try:
+        with open(path, encoding="utf-8") as f:
+            entries = json.load(f).get("workspaces") or []
+    except (OSError, json.JSONDecodeError):
+        return ""
+    btns = "".join(
+        f'<a href="claude-wt://new/{quote(e["name"])}" title="{esc(e.get("path", ""))}">'
+        f'➕ {esc(e["name"])}</a>'
+        for e in entries if e.get("name"))
+    if not btns:
+        return ""
+    return f'<div class="newbar"><span class="s">新規WTタブ</span>{btns}</div>'
+
+
 def _dormant_html(pinned_rows, suggest_unnum, suggest_num):
     """休眠セッションの再開予定／再開候補を HTML セクションとして返す。"""
     esc = html_mod.escape
@@ -826,7 +897,11 @@ def _dormant_html(pinned_rows, suggest_unnum, suggest_num):
                 f'<tr><td class="sid">{esc(r["sid_short"])}</td>'
                 f'{_pj_cell(r["project"])}<td class="sn">{esc(r["s_no"])}</td>'
                 f'<td class="up">最終 {esc(r["last_age"])}</td>'
-                f'<td class="title">{esc(_trim(r["title"], 70))} {note}</td></tr>')
+                f'<td class="title">{esc(_trim(r["title"], 70))} {note}</td>'
+                f'<td class="act"><a href="claude-wt://resume/{esc(r["sid"])}"'
+                f' title="Windows Terminal で再開（claude-wt:// 登録が必要）">▶ 開く</a> '
+                f'<button class="cp" type="button" data-sid="{esc(r["sid"])}"'
+                f' title="claude --resume コマンドをコピー">📋</button></td></tr>')
         return "".join(out)
 
     sections = []
@@ -892,7 +967,7 @@ def _jobs_html(running, finished):
 
 def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
                 suggest_unnum=None, suggest_num=None,
-                jobs_running=None, jobs_finished=None):
+                jobs_running=None, jobs_finished=None, degraded=False):
     now = datetime.now().strftime("%H:%M:%S")
     pinned_rows, suggest_unnum = pinned_rows or [], suggest_unnum or []
     suggest_num = suggest_num or []
@@ -925,6 +1000,10 @@ def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
                 '<div class="empty">なし — 動いているセッションはない</div>')
     footnote = (f'<div class="note">※ 非表示: 会話実体のない空セッション {skipped}件'
                 "（Cursor復元時の重複起動プロセス）</div>") if skipped else ""
+    degrade_html = ('<div class="degrade">⚠️ 縮退表示: <code>claude agents --json</code> が'
+                    '実行できないため hook 状態(24h)の近似で表示中＝稼働/休眠の区別が不正確。'
+                    'watcher の再起動（live_board.bat）か claude CLI の状態を確認</div>'
+                    if degraded else "")
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -947,6 +1026,8 @@ def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
   </div>
 </header>
 <div class="pulse"><i style="animation-duration:{refresh_sec}s"></i></div>
+{degrade_html}
+{_newtab_html()}
 <div class="tiles">{tiles}</div>
 
 <h2>⚙️ 動いてる<span class="s">更新の新しい順</span></h2>
@@ -962,11 +1043,33 @@ def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
 <footer>
   ピン <code>python live_board.py pin &lt;sid&gt; [メモ]</code>
   ／ 全体の地図は <code>claude_dashboard.bat</code>
+  ／ ▶ 開く は初回のみ <code>claude-wt\\register_protocol.ps1</code> の実行が必要
 </footer>
 </div>
 <script>{LIVE_JS}</script>
 </body>
 </html>"""
+
+
+def _write_tabs_snapshot(rows):
+    """稼働セッションの構成を tabs_snapshot.json に保存（claude-wt\\restore_tabs.ps1 の復元元）。
+
+    「前回のタブ状態」の正体＝watcher が最後に見た稼働セッション一覧。空のときは書かない＝
+    全タブを閉じた後・PC再起動後も「最後に何か動いていた状態」が残り、翌朝それを復元できる。
+    reports/ 配下（gitignore）＝タイトルに機密が入り得るのでリポには積まない。
+    """
+    if not rows:
+        return
+    sessions = [{"sid": r["sid"], "cwd": r["cwd"], "project": r["project"],
+                 "s_no": r["s_no"], "title": _trim(r["title"], 60),
+                 "model": r.get("model") or ""}
+                for r in rows if r.get("cwd")]
+    if not sessions:
+        return
+    out = {"saved_at": datetime.now().isoformat(timespec="seconds"), "sessions": sessions}
+    path = REPO_ROOT / "reports" / "tabs_snapshot.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def _kill_stale_watchers():
@@ -1117,19 +1220,23 @@ def main():
     out_path = REPO_ROOT / "reports" / "live_board.html"
     while True:
         (rows, skipped, pinned_rows, suggest_unnum, suggest_num,
-         jobs_running, jobs_finished) = build_rows()
+         jobs_running, jobs_finished, degraded) = build_rows()
+        if not degraded:
+            # 縮退中は書かない＝閉じたセッション混じりの近似データで「前回状態」を汚染しない
+            _write_tabs_snapshot(rows)  # タブ復元用（claude-wt/restore_tabs.ps1 が読む）
         if html_mode:
             out_path.parent.mkdir(exist_ok=True)
             out_path.write_text(
                 render_html(rows, watch or 10, skipped, pinned_rows,
-                            suggest_unnum, suggest_num, jobs_running, jobs_finished),
+                            suggest_unnum, suggest_num, jobs_running, jobs_finished,
+                            degraded=degraded),
                 encoding="utf-8")
             print(f"{datetime.now().strftime('%H:%M:%S')} updated -> {out_path}")
         else:
             if watch:
                 os.system("cls" if os.name == "nt" else "clear")
             render(rows, skipped, pinned_rows, suggest_unnum, suggest_num,
-                   jobs_running, jobs_finished)
+                   jobs_running, jobs_finished, degraded=degraded)
         if not watch:
             break
         time.sleep(watch)
