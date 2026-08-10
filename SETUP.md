@@ -70,6 +70,10 @@ copy config.example.json config.local.json
 
 3. フックはホットリロード＝settings保存で既存タブにも即反映。状態JSONは `~/.claude/hooks/session_state/<session_id>.json` に出る（working/waiting_input/waiting_permission・7日超は自動削除）。
 
+4. **（任意）トーストの名義・アイコンを自前化**: `hooks/register_toast_app.ps1` を実行すると、AUMID `goof.AgentOps` を HKCU に登録（管理者不要・`unregister_toast_app.ps1` で完全に戻せる）。トーストが「Windows PowerShell」名義ではなく**自前の名前＋信号機アイコン**になり、クリックでライブボードHTMLが開くようになる（`~/.claude/hooks/toast_click.txt` にURI）。未登録でもトースト自体は出る（PowerShell名義フォールバック）。
+   - トーストには**状態色の丸アイコン**（🟡待機中 `#fab219`／🔴許可待ち `#d03b3b`＝ライブボードと同一hex）が付く。アイコンは `session_notify.py --make-icons` が純Pythonで `~/.claude/hooks/toast_icons/` に自己生成（Pillow不要・消しても再生成される）
+   - 動作テスト: `python "%USERPROFILE%\.claude\hooks\session_notify.py" --test-toast waiting_permission`
+
 > ⚠️ **重要（§6の地雷1）**: Cursor拡張版CCは **PowerShell の `-File` フックを実行しない**。必ず **python フック**（`session_notify.py`）を使う。`.ps1` 版（`session_notify.ps1`）は同梱しているが**CLI専用・Cursorでは非実行**。トースト通知は python から powershell 子プロセスを spawn する形で内部的に出す。
 
 ## 5. 使い方

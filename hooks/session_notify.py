@@ -15,20 +15,70 @@ Events wired in settings.json (all call this file with `python`):
 
 State files (live board data source, read by live_board.py):
   <this dir>/session_state/<session_id>.json
-ASCII-only source (Japanese arrives via stdin/data). Never breaks Claude Code:
-any error is swallowed and the process exits 0.
+ASCII-only source (Japanese arrives via stdin/data or escape sequences). Never
+breaks Claude Code: any error is swallowed and the process exits 0.
+
+Toast branding (S16 2026-08-10): the toast now uses a self-built ToastGeneric
+XML with a state-colored dot icon (appLogoOverride) whose colors MATCH the live
+board (live_board.py STATE_HTML). If hooks/register_toast_app.ps1 registered
+the "goof.AgentOps" AUMID (HKCU), the toast shows our own app name/icon instead
+of "Windows PowerShell"; otherwise it falls back to the PowerShell AUMID, so
+this file keeps working standalone on an unregistered machine. Clicking the
+toast opens the URI in <this dir>/toast_click.txt when present (the register
+script points it at the live board HTML). No per-session resume button on
+purpose: toasted sessions are alive in some tab, and claude-wt resume has no
+double-resume guard (only restore_tabs.ps1 has one).
+
+CLI (manual/setup use, errors NOT swallowed):
+  python session_notify.py --make-icons          regenerate toast_icons/
+  python session_notify.py --test-toast [state]  raise a test toast, print errors
 """
 import json
+import math
 import os
 import re
+import struct
 import subprocess
 import sys
 import time
+import zlib
 
 HOOK_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(HOOK_DIR, "session_state")
 PRUNE_DAYS = 7
 FULL_POWERSHELL = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+
+# Toast identity: our own AUMID when registered (register_toast_app.ps1),
+# else the stock PowerShell AUMID (shows as "Windows PowerShell").
+TOAST_APPID = "goof.AgentOps"
+PS_APPID = ("{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}"
+            "\\WindowsPowerShell\\v1.0\\powershell.exe")
+
+ICON_DIR = os.path.join(HOOK_DIR, "toast_icons")
+CLICK_FILE = os.path.join(HOOK_DIR, "toast_click.txt")  # optional click-target URI
+
+# State dot colors -- MUST match live_board.py STATE_HTML
+# (working #0ca30c / waiting_input #fab219 / waiting_permission #d03b3b).
+STATE_COLORS = {
+    "working": (0x0C, 0xA3, 0x0C),
+    "waiting_input": (0xFA, 0xB2, 0x19),
+    "waiting_permission": (0xD0, 0x3B, 0x3B),
+}
+ICON_FILES = {
+    "working": "dot_working.png",
+    "waiting_input": "dot_waiting_input.png",
+    "waiting_permission": "dot_waiting_permission.png",
+}
+APP_ICO = "agentops.ico"
+_ICON_BG = (0x1E, 0x24, 0x30)  # app icon plate (dark slate, board-ish)
+
+# Toast head labels, aligned with board wording (\u-escaped to keep ASCII source):
+# HEAD_WAITING    = "(yellow dot) Taiki-chuu -- anata no nyuuryoku machi"
+# HEAD_PERMISSION = "(red dot) Kyoka-machi -- shounin ga hitsuyou"
+HEAD_WAITING = ("\\U0001f7e1 \\u5f85\\u6a5f\\u4e2d \\u2014 "
+                "\\u3042\\u306a\\u305f\\u306e\\u5165\\u529b\\u5f85\\u3061")
+HEAD_PERMISSION = ("\\U0001f534 \\u8a31\\u53ef\\u5f85\\u3061 \\u2014 "
+                   "\\u627f\\u8a8d\\u304c\\u5fc5\\u8981")
 
 # Environment tag blocks (IDE notices, system reminders, command wrappers) are
 # stripped from user text before use -- same regex as claude_sv/parser.py.
@@ -153,28 +203,169 @@ def prune_old():
         pass
 
 
-def show_toast(head, body):
-    """Spawn a detached PowerShell child to raise a WinRT toast.
-    Text is passed via env vars so Japanese/quotes need no escaping."""
+# ---------------------------------------------------------------- toast icons
+# Tiny pure-stdlib PNG/ICO writers: no Pillow on the hook path, and the icons
+# regenerate themselves if the folder is wiped (file stays standalone).
+
+def _clamp01(v):
+    return 0.0 if v < 0.0 else (1.0 if v > 1.0 else v)
+
+
+def _png_rgba(size, pixel):
+    """Write a size x size RGBA PNG; pixel(x, y) -> (r, g, b, a)."""
+    rows = []
+    for y in range(size):
+        row = bytearray(b"\x00")  # filter type 0
+        for x in range(size):
+            row.extend(pixel(x, y))
+        rows.append(bytes(row))
+
+    def chunk(tag, data):
+        body = tag + data
+        return (struct.pack(">I", len(data)) + body
+                + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF))
+
+    ihdr = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", zlib.compress(b"".join(rows), 9))
+            + chunk(b"IEND", b""))
+
+
+def _dot_png(size, rgb):
+    """Anti-aliased solid dot on transparent background (state badge)."""
+    c = (size - 1) / 2.0
+    rad, aa = size / 2.0 - 2.0, 1.5
+
+    def pixel(x, y):
+        a = _clamp01((rad - math.hypot(x - c, y - c)) / aa)
+        return (rgb[0], rgb[1], rgb[2], int(a * 255))
+
+    return _png_rgba(size, pixel)
+
+
+def _app_png(size):
+    """App identity icon: dark rounded plate + board traffic light (red/yellow/green)."""
+    r, aa = size * 0.18, 2.0
+    cy, drad = size * 0.5, size * 0.11
+    dots = [(size * 0.26, STATE_COLORS["waiting_permission"]),
+            (size * 0.50, STATE_COLORS["waiting_input"]),
+            (size * 0.74, STATE_COLORS["working"])]
+
+    def pixel(x, y):
+        nx = min(max(x, r), size - 1 - r)
+        ny = min(max(y, r), size - 1 - r)
+        plate = _clamp01((r - math.hypot(x - nx, y - ny)) / aa)
+        rgb = _ICON_BG
+        for cx, col in dots:
+            da = _clamp01((drad - math.hypot(x - cx, y - cy)) / aa)
+            if da > 0.0:
+                rgb = tuple(int(rgb[i] + (col[i] - rgb[i]) * da) for i in range(3))
+        return (rgb[0], rgb[1], rgb[2], int(plate * 255))
+
+    return _png_rgba(size, pixel)
+
+
+def _ico_from_png(png, size):
+    """Single-image ICO with a PNG payload (Vista+)."""
+    b = 0 if size >= 256 else size
+    entry = struct.pack("<BBBBHHII", b, b, 0, 0, 1, 32, len(png), 22)
+    return struct.pack("<HHH", 0, 1, 1) + entry + png
+
+
+def make_icons(force=False):
+    """Generate toast_icons/ (state dots + app ico); returns written/present paths."""
+    os.makedirs(ICON_DIR, exist_ok=True)
+    out = []
+    for state, name in ICON_FILES.items():
+        p = os.path.join(ICON_DIR, name)
+        if force or not os.path.exists(p):
+            with open(p, "wb") as f:
+                f.write(_dot_png(128, STATE_COLORS[state]))
+        out.append(p)
+    ico = os.path.join(ICON_DIR, APP_ICO)
+    if force or not os.path.exists(ico):
+        with open(ico, "wb") as f:
+            f.write(_ico_from_png(_app_png(256), 256))
+    out.append(ico)
+    return out
+
+
+def _state_icon(state):
+    """Path of the dot icon for a state ("" if generation failed)."""
+    try:
+        make_icons()
+        return os.path.join(ICON_DIR, ICON_FILES.get(state, ICON_FILES["waiting_input"]))
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------- toast raise
+
+def _toast_appid():
+    """Own AUMID when registered (HKCU), else stock PowerShell AUMID."""
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                             r"SOFTWARE\Classes\AppUserModelId" + "\\" + TOAST_APPID)
+        winreg.CloseKey(key)
+        return TOAST_APPID
+    except OSError:
+        return PS_APPID
+
+
+def _click_uri():
+    """Optional toast click target (single URI line in toast_click.txt)."""
+    try:
+        with open(CLICK_FILE, encoding="utf-8") as f:
+            return f.readline().strip()
+    except OSError:
+        return ""
+
+
+def _file_uri(path):
+    return "file:///" + os.path.abspath(path).replace("\\", "/")
+
+
+def _toast_xml(head, body, icon_path, launch_uri):
+    """Self-built ToastGeneric XML (state dot as appLogoOverride)."""
+    from xml.sax.saxutils import escape, quoteattr
+    img = ""
+    if icon_path and os.path.exists(icon_path):
+        img = "<image placement=\"appLogoOverride\" src=%s/>" % quoteattr(
+            _file_uri(icon_path))
+    launch = ""
+    if launch_uri:
+        launch = " activationType=\"protocol\" launch=%s" % quoteattr(launch_uri)
+    return ("<toast%s><visual><binding template=\"ToastGeneric\">%s"
+            "<text>%s</text><text>%s</text></binding></visual></toast>"
+            % (launch, img, escape(head), escape(body)))
+
+
+def show_toast(head, body, state="waiting_input", debug=False):
+    """Raise a WinRT toast via a detached PowerShell child.
+    The whole XML rides in an env var: no quoting/escaping issues, and the
+    PS side stays a dumb LoadXml+Show. debug=True runs synchronously and
+    returns the PowerShell exit code (CLI --test-toast)."""
+    xml = _toast_xml(head, body, _state_icon(state), _click_uri())
     ps = (
         "[Windows.UI.Notifications.ToastNotificationManager,"
         " Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null;"
         "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument,"
         " ContentType = WindowsRuntime] | Out-Null;"
-        "$xml = [Windows.UI.Notifications.ToastNotificationManager]::"
-        "GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]"
-        "::ToastText02);"
-        "$t = $xml.GetElementsByTagName('text');"
-        "$t.Item(0).AppendChild($xml.CreateTextNode($env:TOAST_HEAD)) | Out-Null;"
-        "$t.Item(1).AppendChild($xml.CreateTextNode($env:TOAST_BODY)) | Out-Null;"
+        "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument;"
+        "$xml.LoadXml($env:TOAST_XML);"
         "$toast = New-Object Windows.UI.Notifications.ToastNotification($xml);"
-        "$appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}"
-        "\\WindowsPowerShell\\v1.0\\powershell.exe';"
         "[Windows.UI.Notifications.ToastNotificationManager]::"
-        "CreateToastNotifier($appId).Show($toast)"
+        "CreateToastNotifier($env:TOAST_APPID).Show($toast)"
     )
-    env = dict(os.environ, TOAST_HEAD=head, TOAST_BODY=body)
+    env = dict(os.environ, TOAST_XML=xml, TOAST_APPID=_toast_appid())
     exe = FULL_POWERSHELL if os.path.exists(FULL_POWERSHELL) else "powershell"
+    if debug:
+        r = subprocess.run([exe, "-NoProfile", "-Command", ps], env=env,
+                           capture_output=True, text=True)
+        sys.stdout.write(r.stdout)
+        sys.stderr.write(r.stderr)
+        return r.returncode
     flags = 0
     if os.name == "nt":
         flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
@@ -182,6 +373,7 @@ def show_toast(head, body):
         [exe, "-NoProfile", "-Command", ps], env=env,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL, creationflags=flags)
+    return None
 
 
 def main():
@@ -197,28 +389,52 @@ def main():
 
     title = resolve_title(transcript, prompt, cwd)
 
+    if event == "UserPromptSubmit":
+        state = "working"
+    elif event == "Notification":
+        state = "waiting_permission" if "permission" in msg else "waiting_input"
+    else:
+        state = "waiting_input"
+
     if session_id:
-        if event == "UserPromptSubmit":
-            state = "working"
-        elif event == "Notification":
-            state = "waiting_permission" if "permission" in msg else "waiting_input"
-        else:
-            state = "waiting_input"
         write_state(session_id, state, event, cwd, transcript, title, msg, prompt)
 
     # toast only for Stop / Notification (UserPromptSubmit is state-only)
     if event == "UserPromptSubmit":
         return
     if event == "Notification":
-        head = "Claude Code: needs attention"
+        head = HEAD_PERMISSION if state == "waiting_permission" else HEAD_WAITING
         body = (title + "\n" + msg) if msg else title
     else:
-        head = "Claude Code: waiting for input"
+        head = HEAD_WAITING
         body = title
-    show_toast(head, body)
+    show_toast(head, body, state)
+
+
+def _cli(args):
+    """Manual/setup entry points; unlike the hook path, errors DO surface."""
+    cmd = args[0]
+    if cmd == "--make-icons":
+        for p in make_icons(force="--force" in args[1:]):
+            print(p)
+    elif cmd == "--test-toast":
+        state = args[1] if len(args) > 1 else "waiting_input"
+        if state not in STATE_COLORS:
+            raise SystemExit("state must be one of: " + " / ".join(STATE_COLORS))
+        rc = show_toast("TEST " + state, "session_notify --test-toast", state,
+                        debug=True)
+        print("appid =", _toast_appid())
+        print("click =", _click_uri() or "(none)")
+        print("powershell exit =", rc)
+        raise SystemExit(rc)
+    else:
+        raise SystemExit("unknown option: " + cmd)
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        _cli(sys.argv[1:])
+        sys.exit(0)
     try:
         main()
     except Exception:  # never break Claude Code because of a hook
