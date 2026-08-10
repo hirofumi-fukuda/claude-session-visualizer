@@ -2,6 +2,8 @@
   "_comment": "claude-wt のタブ定義。name=タブ名 / path=作業ディレクトリ(セッションの所属先) / color=タブ色 / add_dirs=追加の--add-dir(通常は空でOK・グローバルsettings.jsonのadditionalDirectoriesが効く)",
   "_claude_cmd_comment": "空なら自動探索: PATH → ~/.local/bin → Cursor/VSCode拡張同梱バイナリ(最新更新のもの)。固定したい時だけフルパスを書く",
   "claude_cmd": "",
+  "_wt_profile_comment": "空でなければ wt new-tab -p <名前> で起動＝WT側の専用プロファイル(タブアイコン等)を使う。空なら従来通りデフォルトプロファイル",
+  "wt_profile": "",
   "workspaces": [
     { "name": "FBiz",     "path": "E:\\share\\FBiz",        "color": "#4FC3F7", "add_dirs": [] },
     { "name": "競馬CICD", "path": "C:\\KEIBA-CICD\\_keiba", "color": "#81C784", "add_dirs": [] }

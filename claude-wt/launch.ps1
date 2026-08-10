@@ -64,6 +64,12 @@ if ($selected.Count -eq 0) { throw "no workspace matched -Only '$Only'" }
 $claudeArgs = ''
 if ($Continue) { $claudeArgs = ' -c' }
 
+# optional dedicated WT profile (tab icon etc.); empty/absent = default profile
+$pArg = ''
+if ($cfg.PSObject.Properties['wt_profile'] -and $cfg.wt_profile) {
+    $pArg = ' -p "' + $cfg.wt_profile + '"'
+}
+
 $tabs = @()
 foreach ($ws in $selected) {
     if (-not (Test-Path $ws.path)) {
@@ -76,8 +82,8 @@ foreach ($ws in $selected) {
     }
     if ($claude -eq 'claude') { $inner = "claude$claudeArgs$extra" }
     else                      { $inner = "& '$claude'$claudeArgs$extra" }
-    $tabs += ('new-tab -d "{0}" --title "{1}" --tabColor "{2}" powershell -NoExit -NoLogo -ExecutionPolicy Bypass -Command "{3}"' `
-        -f $ws.path, $ws.name, $ws.color, $inner)
+    $tabs += ('new-tab{4} -d "{0}" --title "{1}" --tabColor "{2}" powershell -NoExit -NoLogo -ExecutionPolicy Bypass -Command "{3}"' `
+        -f $ws.path, $ws.name, $ws.color, $inner, $pArg)
 }
 if ($tabs.Count -eq 0) { throw 'nothing to launch (all workspace paths missing?)' }
 

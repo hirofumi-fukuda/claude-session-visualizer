@@ -299,6 +299,48 @@ def _state_icon(state):
         return ""
 
 
+# ------------------------------------------------- WT tab progress dot (OSC 9;4)
+# Windows Terminal renders OSC 9;4 as a colored dot in the tab + taskbar
+# progress: state 2 = error/red, 4 = warning/yellow, 0 = clear. Mapping
+# matches the live board: waiting_input -> yellow, waiting_permission -> red,
+# working -> clear (Claude Code's own spinner takes over). WT-tab sessions
+# only: under Cursor there is no console, so this silently no-ops. Unknown
+# OSC sequences are ignored by other terminals (harmless).
+
+_OSC_STATE = {"working": 0, "waiting_input": 4, "waiting_permission": 2}
+
+
+def _console_progress(state):
+    st = _OSC_STATE.get(state)
+    if st is None or os.name != "nt":
+        return False
+    seq = "\x1b]9;4;%d;100\x07" % st if st else "\x1b]9;4;0;0\x07"
+    try:
+        return _write_conout(seq)
+    except Exception:
+        return False
+
+
+def _write_conout(seq):
+    """Write raw escape bytes to the attached console; attach to the parent's
+    console first if this process was spawned without one (CREATE_NO_WINDOW)."""
+    for attempt in (0, 1):
+        try:
+            with open("CONOUT$", "w") as con:
+                con.write(seq)
+            return True
+        except OSError:
+            if attempt:
+                return False
+            try:
+                import ctypes
+                if not ctypes.windll.kernel32.AttachConsole(-1):  # parent's console
+                    return False
+            except Exception:
+                return False
+    return False
+
+
 # ---------------------------------------------------------------- toast raise
 
 def _toast_appid():
@@ -399,6 +441,8 @@ def main():
     if session_id:
         write_state(session_id, state, event, cwd, transcript, title, msg, prompt)
 
+    _console_progress(state)  # WT tab dot (no-op under Cursor / non-WT)
+
     # toast only for Stop / Notification (UserPromptSubmit is state-only)
     if event == "UserPromptSubmit":
         return
@@ -427,6 +471,13 @@ def _cli(args):
         print("click =", _click_uri() or "(none)")
         print("powershell exit =", rc)
         raise SystemExit(rc)
+    elif cmd == "--test-osc":
+        # run INSIDE a WT tab: the tab dot should turn yellow/red (or clear)
+        state = args[1] if len(args) > 1 else "waiting_permission"
+        if state not in _OSC_STATE:
+            raise SystemExit("state must be one of: " + " / ".join(_OSC_STATE))
+        ok = _console_progress(state)
+        print("state =", state, "-> OSC 9;4 written:", ok)
     else:
         raise SystemExit("unknown option: " + cmd)
 

@@ -68,6 +68,13 @@ function Find-Claude {
 }
 $claude = Find-Claude
 
+# optional dedicated WT profile (tab icon etc.); empty/absent = default profile
+$pArg = ''
+try {
+    $cfgWt = Get-Content (Join-Path $PSScriptRoot 'workspaces.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($cfgWt.wt_profile) { $pArg = ' -p "' + $cfgWt.wt_profile + '"' }
+} catch {}
+
 # --- skip sessions that are alive right now (double --resume on one sid = two writers
 #     on the same jsonl). `claude agents --json` is the authoritative live-session list. ---
 $liveSids = @()
@@ -92,8 +99,8 @@ foreach ($s in $sel) {
     $title = ('{0} {1}' -f $s.project, $s.s_no).Trim()
     if ($claude -eq 'claude') { $inner = "claude --resume $($s.sid)" }
     else                      { $inner = "& '$claude' --resume $($s.sid)" }
-    $tabs += ('new-tab -d "{0}" --title "{1}" powershell -NoExit -NoLogo -ExecutionPolicy Bypass -Command "{2}"' `
-        -f $s.cwd, $title, $inner)
+    $tabs += ('new-tab{3} -d "{0}" --title "{1}" powershell -NoExit -NoLogo -ExecutionPolicy Bypass -Command "{2}"' `
+        -f $s.cwd, $title, $inner, $pArg)
     Write-Host ("restore : {0}  ({1})" -f $title, $s.sid.Substring(0, 8))
 }
 if ($tabs.Count -eq 0) { Write-Host 'nothing to open (everything is already running, or filtered out)'; exit 0 }

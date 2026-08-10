@@ -74,6 +74,21 @@ cd C:\source\git-h.fukuda1207\claude-session-visualizer\claude-wt
 - **タブを光らせたい場合**（任意）: Windows Terminal の 設定 → プロファイル既定値 →
   詳細 → ベル通知スタイル で「ウィンドウのフラッシュ」「タスクバーのフラッシュ」をON
   （音はトーストと二重になるのでOFFでも可）
+- **タブの状態ドット**（2026-08-10 会社S16）: フックが OSC 9;4 をタブのコンソールに直書き＝
+  🟡待機中(黄) / 🔴許可待ち(赤) のドットがタブとタスクバーに出る（入力開始でクリア）。
+  ボードと同じ3色対応。WTタブ限定（Cursorはコンソール無し＝自動スキップ）。
+  動作確認: WTタブ内で `python "%USERPROFILE%\.claude\hooks\session_notify.py" --test-osc waiting_permission`
+
+## タブアイコン（wt_profile・2026-08-10 会社S16）
+
+タブは powershell 起動なので素のままだと**PSの青アイコン**になる。`workspaces.json` の
+`wt_profile` にWTプロファイル名を書くと、全ランチャー（launch / open_session / restore_tabs）が
+`wt new-tab -p <名前>` で起動＝タブアイコンを差し替えられる:
+
+1. WT設定（settings.json）にプロファイル「claude」を追加
+   （icon=`%USERPROFILE%\.claude\hooks\toast_icons\agentops.ico`＝トーストと同じ信号機アイコン。
+   会社PCは 2026-08-10 追加済み・バックアップ `settings.json.bak-20260810-agentops`）
+2. `workspaces.json` に `"wt_profile": "claude"` （空なら従来通り＝デフォルトプロファイル）
 
 ## 注意・制約
 

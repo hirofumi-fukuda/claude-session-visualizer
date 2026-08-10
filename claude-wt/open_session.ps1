@@ -106,6 +106,12 @@ $claudeArgs = if ($mode -eq 'resume') { " --resume $uuid" } else { '' }
 if ($claude -eq 'claude') { $inner = "claude$claudeArgs" }
 else                      { $inner = "& '$claude'$claudeArgs" }
 $colorArg = if ($color) { ' --tabColor "' + $color + '"' } else { '' }
-$argStr = ('-w claude new-tab -d "{0}" --title "{1}"{2} powershell -NoExit -NoLogo -ExecutionPolicy Bypass -Command "{3}"' `
-    -f $cwd, $title, $colorArg, $inner)
+# optional dedicated WT profile (tab icon etc.); empty/absent = default profile
+$pArg = ''
+try {
+    $cfgWt = Get-Content (Join-Path $PSScriptRoot 'workspaces.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($cfgWt.wt_profile) { $pArg = ' -p "' + $cfgWt.wt_profile + '"' }
+} catch {}
+$argStr = ('-w claude new-tab{4} -d "{0}" --title "{1}"{2} powershell -NoExit -NoLogo -ExecutionPolicy Bypass -Command "{3}"' `
+    -f $cwd, $title, $colorArg, $inner, $pArg)
 Start-Process -FilePath 'wt' -ArgumentList $argStr

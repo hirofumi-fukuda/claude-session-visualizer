@@ -74,6 +74,8 @@ copy config.example.json config.local.json
    - トーストには**状態色の丸アイコン**（🟡待機中 `#fab219`／🔴許可待ち `#d03b3b`＝ライブボードと同一hex）が付く。アイコンは `session_notify.py --make-icons` が純Pythonで `~/.claude/hooks/toast_icons/` に自己生成（Pillow不要・消しても再生成される）
    - 動作テスト: `python "%USERPROFILE%\.claude\hooks\session_notify.py" --test-toast waiting_permission`
 
+5. **（任意）WTタブの状態ドット＆タブアイコン**: フックが OSC 9;4 をコンソール直書き＝Windows Terminal のタブに 🟡待機中/🔴許可待ち の色ドットが出る（配備だけで有効・Cursorでは自動スキップ）。タブアイコンを信号機化したい場合は WT設定にプロファイル「claude」を追加して `claude-wt/workspaces.json` の `wt_profile` に設定（詳細は `claude-wt/README.md`）。
+
 > ⚠️ **重要（§6の地雷1）**: Cursor拡張版CCは **PowerShell の `-File` フックを実行しない**。必ず **python フック**（`session_notify.py`）を使う。`.ps1` 版（`session_notify.ps1`）は同梱しているが**CLI専用・Cursorでは非実行**。トースト通知は python から powershell 子プロセスを spawn する形で内部的に出す。
 
 ## 5. 使い方
