@@ -817,6 +817,25 @@ LIVE_JS = """
       setTimeout(function(){ b.textContent = '📋'; }, 1500);
     });
   });
+  // ▶/➕（claude-wt://）は hidden iframe で発火する。<a> の素ナビゲーションだと
+  // 「新しい遷移の開始」で予約済み meta refresh がキャンセルされ、外部プロトコル
+  // ゆえ遷移自体は中断→再スケジュールもされず、そのタブは自動更新が止まる
+  // （S16 ふくちゃん報告の「ボタンを押すと更新が止まる」の真因）。
+  // iframe のナビゲーションは子フレーム扱い＝top の更新予約に触らない。
+  var wtfr = document.createElement('iframe');
+  wtfr.style.display = 'none';
+  document.body.appendChild(wtfr);
+  document.addEventListener('click', function(e){
+    var a = e.target.closest ? e.target.closest('a[href^="claude-wt:"]') : null;
+    if(!a) return;
+    e.preventDefault();
+    wtfr.src = a.href;
+  });
+  // 保険のウォッチドッグ: meta refresh が何かの理由で死んでいたら JS 側でリロード。
+  // 正常時はこのタイマーが発火する前にページごと入れ替わるので何もしない。
+  var mr = document.querySelector('meta[http-equiv="refresh"]');
+  var sec = mr ? parseInt(mr.content, 10) : 10;
+  if(sec > 0) setTimeout(function(){ location.reload(); }, (sec + 2) * 1000);
 })();
 """
 # 自動リロード（meta refresh）でテーマが一瞬戻るのを防ぐため、描画前に data-theme を当てる
