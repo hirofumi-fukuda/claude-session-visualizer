@@ -74,10 +74,15 @@ cd C:\source\git-h.fukuda1207\claude-session-visualizer\claude-wt
 - **タブを光らせたい場合**（任意）: Windows Terminal の 設定 → プロファイル既定値 →
   詳細 → ベル通知スタイル で「ウィンドウのフラッシュ」「タスクバーのフラッシュ」をON
   （音はトーストと二重になるのでOFFでも可）
-- **タブの状態ドット**（2026-08-10 会社S16）: フックが OSC 9;4 をタブのコンソールに直書き＝
-  🟡待機中(黄) / 🔴許可待ち(赤) のドットがタブとタスクバーに出る（入力開始でクリア）。
-  ボードと同じ3色対応。WTタブ限定（Cursorはコンソール無し＝自動スキップ）。
-  動作確認: WTタブ内で `python "%USERPROFILE%\.claude\hooks\session_notify.py" --test-osc waiting_permission`
+- **タブの待ちリング**（2026-08-10 会社S16）: フックが OSC 9;4 をタブのコンソールに直書き＝
+  **手待ち（待機中/許可待ち）のタブにリングが出て、入力を始めると消える**。
+  「どのタブがあなた待ちか」がタブ一覧で一目。WTタブ限定（Cursorはコンソール無し＝自動スキップ）。
+  ⚠️ 現行WTはタブ内リングを状態色で塗り分けない（アクセント色固定・2026-08-10実測）＝
+  🟡/🔴の色区別はトースト/ライブボード担当。シーケンス自体は state 2/4 を送っているので
+  WT側が対応したら自動で色が付く。
+  動作確認（PowerShell）: WTタブ内で
+  `python "$env:USERPROFILE\.claude\hooks\session_notify.py" --test-osc waiting_permission`
+  （消す: `--test-osc working`）
 
 ## タブアイコン（wt_profile・2026-08-10 会社S16）
 

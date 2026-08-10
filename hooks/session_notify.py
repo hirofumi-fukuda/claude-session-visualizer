@@ -322,22 +322,41 @@ def _console_progress(state):
 
 
 def _write_conout(seq):
-    """Write raw escape bytes to the attached console; attach to the parent's
-    console first if this process was spawned without one (CREATE_NO_WINDOW)."""
+    """Write an escape sequence to the attached console via Win32.
+
+    Two traps make the naive open("CONOUT$").write() unreliable:
+    - a hook spawned without a console must AttachConsole to its parent's
+      (Claude Code owns the WT tab's console);
+    - the screen buffer may not have ENABLE_VIRTUAL_TERMINAL_PROCESSING set
+      for our handle, in which case ESC bytes are printed as text instead of
+      being parsed -> the OSC never reaches Windows Terminal. So: enable VT
+      on the buffer for the write, then restore the previous mode.
+    """
+    import ctypes
+    k32 = ctypes.windll.kernel32
+    k32.CreateFileW.restype = ctypes.c_ssize_t
+    GENERIC_RW = 0xC0000000
+    SHARE_RW, OPEN_EXISTING, VT = 0x3, 0x3, 0x0004
     for attempt in (0, 1):
-        try:
-            with open("CONOUT$", "w") as con:
-                con.write(seq)
-            return True
-        except OSError:
-            if attempt:
-                return False
+        h = k32.CreateFileW("CONOUT$", GENERIC_RW, SHARE_RW, None,
+                            OPEN_EXISTING, 0, None)
+        if h != -1:
             try:
-                import ctypes
-                if not ctypes.windll.kernel32.AttachConsole(-1):  # parent's console
+                mode = ctypes.c_uint32()
+                if not k32.GetConsoleMode(ctypes.c_ssize_t(h),
+                                          ctypes.byref(mode)):
                     return False
-            except Exception:
-                return False
+                k32.SetConsoleMode(ctypes.c_ssize_t(h), mode.value | VT)
+                n = ctypes.c_uint32()
+                ok = k32.WriteConsoleW(ctypes.c_ssize_t(h), seq, len(seq),
+                                       ctypes.byref(n), None)
+                if not (mode.value & VT):
+                    k32.SetConsoleMode(ctypes.c_ssize_t(h), mode.value)
+                return bool(ok)
+            finally:
+                k32.CloseHandle(ctypes.c_ssize_t(h))
+        if attempt or not k32.AttachConsole(-1):  # parent's console
+            return False
     return False
 
 
