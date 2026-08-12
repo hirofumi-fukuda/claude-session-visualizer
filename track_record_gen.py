@@ -444,8 +444,20 @@ def build(open_browser: bool = True) -> Path:
             by_name[key] = l
     tracks = list(by_name.values())
 
-    # 最終セッション日が新しい順にソート
+    # 並び順（S17 ふくちゃん決定）: バッジ帯（🟢≤7日/🟡≤30日/⚫それ以前）でグループ化し、
+    # 帯内は累計S数の多い順＝「今燃えてる歴戦トラック」が先頭。同S数は直近日順（安定ソート2段）。
+    def _band(led) -> int:
+        d = led.latest_session_date()
+        if d:
+            try:
+                delta = (TODAY - datetime.strptime(d, "%Y-%m-%d").date()).days
+            except ValueError:
+                return 3
+            return 0 if delta <= 7 else (1 if delta <= 30 else 2)
+        return 3
+
     tracks.sort(key=lambda l: l.latest_session_date() or "0", reverse=True)
+    tracks.sort(key=lambda l: (_band(l), -l.session_count()))
 
     # トラック→直近セッションの model（jsonl scan・キャッシュ利用）
     models = _latest_models(cfg, mapper)
@@ -453,13 +465,19 @@ def build(open_browser: bool = True) -> Path:
     def _model_of(led):
         return models.get((led.project or led.name or led.path.stem).strip())
 
-    # HTML生成
+    # HTML生成（帯ごとにセクション）
+    BANDS = [(0, "🟢 直近7日"), (1, "🟡 30日以内"), (2, "⚫ 休眠"), (3, "— 日付なし")]
     body_parts = []
-    body_parts.append(
-        f'<h2>🏆 トラックレコード<span class="n">{len(tracks)} トラック</span></h2>')
-    body_parts.append('<div class="track-grid">')
-    body_parts.append("".join(_track_card_html(l, _model_of(l)) for l in tracks))
-    body_parts.append('</div>')
+    for b, label in BANDS:
+        subset = [l for l in tracks if _band(l) == b]
+        if not subset:
+            continue
+        body_parts.append(
+            f'<h2>{label}<span class="n">{len(subset)} トラック</span></h2>')
+        body_parts.append(
+            '<div class="track-grid">'
+            + "".join(_track_card_html(l, _model_of(l)) for l in subset)
+            + '</div>')
 
     # 戦績なし（type:project だがセッション履歴ゼロ）
     no_hist = [l for l in ledgers if l.session_count() == 0 and l.project
