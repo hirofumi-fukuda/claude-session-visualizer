@@ -148,10 +148,14 @@ h2 .n{color:var(--muted);font-weight:400;font-size:11px}
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .s-row.done .s-num{color:var(--hot)}
 .s-row.pending .s-num{color:var(--muted)}
-/* 記録なし */
+/* 記録なし（既定は折りたたみ） */
 .no-hist{display:flex;flex-wrap:wrap;gap:8px;padding:8px 0}
 .no-hist-item{color:var(--muted);font-size:11.5px;background:var(--wash);
   border-radius:6px;padding:3px 10px}
+details.no-hist-fold{margin-top:28px;border-top:1px solid var(--border);padding-top:10px}
+details.no-hist-fold summary{cursor:pointer;color:var(--muted);font-size:12px;
+  padding:4px 0;letter-spacing:.04em}
+details.no-hist-fold summary:hover{color:var(--ink2)}
 /* フッター */
 footer{color:var(--muted);font-size:11px;margin-top:34px;border-top:1px solid var(--border);
   padding-top:11px}
@@ -490,9 +494,11 @@ def build(open_browser: bool = True) -> Path:
         items = "".join(
             f'<span class="no-hist-item">{html_mod.escape(l.label)}</span>'
             for l in sorted(no_hist, key=lambda l: l.label))
+        # 既定は畳む（S17 ふくちゃん指示のノイズ削減。件数だけ見せて中身はワンクリック）
         body_parts.append(
-            f'<h2>📁 記録なし<span class="n">セッション履歴が見つからない台帳 {len(no_hist)}本</span></h2>'
-            f'<div class="no-hist">{items}</div>')
+            f'<details class="no-hist-fold"><summary>📁 記録なし — '
+            f'セッション履歴が見つからない台帳 {len(no_hist)}本</summary>'
+            f'<div class="no-hist">{items}</div></details>')
 
     total_s = sum(l.session_count() for l in tracks)
     body_parts.append(
