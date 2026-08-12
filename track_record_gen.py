@@ -19,7 +19,7 @@ import io
 import re
 import sys
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_sv.ledger import (
@@ -124,6 +124,7 @@ h2 .n{color:var(--muted);font-weight:400;font-size:11px}
 .status-warm{color:var(--warm);border:1px solid var(--warm)}
 .status-cold{color:var(--cold);border:1px solid var(--cold)}
 .status-none{color:var(--muted);border:1px solid var(--muted)}
+.status-unrec{color:var(--warm);border:1px dashed var(--warm)}
 .track-stats{margin-left:auto;color:var(--muted);font-size:11px;white-space:nowrap}
 /* 現在地 / Blocked */
 .track-section{border-top:1px solid var(--border);padding-top:8px}
@@ -226,30 +227,51 @@ def _canonical_key(led, mapper) -> str:
     return led.project or led.name or led.path.stem
 
 
-# ── トラック→直近セッションの model（S14）──────────────────────
-def _latest_models(cfg, mapper) -> dict:
-    """案件(canonical)→直近セッションの model。台帳md に model 情報は無いので jsonl scan から引く。
+# ── トラック→直近セッションの model／実活動日（S14・S17）─────────
+def _act_local_date(ts_iso: str) -> str:
+    """scan の last_ts（UTC ISO）→ ローカル(JST)の YYYY-MM-DD。壊れていたら ""。
+    UTC のまま日付を切ると朝のセッションが前日にずれるので必ずローカル変換する。"""
+    if not ts_iso:
+        return ""
+    try:
+        d = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.astimezone().strftime("%Y-%m-%d")
+    except ValueError:
+        return ""
+
+
+def _latest_scan(cfg, mapper) -> tuple:
+    """案件(canonical)→(直近セッションの model, 実活動の最終ローカル日付) を jsonl scan から引く。
 
     scan_all はアクティビティと同じ差分キャッシュ（daily_maintenance は dashboard→ここ の順
     ＝温まった状態で走る）。採番セッションの案件名は同じ alias テーブルで canonical に落ちる
-    ので _canonical_key と突合できる。model は飾り＝scan が死んでも本体は生成する。
+    ので _canonical_key と突合できる。いずれも飾り＝scan が死んでも本体は生成する。
+    実活動日（S17）＝台帳は締め時にしか進まないので、進行中セッションの「今日動いてる」は
+    こちらで補正する（A案・⚠️未記帳マーク）。
     """
-    latest = {}
+    models, activity = {}, {}
     try:
         sessions = scan_all(
             Path(cfg.get("claude_dir", "~/.claude")).expanduser(),
             cache_path=REPO_ROOT / "cache" / "scan_cache.json",
             workspaces=cfg.get("workspaces") or None)
     except OSError:
-        return latest
-    best_ts = {}
+        return models, activity
+    best_model_ts, best_act_ts = {}, {}
     for s in sessions:
         mapper.map_session(s)
         p, ts = s.get("project"), s.get("last_ts") or ""
-        if p and s.get("model") and ts > best_ts.get(p, ""):
-            best_ts[p] = ts
-            latest[p] = s["model"]
-    return latest
+        if not p or not ts:
+            continue
+        if s.get("model") and ts > best_model_ts.get(p, ""):
+            best_model_ts[p] = ts
+            models[p] = s["model"]
+        if ts > best_act_ts.get(p, ""):
+            best_act_ts[p] = ts
+    activity = {p: _act_local_date(ts) for p, ts in best_act_ts.items()}
+    return models, activity
 
 
 # ── カード HTML ───────────────────────────────────────────────
@@ -276,14 +298,35 @@ def _session_row_html(entry, sum_len: int = 55) -> str:
             f'</div>')
 
 
-def _track_card_html(led, model=None) -> str:
+UNREC_RECENT_DAYS = 3  # ⚠️未記帳を出すのは実活動が直近この日数以内の時だけ（古い乖離=対処不能ノイズ）
+
+
+def _unrec_badge(latest: str, act_date: str) -> str:
+    """台帳より実活動(jsonl)が新しい＝進行中/締め忘れセッションの ⚠️未記帳 バッジ。
+    昔の乖離（翌朝跨ぎ等の1日ズレ痕跡）まで出すと狼少年になるので直近分に限定する。"""
+    if not (act_date and act_date > (latest or "")):
+        return ""
+    try:
+        age = (TODAY - datetime.strptime(act_date, "%Y-%m-%d").date()).days
+    except ValueError:
+        return ""
+    if age > UNREC_RECENT_DAYS:
+        return ""
+    return (f'<span class="status-badge status-unrec" title="実活動 {act_date[5:]} ＞ '
+            f'台帳 {latest[5:] if latest else "—"}（セッション未記帳＝進行中か締め忘れ）">'
+            f'⚠️ 未記帳</span>')
+
+
+def _track_card_html(led, model=None, act_date="") -> str:
     hist = [e for e in led.session_history() if not e.is_reserved]
     last3 = list(reversed(hist[-3:]))  # 新しい順 (最大3件)
     count = len(hist)
     since = led.active_since()
     latest = led.latest_session_date()
 
-    status_label, status_cls = _activity_status(latest)
+    # バッジの鮮度は max(台帳の最終行, jsonl実活動)（S17 A案）。統計欄は台帳ベース＝正本のまま
+    eff = max((d for d in (latest, act_date) if d), default="")
+    status_label, status_cls = _activity_status(eff)
 
     # 統計テキスト
     stats_parts = [f"累計 {count}S"]
@@ -301,6 +344,7 @@ def _track_card_html(led, model=None) -> str:
     header = (f'<div class="track-header">'
               f'<a class="track-name" href="track/{tslug}.html">{html_mod.escape(led.label)}</a>{ws_span}'
               f'<span class="status-badge {status_cls}">{status_label}</span>'
+              f'{_unrec_badge(latest, act_date)}'
               f'{model_badge(model, note="直近セッションのモデル")}'
               f'<span class="track-stats">{html_mod.escape(stats)}</span>'
               f'</div>')
@@ -338,12 +382,13 @@ def _track_card_html(led, model=None) -> str:
 
 
 # ── 個別ページ HTML ───────────────────────────────────────────
-def _detail_page(led, model=None) -> str:
+def _detail_page(led, model=None, act_date="") -> str:
     """1トラック=1ページの詳細（ライブボードのトラック名リンク先）。
     上部＝構造化サマリ（現在地/Next/Blocked/全セッション履歴）、下部＝台帳全文（折りたたみ）。"""
     label = led.label
     latest = led.latest_session_date()
-    status_label, status_cls = _activity_status(latest)
+    eff = max((d for d in (latest, act_date) if d), default="")
+    status_label, status_cls = _activity_status(eff)
     hist = [e for e in led.session_history() if not e.is_reserved]
     count = len(hist)
     since = led.active_since()
@@ -360,6 +405,7 @@ def _detail_page(led, model=None) -> str:
     header = (f'<div class="detail-head">'
               f'<h1 class="detail-title">🗂️ {html_mod.escape(label)}</h1>{ws_span}'
               f'<span class="status-badge {status_cls}">{status_label}</span>'
+              f'{_unrec_badge(latest, act_date)}'
               f'{model_badge(model, note="直近セッションのモデル")}'
               f'<span class="track-stats">{html_mod.escape(stats)}</span></div>')
 
@@ -448,10 +494,27 @@ def build(open_browser: bool = True) -> Path:
             by_name[key] = l
     tracks = list(by_name.values())
 
+    # トラック→直近セッションの model／実活動日（jsonl scan・キャッシュ利用）
+    models, activity = _latest_scan(cfg, mapper)
+
+    def _key_of(led):
+        return (led.project or led.name or led.path.stem).strip()
+
+    def _model_of(led):
+        return models.get(_key_of(led))
+
+    def _act_of(led):
+        return activity.get(_key_of(led), "")
+
+    def _eff_date(led) -> str:
+        """バッジ・帯判定の実効日＝max(台帳の最終行, jsonl実活動)（S17 A案）。"""
+        return max((d for d in (led.latest_session_date(), _act_of(led)) if d),
+                   default="")
+
     # 並び順（S17 ふくちゃん決定）: バッジ帯（🟢≤7日/🟡≤30日/⚫それ以前）でグループ化し、
     # 帯内は累計S数の多い順＝「今燃えてる歴戦トラック」が先頭。同S数は直近日順（安定ソート2段）。
     def _band(led) -> int:
-        d = led.latest_session_date()
+        d = _eff_date(led)
         if d:
             try:
                 delta = (TODAY - datetime.strptime(d, "%Y-%m-%d").date()).days
@@ -460,14 +523,8 @@ def build(open_browser: bool = True) -> Path:
             return 0 if delta <= 7 else (1 if delta <= 30 else 2)
         return 3
 
-    tracks.sort(key=lambda l: l.latest_session_date() or "0", reverse=True)
+    tracks.sort(key=lambda l: _eff_date(l) or "0", reverse=True)
     tracks.sort(key=lambda l: (_band(l), -l.session_count()))
-
-    # トラック→直近セッションの model（jsonl scan・キャッシュ利用）
-    models = _latest_models(cfg, mapper)
-
-    def _model_of(led):
-        return models.get((led.project or led.name or led.path.stem).strip())
 
     # HTML生成（帯ごとにセクション）
     BANDS = [(0, "🟢 直近7日"), (1, "🟡 30日以内"), (2, "⚫ 休眠"), (3, "— 日付なし")]
@@ -480,7 +537,7 @@ def build(open_browser: bool = True) -> Path:
             f'<h2>{label}<span class="n">{len(subset)} トラック</span></h2>')
         body_parts.append(
             '<div class="track-grid">'
-            + "".join(_track_card_html(l, _model_of(l)) for l in subset)
+            + "".join(_track_card_html(l, _model_of(l), _act_of(l)) for l in subset)
             + '</div>')
 
     # 戦績なし（type:project だがセッション履歴ゼロ）
@@ -521,7 +578,8 @@ def build(open_browser: bool = True) -> Path:
         if fname in seen:   # by_name で案件名は一意だが 60字 truncate 衝突の保険（先勝ち）
             continue
         seen.add(fname)
-        (track_dir / fname).write_text(_detail_page(led, _model_of(led)), encoding="utf-8")
+        (track_dir / fname).write_text(
+            _detail_page(led, _model_of(led), _act_of(led)), encoding="utf-8")
 
     print(f"✅ {out}  （{len(tracks)} トラック / {total_s}S / 個別ページ {len(seen)}枚）")
     if open_browser:
