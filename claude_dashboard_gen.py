@@ -96,8 +96,14 @@ def build_data(sessions, cfg):
             "first_ts": None, "last_ts": None,
             "n_user_prompts": 0, "n_assistant": 0, "n_tool_use": 0, "n_subagents": 0,
             "output_tokens": 0, "workspaces": set(), "models": set(),
+            "loc_added": 0, "loc_code": 0, "loc_docs": 0, "loc_removed": 0,
         })
         b["n_files"] += 1
+        loc = s.get("loc") or {}
+        b["loc_added"] += loc.get("added", 0)
+        b["loc_code"] += loc.get("code", 0)
+        b["loc_docs"] += loc.get("docs", 0)
+        b["loc_removed"] += loc.get("removed", 0)
         if s["first_ts"] and (b["first_ts"] is None or s["first_ts"] < b["first_ts"]):
             b["first_ts"] = s["first_ts"]
         if s["last_ts"] and (b["last_ts"] is None or s["last_ts"] > b["last_ts"]):
@@ -126,6 +132,7 @@ def build_data(sessions, cfg):
             "n_bundles": len(blist),
             "n_files": sum(b["n_files"] for b in blist),
             "output_tokens": sum(b["output_tokens"] for b in blist),
+            "loc_added": sum(b["loc_added"] for b in blist),
             "model": latest_b["models"][-1] if latest_b["models"] else None,  # 直近Sのモデル
             "bundles": blist,
         })
@@ -187,6 +194,8 @@ def build_data(sessions, cfg):
     for s in matched:
         src_counts[s["match_source"]] += 1
 
+    loc_data = _build_loc(sessions, tdays)
+
     return {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "totals": {
@@ -209,7 +218,64 @@ def build_data(sessions, cfg):
         "heatmap": {"days": days, "rows": heat_rows},
         "projects": projects,
         "tokens_by_project": token_rows,
+        "loc": loc_data,
         "unmatched": unmatched_rows,
+    }
+
+
+LOC_KINDS = ("code", "docs", "other")
+
+
+def _build_loc(sessions, tdays):
+    """書いた行数（parser の loc/days_loc/files_loc を集計）。
+
+    ・日別（直近 TREND_DAYS 日）= code/docs/other の積み上げ＋removed
+    ・案件別（全期間累計）= code/docs/other・removed・未計測件数
+    ・ファイル別（直近 TREND_DAYS 日の上位）
+    unmeasured（sed -i／python直書き等の行数が取れない編集コマンド）は件数だけ添える＝正直な脚注。
+    """
+    day_set = set(tdays)
+    by_day = {d: {"code": 0, "docs": 0, "other": 0, "removed": 0} for d in tdays}
+    by_proj = defaultdict(lambda: {"code": 0, "docs": 0, "other": 0, "removed": 0,
+                                   "unmeasured": 0, "n_sessions": 0})
+    files = defaultdict(int)
+    tot_all = {"added": 0, "removed": 0, "code": 0, "docs": 0, "other": 0, "unmeasured": 0,
+               "bash_added": 0, "n_edits": 0}
+    for s in sessions:
+        loc = s.get("loc") or {}
+        if not loc:
+            continue
+        for k in tot_all:
+            tot_all[k] += loc.get(k, 0)
+        p = s["project"] or UNCLASSIFIED
+        r = by_proj[p]
+        for k in ("code", "docs", "other", "removed", "unmeasured"):
+            r[k] += loc.get(k, 0)
+        if loc.get("added") or loc.get("unmeasured"):
+            r["n_sessions"] += 1
+        in_window = False
+        for d, v in (s.get("days_loc") or {}).items():
+            if d in day_set:
+                in_window = True
+                for k in ("code", "docs", "other", "removed"):
+                    by_day[d][k] += v.get(k, 0)
+        if in_window:
+            for name, n in (s.get("files_loc") or {}).items():
+                files[name] += n
+    added_day = [sum(by_day[d][k] for k in LOC_KINDS) for d in tdays]
+    win = {k: sum(by_day[d][k] for d in tdays) for k in LOC_KINDS + ("removed",)}
+    win["added"] = sum(win[k] for k in LOC_KINDS)
+    proj_rows = [{"project": p, "added": sum(v[k] for k in LOC_KINDS), **v}
+                 for p, v in by_proj.items()]
+    proj_rows.sort(key=lambda r: -r["added"])
+    return {
+        "days": tdays,
+        "daily": {k: [by_day[d][k] for d in tdays] for k in LOC_KINDS + ("removed",)},
+        "window": win,
+        "pace": {"last7": sum(added_day[-7:]), "prev7": sum(added_day[-14:-7])},
+        "all_time": tot_all,
+        "by_project": proj_rows,
+        "top_files": sorted(files.items(), key=lambda kv: -kv[1])[:12],
     }
 
 
@@ -302,6 +368,17 @@ svg text.lbl{fill:var(--ink2);font-size:11px;font-weight:600}
 .bar .f{height:14px;background:var(--cat-1);border-radius:0 4px 4px 0;min-width:2px}
 .bar .v{font-size:11.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
 .bar .v s{color:var(--muted);text-decoration:none;font-size:10.5px}
+/* 横バーの積み上げ版（書いた行数: code/docs/other）。塗りの間は 2px の面色で切る */
+.bar .t.st{display:flex;gap:2px;background:none}
+.bar .t.st i{display:block;height:14px;min-width:2px;border-radius:2px}
+.bar .t.st i:first-child{border-radius:3px 2px 2px 3px}
+.bar .t.st i:last-child{border-radius:2px 4px 4px 2px}
+.c1{fill:var(--cat-1);background:var(--cat-1)}.c3{fill:var(--cat-3);background:var(--cat-3)}
+.c0{fill:var(--wash);background:var(--wash)}
+.stat-row{display:flex;flex-wrap:wrap;gap:6px 22px;margin:0 0 12px;color:var(--ink2);font-size:12px}
+.stat-row b{font-size:20px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;
+  margin-right:4px}
+.stat-row .l{color:var(--muted);font-size:11px}
 /* ── 積み上げ（マッチ根拠） ────────────────────────── */
 .stack{display:flex;gap:2px;height:22px;margin:2px 0 12px}
 .stack>i{display:block;border-radius:2px}
@@ -524,6 +601,146 @@ def _heat_html(heat):
             f'{scale}{note}{table}')
 
 
+def _loc_svg(loc):
+    """日別の書いた行数（code/docs/other の積み上げ棒・塗りの間は 2px の面色）。"""
+    days, daily = loc["days"], loc["daily"]
+    n = len(days)
+    tot = [daily["code"][i] + daily["docs"][i] + daily["other"][i] for i in range(n)]
+    W, H, L, R, T, B = 1100.0, 230.0, 54.0, 16.0, 14.0, 26.0
+    pw, ph = W - L - R, H - T - B
+    base = T + ph
+    peak = max(tot) or 1
+    want = peak * 1.15
+    unit = next((u for u in (100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000)
+                 if want / u <= 6), 100000)
+    top = -(-want // unit) * unit
+    slot = pw / max(1, n)
+    bw = max(2.0, slot - 4)
+
+    def x(i):
+        return L + i * slot + (slot - bw) / 2
+
+    def y(v):
+        return T + ph * (1 - v / top)
+
+    grid, ylab = [], []
+    for f in (0, 0.5, 1):
+        gy = T + ph * (1 - f)
+        cls = "ax" if f == 0 else "gl"
+        grid.append(f'<line class="{cls}" x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}"/>')
+        ylab.append(f'<text x="{L - 8}" y="{gy + 3.5:.1f}" text-anchor="end">{_k(int(top * f))}</text>')
+    rects, hits, xlab = [], [], []
+    for i, d in enumerate(days):
+        acc = 0.0
+        for kind, cls in (("code", "c1"), ("docs", "c3"), ("other", "c0")):
+            v = daily[kind][i]
+            if v <= 0:
+                continue
+            y1, y0 = y(acc), y(acc + v)
+            h = max(0.0, y1 - y0 - (2 if acc > 0 else 0))  # 上に積む塗りとの間を 2px 空ける
+            rects.append(f'<rect class="{cls}" x="{x(i):.1f}" y="{y0:.1f}" width="{bw:.1f}" '
+                         f'height="{h:.1f}" rx="1.5"/>')
+            acc += v
+        wd = WD_LABELS[date.fromisoformat(d).weekday()]
+        tip = (f'{d[5:].replace("-", "/")}（{wd}） +{tot[i]:,}行 ＝ コード {daily["code"][i]:,} ／ '
+               f'ドキュメント {daily["docs"][i]:,} ／ その他 {daily["other"][i]:,}'
+               f'　（削除 {daily["removed"][i]:,}）')
+        hits.append(f'<rect class="hit" x="{L + i * slot:.1f}" y="{T}" width="{slot:.1f}" '
+                    f'height="{ph:.1f}" data-tip="{esc(tip)}"/>')
+        if i % 5 == 0 or i == n - 1:
+            xlab.append(f'<text x="{x(i) + bw / 2:.1f}" y="{H - 8:.1f}" text-anchor="middle">'
+                        f'{int(d[5:7])}/{int(d[8:10])}</text>')
+    marks = []
+    if peak > 0:
+        imax = tot.index(peak)
+        anchor = "end" if imax > n * 0.9 else "start" if imax < n * 0.1 else "middle"
+        marks.append(f'<text class="lbl" x="{x(imax) + bw / 2:.1f}" y="{y(peak) - 6:.1f}" '
+                     f'text-anchor="{anchor}">{tot[imax]:,}</text>')
+        if imax != n - 1 and tot[-1] > 0:
+            marks.append(f'<text class="lbl" x="{x(n - 1) + bw / 2:.1f}" y="{y(tot[-1]) - 6:.1f}" '
+                         f'text-anchor="end">{tot[-1]:,}</text>')
+    return (f'<svg viewBox="0 0 {W:.0f} {H:.0f}" style="width:100%;height:auto" '
+            f'role="img" aria-label="日別の書いた行数（コード／ドキュメント／その他）">'
+            f'{"".join(grid)}{"".join(rects)}{"".join(marks)}{"".join(ylab)}{"".join(xlab)}'
+            f'{"".join(hits)}</svg>')
+
+
+LOC_LEGEND = ('<div class="lg"><span><i class="c1"></i>コード</span>'
+              '<span><i class="c3"></i>ドキュメント</span>'
+              '<span><i class="c0" style="border:1px solid var(--border)"></i>その他</span></div>')
+
+
+def _loc_card_html(loc):
+    """✍️ 書いた行数（直近30日）カード。ヒーロー数字＋積み上げ棒＋凡例＋表。"""
+    w, pace = loc["window"], loc["pace"]
+    at = loc["all_time"]
+    share = (w["code"] / w["added"] * 100) if w["added"] else 0
+    if pace["prev7"]:
+        pct = (pace["last7"] - pace["prev7"]) / pace["prev7"] * 100
+        delta = f'（前週比 {"+" if pct >= 0 else "−"}{abs(pct):.0f}%）'
+    else:
+        delta = ""
+    stats = (f'<div class="stat-row">'
+             f'<span><b>{w["added"]:,}</b>行 <span class="l">直近{TREND_DAYS}日</span></span>'
+             f'<span><b>{share:.0f}%</b><span class="l">がコード（{w["code"]:,}行・ドキュメント {w["docs"]:,}行）</span></span>'
+             f'<span><b>{pace["last7"]:,}</b><span class="l">直近7日 {delta}</span></span>'
+             f'<span><b>{w["removed"]:,}</b><span class="l">行を削除</span></span>'
+             f'<span><b>{at["added"]:,}</b><span class="l">行 全期間累計（未計測の編集 {at["unmeasured"]:,}件）</span></span>'
+             f'</div>')
+    days, d = loc["days"], loc["daily"]
+    trows = "".join(
+        f'<tr><td class="txt">{days[i][5:].replace("-", "/")}</td>'
+        f'<td>{d["code"][i] + d["docs"][i] + d["other"][i]:,}</td><td>{d["code"][i]:,}</td>'
+        f'<td>{d["docs"][i]:,}</td><td>{d["other"][i]:,}</td><td>{d["removed"][i]:,}</td></tr>'
+        for i in range(len(days) - 1, -1, -1)
+        if d["code"][i] + d["docs"][i] + d["other"][i] + d["removed"][i])
+    frows = "".join(f'<tr><td class="txt">{esc(name)}</td><td>{n:,}</td></tr>'
+                    for name, n in loc["top_files"])
+    return (f'{stats}{_loc_svg(loc)}<div style="margin-top:10px">{LOC_LEGEND}</div>'
+            f'<p class="note">Edit/Write/MultiEdit/NotebookEdit と Bash/PowerShell のファイル直書き'
+            f'（ヒアドキュメント）の<b>成功分だけ</b>。sed -i や python 直書きは行数が取れないので件数のみ。'
+            f'サブエージェントの編集も含む。Anthropic 管理コンソールの「コード行数」とは別物＝社内比較用の自前指標</p>'
+            '<details class="tv"><summary>数値で見る</summary><div class="sc">'
+            f'<table><tr><th>日</th><th>+行</th><th>コード</th><th>ドキュメント</th><th>その他</th>'
+            f'<th>削除</th></tr>{trows}</table>'
+            f'<table><tr><th>ファイル（直近{TREND_DAYS}日・上位）</th><th>+行</th></tr>{frows}</table>'
+            '</div></details>')
+
+
+def _loc_bars_html(rows):
+    """案件別の書いた行数（全期間累計・code/docs/other の横積み上げ）。"""
+    top = rows[:TOKEN_BAR_ROWS]
+    peak = max((r["added"] for r in top), default=1) or 1
+    total = sum(r["added"] for r in rows) or 1
+    out = []
+    for r in top:
+        segs = []
+        for kind, cls in (("code", "c1"), ("docs", "c3"), ("other", "c0")):
+            v = r[kind]
+            if v > 0:
+                segs.append(f'<i class="{cls}" style="width:{v / peak * 100:.2f}%"></i>')
+        share = r["added"] / total * 100
+        tip = (f'{r["project"]} ／ +{r["added"]:,}行 ＝ コード {r["code"]:,} ／ ドキュメント {r["docs"]:,} ／ '
+               f'その他 {r["other"]:,} ／ 削除 {r["removed"]:,} ／ 未計測 {r["unmeasured"]}件 ／ '
+               f'{r["n_sessions"]}セッション')
+        out.append(
+            f'<div class="bar" data-tip="{esc(tip)}"><div class="n">{esc(r["project"])}</div>'
+            f'<div class="t st">{"".join(segs)}</div>'
+            f'<div class="v">{r["added"]:,} <s>{share:.0f}%・{r["n_sessions"]}本</s></div></div>')
+    dropped = len(rows) - len(top)
+    if dropped > 0:
+        rest = sum(r["added"] for r in rows[TOKEN_BAR_ROWS:])
+        out.append(f'<p class="note">※ ほか{dropped}案件・計 {rest:,}行</p>')
+    trows = "".join(
+        f'<tr><td class="txt">{esc(r["project"])}</td><td>{r["added"]:,}</td><td>{r["code"]:,}</td>'
+        f'<td>{r["docs"]:,}</td><td>{r["other"]:,}</td><td>{r["removed"]:,}</td>'
+        f'<td>{r["unmeasured"]}</td><td>{r["n_sessions"]}</td></tr>' for r in rows)
+    return ("".join(out) + f'<div style="margin-top:10px">{LOC_LEGEND}</div>'
+            '<details class="tv"><summary>数値で見る</summary><div class="sc">'
+            '<table><tr><th>案件</th><th>+行</th><th>コード</th><th>ドキュメント</th><th>その他</th>'
+            f'<th>削除</th><th>未計測</th><th>セッション</th></tr>{trows}</table></div></details>')
+
+
 def _bars_html(token_rows):
     rows = token_rows[:TOKEN_BAR_ROWS]
     peak = max((r["output_tokens"] for r in rows), default=1) or 1
@@ -593,12 +810,15 @@ def _projects_html(projects):
             if b["n_files"] > 1:
                 sn += f' <span class="xf">×{b["n_files"]}f</span>'
             mdl = " ".join(model_badge(m) for m in b.get("models", [])) or "·"
+            loc_tip = (f'コード {b["loc_code"]:,} ／ ドキュメント {b["loc_docs"]:,} ／ '
+                       f'削除 {b["loc_removed"]:,}')
             rows.append(
                 f'<tr><td>{sn}</td><td class="txt">{mdl}</td>'
                 f'<td class="txt">{esc(_span(b["first_ts"], b["last_ts"]))}</td>'
                 f'<td>{b["n_user_prompts"]}</td><td>{b["n_assistant"]}</td>'
                 f'<td>{b["n_tool_use"]}</td><td>{b["n_subagents"] or "·"}</td>'
                 f'<td>{b["output_tokens"] / 1000:,.0f}</td>'
+                f'<td data-tip="{esc(loc_tip)}">{b["loc_added"]:,}</td>'
                 f'<td class="txt">{esc("、".join(b["workspaces"]))}</td></tr>')
         out.append(
             f'<details class="proj"{is_open}><summary><b>{esc(p["name"])}</b>'
@@ -606,9 +826,9 @@ def _projects_html(projects):
             f'<span class="pill">{p["n_bundles"]}セッション</span>'
             f'{model_badge(p.get("model"), note="直近セッションのモデル")}'
             f'<span class="meta">{p["n_files"]}ファイル・最終 {_fmt(p["last_ts"])}'
-            f'・出力 {_k(p["output_tokens"])}</span></summary>'
+            f'・出力 {_k(p["output_tokens"])}・+{p["loc_added"]:,}行</span></summary>'
             '<table><tr><th>S</th><th>model</th><th>期間</th><th>発話</th><th>応答</th><th>ツール</th>'
-            f'<th>sub-ag</th><th>出力tok(k)</th><th>WS</th></tr>{"".join(rows)}</table></details>')
+            f'<th>sub-ag</th><th>出力tok(k)</th><th>+行</th><th>WS</th></tr>{"".join(rows)}</table></details>')
     return "".join(out)
 
 
@@ -676,6 +896,12 @@ def render_html(data):
 </div>
 
 <div class="card">
+  <h2>✍️ 書いた行数（直近{TREND_DAYS}日）</h2>
+  <p class="cap">棒＝その日に Claude が書いた行数。コード／ドキュメント（md・txt・csv 等）／その他の積み上げ</p>
+  {_loc_card_html(data["loc"])}
+</div>
+
+<div class="card">
   <h2>🕐 稼働リズム（曜日 × 時間帯・全期間）</h2>
   <p class="cap">セルの濃さ＝assistant応答数（√スケール）。自分がいつ Claude を回してるかの地図</p>
   {_punch_html(data["punch"])}
@@ -694,6 +920,12 @@ def render_html(data):
 </div>
 
 <div class="card">
+  <h2>🧾 案件別 書いた行数（全期間累計）</h2>
+  <p class="cap">1本＝1案件。長さ＝行数、色＝コード／ドキュメント／その他。週報・工数入力の裏付けに</p>
+  {_loc_bars_html(data["loc"]["by_project"])}
+</div>
+
+<div class="card">
   <h2>🎯 案件マッピングの根拠（{t["matched"]}/{t["sessions"]} 本）</h2>
   <p class="cap">何を手がかりに案件へ紐付いたか＝この地図の信頼度そのもの</p>
   {_sources_html(t["match_sources"], t["matched"], t["unmatched"])}
@@ -706,7 +938,8 @@ def render_html(data):
 
 <footer>
   再生成 <code>python claude_dashboard_gen.py</code> ／ 中間データ <code>reports/claude_dashboard_data.json</code>（L3統合用）<br>
-  ライブ監視は <code>live_board.bat</code>／次のS番号は <code>python session_no.py "&lt;案件名&gt;"</code>
+  ライブ監視は <code>live_board.bat</code>／次のS番号は <code>python session_no.py "&lt;案件名&gt;"</code>／
+  行数だけ端末で見るなら <code>python loc_scan.py [--days N]</code>
 </footer>
 </div>
 <div id="tip"></div>

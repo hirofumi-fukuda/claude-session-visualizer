@@ -126,6 +126,8 @@ h2 .n{color:var(--muted);font-weight:400;font-size:11px}
 .status-none{color:var(--muted);border:1px solid var(--muted)}
 .status-unrec{color:var(--warm);border:1px dashed var(--warm)}
 .track-stats{margin-left:auto;color:var(--muted);font-size:11px;white-space:nowrap}
+.track-loc{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.track-loc s{text-decoration:none;opacity:.7}
 /* 現在地 / Blocked */
 .track-section{border-top:1px solid var(--border);padding-top:8px}
 .section-label{font-size:10.5px;color:var(--muted);margin-bottom:4px}
@@ -243,7 +245,7 @@ def _act_local_date(ts_iso: str) -> str:
 
 
 def _latest_scan(cfg, mapper) -> tuple:
-    """案件(canonical)→(直近セッションの model, 実活動の最終ローカル日付) を jsonl scan から引く。
+    """案件(canonical)→(直近セッションの model, 実活動の最終ローカル日付, 書いた行数) を jsonl scan から引く。
 
     scan_all はアクティビティと同じ差分キャッシュ（daily_maintenance は dashboard→ここ の順
     ＝温まった状態で走る）。採番セッションの案件名は同じ alias テーブルで canonical に落ちる
@@ -251,27 +253,43 @@ def _latest_scan(cfg, mapper) -> tuple:
     実活動日（S17）＝台帳は締め時にしか進まないので、進行中セッションの「今日動いてる」は
     こちらで補正する（A案・⚠️未記帳マーク）。
     """
-    models, activity = {}, {}
+    models, activity, loc = {}, {}, {}
     try:
         sessions = scan_all(
             Path(cfg.get("claude_dir", "~/.claude")).expanduser(),
             cache_path=REPO_ROOT / "cache" / "scan_cache.json",
             workspaces=cfg.get("workspaces") or None)
     except OSError:
-        return models, activity
+        return models, activity, loc
     best_model_ts, best_act_ts = {}, {}
     for s in sessions:
         mapper.map_session(s)
         p, ts = s.get("project"), s.get("last_ts") or ""
         if not p or not ts:
             continue
+        # 書いた行数（S18）: 案件の全期間累計 code/docs/added/removed/unmeasured
+        sl = s.get("loc") or {}
+        if sl:
+            r = loc.setdefault(p, {"added": 0, "code": 0, "docs": 0, "removed": 0, "unmeasured": 0})
+            for k in r:
+                r[k] += sl.get(k, 0)
         if s.get("model") and ts > best_model_ts.get(p, ""):
             best_model_ts[p] = ts
             models[p] = s["model"]
         if ts > best_act_ts.get(p, ""):
             best_act_ts[p] = ts
     activity = {p: _act_local_date(ts) for p, ts in best_act_ts.items()}
-    return models, activity
+    return models, activity, loc
+
+
+def _loc_stat_html(loc) -> str:
+    """統計欄に添える「＋n行」（ホバーで code/docs/削除/未計測の内訳）。行数ゼロなら出さない。"""
+    if not loc or not loc.get("added"):
+        return ""
+    tip = (f'書いた行数（全期間・成功した編集のみ）: コード {loc["code"]:,} ／ '
+           f'ドキュメント {loc["docs"]:,} ／ 削除 {loc["removed"]:,} ／ 未計測の編集 {loc["unmeasured"]}件')
+    return (f'<span class="track-loc" title="{html_mod.escape(tip)}">'
+            f'＋{loc["added"]:,}行 <s>{loc["code"]:,}code</s></span>')
 
 
 # ── カード HTML ───────────────────────────────────────────────
@@ -317,7 +335,7 @@ def _unrec_badge(latest: str, act_date: str) -> str:
             f'⚠️ 未記帳</span>')
 
 
-def _track_card_html(led, model=None, act_date="") -> str:
+def _track_card_html(led, model=None, act_date="", loc=None) -> str:
     hist = [e for e in led.session_history() if not e.is_reserved]
     last3 = list(reversed(hist[-3:]))  # 新しい順 (最大3件)
     count = len(hist)
@@ -346,7 +364,7 @@ def _track_card_html(led, model=None, act_date="") -> str:
               f'<span class="status-badge {status_cls}">{status_label}</span>'
               f'{_unrec_badge(latest, act_date)}'
               f'{model_badge(model, note="直近セッションのモデル")}'
-              f'<span class="track-stats">{html_mod.escape(stats)}</span>'
+              f'<span class="track-stats">{html_mod.escape(stats)}</span>{_loc_stat_html(loc)}'
               f'</div>')
 
     # 現在地
@@ -382,7 +400,7 @@ def _track_card_html(led, model=None, act_date="") -> str:
 
 
 # ── 個別ページ HTML ───────────────────────────────────────────
-def _detail_page(led, model=None, act_date="") -> str:
+def _detail_page(led, model=None, act_date="", loc=None) -> str:
     """1トラック=1ページの詳細（ライブボードのトラック名リンク先）。
     上部＝構造化サマリ（現在地/Next/Blocked/全セッション履歴）、下部＝台帳全文（折りたたみ）。"""
     label = led.label
@@ -407,7 +425,7 @@ def _detail_page(led, model=None, act_date="") -> str:
               f'<span class="status-badge {status_cls}">{status_label}</span>'
               f'{_unrec_badge(latest, act_date)}'
               f'{model_badge(model, note="直近セッションのモデル")}'
-              f'<span class="track-stats">{html_mod.escape(stats)}</span></div>')
+              f'<span class="track-stats">{html_mod.escape(stats)}</span>{_loc_stat_html(loc)}</div>')
 
     def section(lbl, cls, text):
         if not text:
@@ -495,7 +513,7 @@ def build(open_browser: bool = True) -> Path:
     tracks = list(by_name.values())
 
     # トラック→直近セッションの model／実活動日（jsonl scan・キャッシュ利用）
-    models, activity = _latest_scan(cfg, mapper)
+    models, activity, locs = _latest_scan(cfg, mapper)
 
     def _key_of(led):
         return (led.project or led.name or led.path.stem).strip()
@@ -505,6 +523,9 @@ def build(open_browser: bool = True) -> Path:
 
     def _act_of(led):
         return activity.get(_key_of(led), "")
+
+    def _loc_of(led):
+        return locs.get(_key_of(led))
 
     def _eff_date(led) -> str:
         """バッジ・帯判定の実効日＝max(台帳の最終行, jsonl実活動)（S17 A案）。"""
@@ -537,7 +558,7 @@ def build(open_browser: bool = True) -> Path:
             f'<h2>{label}<span class="n">{len(subset)} トラック</span></h2>')
         body_parts.append(
             '<div class="track-grid">'
-            + "".join(_track_card_html(l, _model_of(l), _act_of(l)) for l in subset)
+            + "".join(_track_card_html(l, _model_of(l), _act_of(l), _loc_of(l)) for l in subset)
             + '</div>')
 
     # 戦績なし（type:project だがセッション履歴ゼロ）
@@ -579,7 +600,7 @@ def build(open_browser: bool = True) -> Path:
             continue
         seen.add(fname)
         (track_dir / fname).write_text(
-            _detail_page(led, _model_of(led), _act_of(led)), encoding="utf-8")
+            _detail_page(led, _model_of(led), _act_of(led), _loc_of(led)), encoding="utf-8")
 
     print(f"✅ {out}  （{len(tracks)} トラック / {total_s}S / 個別ページ {len(seen)}枚）")
     if open_browser:

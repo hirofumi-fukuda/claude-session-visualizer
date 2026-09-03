@@ -8,6 +8,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .loc import LocAccumulator
+
 # 環境タグ（IDE通知・システムリマインダー等）はユーザー発話から除去する
 _TAG_RE = re.compile(
     r"<(ide_opened_file|ide_selection|ide_diagnostics|system-reminder|"
@@ -62,7 +64,12 @@ def parse_session(path: Path) -> dict:
         "days_tokens": {},  # "YYYY-MM-DD" -> 出力トークン（日別推移グラフ用）
         "hours_active": {},  # "曜日-時" (0=月〜6=日) -> assistantメッセージ数（稼働リズム用）
         "parse_errors": 0,
+        # 書いた行数（loc.py）。loc={added,removed,code,docs,other,bash_added,unmeasured,n_edits}
+        # days_loc={"YYYY-MM-DD": {code,docs,other,removed}} files_loc={basename: added}（上位30）
+        # サブエージェント（<sid>/subagents/agent-*.jsonl）の編集も同じ集計器に畳む
+        "loc": {}, "days_loc": {}, "files_loc": {},
     }
+    acc = LocAccumulator()
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
@@ -89,9 +96,10 @@ def parse_session(path: Path) -> dict:
             elif t == "last-prompt":
                 summary["last_prompt"] = rec.get("lastPrompt") or summary["last_prompt"]
             elif t == "user":
+                msg = rec.get("message") or {}
+                _feed_tool_results(acc, msg.get("content"))
                 if rec.get("isMeta") or rec.get("isSidechain"):
                     continue
-                msg = rec.get("message") or {}
                 for raw in _iter_text_items(msg.get("content")):
                     text = _clean_user_text(raw)
                     if not text:
@@ -122,11 +130,59 @@ def parse_session(path: Path) -> dict:
                     summary["hours_active"][slot] = summary["hours_active"].get(slot, 0) + 1
                 content = msg.get("content")
                 if isinstance(content, list):
-                    summary["n_tool_use"] += sum(
-                        1 for it in content
-                        if isinstance(it, dict) and it.get("type") == "tool_use"
-                    )
+                    day = dt.strftime("%Y-%m-%d") if dt else None
+                    for it in content:
+                        if isinstance(it, dict) and it.get("type") == "tool_use":
+                            summary["n_tool_use"] += 1
+                            acc.on_tool_use(it, day)
+    for sub in _subagent_files(path):
+        _parse_loc_only(sub, acc)
+    summary.update(acc.result())
     return summary
+
+
+def _feed_tool_results(acc: LocAccumulator, content):
+    if isinstance(content, list):
+        for it in content:
+            if isinstance(it, dict) and it.get("type") == "tool_result":
+                acc.on_tool_result(it)
+
+
+def _parse_loc_only(path: Path, acc: LocAccumulator):
+    """サブエージェント jsonl から編集ツールの行数だけ集計器へ流す（発話・トークンは数えない）。"""
+    try:
+        f = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    with f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            t = rec.get("type")
+            msg = rec.get("message") or {}
+            if t == "user":
+                _feed_tool_results(acc, msg.get("content"))
+            elif t == "assistant":
+                content = msg.get("content")
+                if isinstance(content, list):
+                    ts = rec.get("timestamp")
+                    dt = _to_local_dt(ts) if isinstance(ts, str) else None
+                    day = dt.strftime("%Y-%m-%d") if dt else None
+                    for it in content:
+                        if isinstance(it, dict) and it.get("type") == "tool_use":
+                            acc.on_tool_use(it, day)
+
+
+def _subagent_files(session_jsonl: Path):
+    subdir = session_jsonl.parent / session_jsonl.stem
+    if not subdir.is_dir():
+        return []
+    return sorted(subdir.rglob("agent-*.jsonl"))
 
 
 def count_subagents(session_jsonl: Path) -> int:

@@ -15,10 +15,11 @@
 
 - **`claude_dashboard.bat`** … 📊 アクティビティ（トークン/セッション/ツール等の活動統計＋案件分布）の静的ダッシュボードを再生成→ブラウザ表示（見たいときにダブルクリック・数秒）
 - **`live_board.bat`** … 並行セッションの🖥️ライブボード（ブラウザ10秒自動更新・停止=最小化窓を閉じる）。**朝はこれ1本でOK**（アクティビティ/トラックレコードは daily_maintenance が平日8:30に無人生成→ライブボードの統一ナビから新タブで開ける）
+- **✍️ 書いた行数（LOC）**（S18・2026-09-04）… アクティビティに「直近30日の日別 積み上げ（コード／ドキュメント／その他）」と「案件別 全期間累計」、トラックレコードの各カードに「＋n行」、地図の各Sに「+行」列。定義は `claude_sv/loc.py`＝Edit/Write/MultiEdit/NotebookEdit＋Bash/PowerShell のファイル直書き（ヒアドキュメント）の**成功分のみ**・サブエージェント含む・sed -i / python直書き等は「未計測」として件数のみ。Claude Team 管理コンソールの「コード行数」（個人アカウントだと0）とは別物＝**社内比較用の自前指標**。週報・工数入力の裏付け用
 - **🏆 トラックレコード**（`python track_record_gen.py`・daily_maintenance で自動再生成）… 各案件の「今＋あゆみ」（現在地/Next/Blocked/全セッション履歴）を一覧。トラック名クリックで**個別ページ**（構造化サマリ＋台帳全文の折りたたみ）。3画面は header の統一ナビで相互遷移（ボード=同一タブ／アクティビティ・トラックレコード=新タブ）
 - ~~`counter.bat` / `counter.py`~~ … **エージェントカウンターは休眠中**（2026-08-04・S10決定）。存在理由＝ギルド通信の📨依頼票/回覧板の受信窓口だが、会社環境では📨文化を**不採用**と決定（ルーティングはユーザー自身が把握する運用・非同期受信箱は思想に合わない）ため実質機能なし。ファイルは残置（自宅PCギルドパッケージとの同期維持）。土台の `claude_sv/ledger.py` は現役（live_board が使用・🏆トラックレコード〔S11実装済〕の母体に転生）
 - **`backup_config.bat` / `python backup_config.py`** … `config.local.json`（gitignore対象＝案件マッピング/ピン情報/副業ラベルの正本）を `~/.claude/backups/agent-ops/` へ世代バックアップ（既定10世代・内容差分でスキップ・JSON検証付き）。復元=`python backup_config.py --restore latest`／一覧=`--list`。会社OneDriveは副業ラベルを含むため使わない（個人ルール）
-- CLI: `python l0_report.py`（Markdown棚卸し・未分類の本文スニペット付き）／`python claude_dashboard_gen.py`／`python live_board.py [--watch N] [--html]`／`python session_no.py "<案件名>"`（次のS番号を即答）
+- CLI: `python l0_report.py`（Markdown棚卸し・未分類の本文スニペット付き）／`python claude_dashboard_gen.py`／`python live_board.py [--watch N] [--html]`／`python session_no.py "<案件名>"`（次のS番号を即答）／`python loc_scan.py [--days N|--all]`（✍️ 書いた行数を端末で。日別・案件×S別・ファイル別）
 - **休眠セッション管理**（タブを閉じたが後で `--resume` して続けたいセッション）: ライブボード下部に **📌再開予定**（ピン済み・停止中）と **💤再開候補**（自動提示）が出る。候補は2グループ:
   - **番号付き** … 案件の**最新Sのみ**（同案件に新しいS／稼働中Sがあれば旧番号は自動除外。短めの遡り＝`dormant_lookback_days`）
   - **番号なし単独** … 採番で追えず埋もれやすいので長めに遡る（`dormant_lookback_days_unnumbered`）

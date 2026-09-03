@@ -69,13 +69,26 @@ class ProjectMapper:
             ("first-prompts", summary.get("user_texts_matchpool") or []),
             ("last-prompt", [summary.get("last_prompt") or ""]),
         ]
+        # 案件は先勝ち（別案件の合言葉が後から出ても乗り換えない＝誤マッピング防止）。
+        # 番号は同一案件の中で「後勝ち」＝
+        #   ・番号なしヒット（例: ai-title「〜新セッション開始」）の後に番号付きが来れば番号を採用
+        #     （起動後に採番合言葉を打つ遡及採番・2026-08-15）
+        #   ・番号付きの後に同一案件の番号付きが来れば新しい方を採用
+        #     （「S8 開始」で始めて台帳と食い違いに気づき「S18 開始」と打ち直す訂正採番・S18）
+        project, session_no, match_source = None, None, None
         for source, texts in candidates:
             for text in texts:
                 hit = self._try_match(text)
-                if hit:
-                    summary["project"], summary["session_no"] = hit
-                    summary["match_source"] = source
-                    return summary
+                if not hit:
+                    continue
+                if project is None:
+                    project, session_no, match_source = hit[0], hit[1], source
+                elif hit[0] == project and hit[1] is not None:
+                    session_no, match_source = hit[1], source
+        if project is not None:
+            summary["project"], summary["session_no"] = project, session_no
+            summary["match_source"] = match_source
+            return summary
 
         # キーワードヒント（業務ハブ等の非採番セッション）
         hint_texts = self._norm(
