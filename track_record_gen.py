@@ -744,7 +744,11 @@ def build(open_browser: bool = True) -> Path:
         existing = by_name.get(key)
         if (not existing
                 or (l.session_count(), bool(l.state)) > (existing.session_count(), bool(existing.state))):
+            if existing and existing.state and not l.state:
+                l.state = existing.state   # 負けた台帳側にだけ状態ブロックがある → 勝った方へ引き継ぐ
             by_name[key] = l
+        elif l.state and not existing.state:
+            existing.state = l.state       # 同一トラックの別ファイル（projects/ と memory/）に書かれた状態ブロックを拾う
     all_tracks = list(by_name.values())
     # カード（帯）にはアーカイブ以外。表には全部（アーカイブ行は既定で非表示・トグルで戻る）
     tracks = [l for l in all_tracks if not _is_archived(l)]
