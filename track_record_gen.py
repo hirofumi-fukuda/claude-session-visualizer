@@ -35,6 +35,40 @@ from claude_sv.scan import scan_all
 REPO_ROOT = Path(__file__).parent
 OUT_DIR = REPO_ROOT / "reports"
 TODAY = datetime.now().date()
+TODAY_ISO = TODAY.isoformat()
+# 実活動日・モデルに使う match_source＝採番合言葉（起動プロンプト由来）だけ。
+# title-hint / workspace は粒度が粗く別トラックの活動を吸うので使わない（S12 方針・S19 で明文化）。
+KICKOFF_SOURCES = {"ai-title", "first-prompts", "last-prompt"}
+# 期限（状態ブロック）を「近い」と見せる日数
+DUE_SOON_DAYS = 3
+
+
+def _hist(led) -> list:
+    """記録済みの履歴行＝日付あり・今日以前。未来日付の予定行（「2026-09-28〜」）は _planned へ。"""
+    return [e for e in led.session_history() if not e.is_reserved and e.date <= TODAY_ISO]
+
+
+def _planned(led) -> list:
+    """予定行（日付が未来）。📅 で見せる。これを「最終日」に使うと「-3日前」になる（不具合①）。"""
+    return [e for e in led.session_history() if not e.is_reserved and e.date > TODAY_ISO]
+
+
+def _ledger_latest(led) -> str:
+    """台帳ベースの最終日＝行順に依存しない max・期間は終端・未来は今日で丸め（不具合①⑥）。"""
+    return led.latest_session_date(TODAY_ISO)
+
+
+def _latest_entry(led):
+    """記録済み行の中で最も新しい1行（⏳ を付ける対象＝不具合⑤）。"""
+    hist = _hist(led)
+    return max(hist, key=lambda e: (e.last_date, e.n or 0)) if hist else None
+
+
+def _is_archived(led) -> bool:
+    """状態ブロックの「状態: アーカイブ」だけがアーカイブ。日付では絶対に隠さない（S19 確定）。"""
+    v = (led.state or {}).get("状態", "")
+    return v.startswith("アーカイブ") or v.casefold().startswith("archiv")
+
 
 # ── 状態バッジ ─────────────────────────────────────────────────
 def _activity_status(latest_date: str) -> tuple:
@@ -46,6 +80,8 @@ def _activity_status(latest_date: str) -> tuple:
         delta = (TODAY - d).days
     except ValueError:
         return "—", "status-none"
+    if delta < 0:   # 保険: 未来日付は「予定」（「-3日前」を二度と出さない）
+        return f"📅 {latest_date[5:]} 予定", "status-none"
     if delta <= 7:
         return f"🟢 {delta}日前", "status-hot"
     elif delta <= 30:
@@ -150,7 +186,38 @@ h2 .n{color:var(--muted);font-weight:400;font-size:11px}
 .s-result{color:var(--muted);font-size:11px;flex-shrink:0;max-width:120px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .s-row.done .s-num{color:var(--hot)}
-.s-row.pending .s-num{color:var(--muted)}
+.s-row.pending .s-num{color:var(--warm)}
+.s-row.open .s-num{color:var(--muted)}
+.s-row.planned{opacity:.75}
+.s-row.planned .s-num{color:var(--now)}
+/* 全トラック一覧（表）S19 */
+.tr-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:11px}
+table.tr-table{border-collapse:collapse;width:100%;font-size:12px}
+.tr-table th,.tr-table td{padding:6px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+.tr-table th{font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap;cursor:pointer;
+  user-select:none;background:var(--wash);position:sticky;top:0}
+.tr-table th:hover{color:var(--ink)}
+.tr-table th.asc::after{content:" ▲";font-size:9px}
+.tr-table th.desc::after{content:" ▼";font-size:9px}
+.tr-table tr:last-child td{border-bottom:none}
+.tr-table td.name{white-space:nowrap;font-weight:600}
+.tr-table td.name a{color:var(--ink);text-decoration:none}
+.tr-table td.name a:hover{color:var(--cat-1);text-decoration:underline}
+.tr-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tr-table td.st,.tr-table td.due,.tr-table td.upd{white-space:nowrap}
+.tr-table td.txt{color:var(--ink2);max-width:360px}
+.tr-table tr.arch{display:none;opacity:.55}
+.tr-table.show-arch tr.arch{display:table-row}
+.fb{color:var(--muted);font-style:italic}
+.warn{color:var(--warm)}
+.due-over{color:var(--blocked);font-weight:600}
+.due-soon{color:var(--warm);font-weight:600}
+.arch-toggle{margin-left:auto;font-weight:400;color:var(--muted);font-size:11px;cursor:pointer;
+  display:flex;align-items:center;gap:5px}
+.state-list{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;font-size:12px;color:var(--ink2)}
+.state-list dt{color:var(--muted);margin:0}
+.state-list dd{margin:0}
+.state-list dd strong{color:var(--ink)}
 /* 記録なし（既定は折りたたみ） */
 .no-hist{display:flex;flex-wrap:wrap;gap:8px;padding:8px 0}
 .no-hist-item{color:var(--muted);font-size:11.5px;background:var(--wash);
@@ -220,13 +287,14 @@ def _canonical_key(led, mapper) -> str:
     slug() が一致してトラック名リンクが個別ページに繋がる。
     title_hints を使うと「GEMiNX本体開発→GEMiNX」と粒度が粗くなり衝突するので使わない。
     """
+    declared = (led.state or {}).get("トラック名", "").strip()   # 台帳が自分で宣言した表示名（S19）
     if mapper is not None:
-        for cand in (led.project, led.name, led.path.stem):
+        for cand in (declared, led.project, led.name, led.path.stem):
             if cand:
                 r = mapper._resolve_project(cand)
                 if r and mapper._norm(r) != mapper._norm(cand):
                     return r
-    return led.project or led.name or led.path.stem
+    return declared or led.project or led.name or led.path.stem
 
 
 # ── トラック→直近セッションの model／実活動日（S14・S17）─────────
@@ -273,6 +341,8 @@ def _latest_scan(cfg, mapper) -> tuple:
             r = loc.setdefault(p, {"added": 0, "code": 0, "docs": 0, "removed": 0, "unmeasured": 0})
             for k in r:
                 r[k] += sl.get(k, 0)
+        if s.get("match_source") not in KICKOFF_SOURCES:
+            continue   # title-hint/workspace 由来はトラックの活動としては使わない（誤判定防止）
         if s.get("model") and ts > best_model_ts.get(p, ""):
             best_model_ts[p] = ts
             models[p] = s["model"]
@@ -300,16 +370,26 @@ def _track_slug(led) -> str:
     return slug((led.project or led.name or led.path.stem).strip())
 
 
-def _session_row_html(entry, sum_len: int = 55) -> str:
-    date_short = entry.date[5:] if len(entry.date) >= 10 else entry.date  # "08-04"
-    icon = "✅" if entry.is_done else "⏳"
-    row_cls = "done" if entry.is_done else "pending"
+def _session_row_html(entry, sum_len: int = 55, is_latest: bool = False, planned: bool = False) -> str:
+    """履歴1行。アイコン: 📅予定（未来日付）／✅完了／⏳進行中（結果空欄でも最新行だけ）／◦記録のみ。
+    以前は結果列が空欄なら全部 ⏳ だった（不具合⑤）。"""
+    # 期間行（「08-29〜09-25」）は終端＝その行の最終日を出す（ツールチップに全期間）。不具合⑥
+    date_short = entry.last_date[5:] if len(entry.last_date) >= 10 else entry.last_date  # "09-25"
+    if planned:
+        icon, row_cls = "📅", "planned"
+    elif entry.is_done:
+        icon, row_cls = "✅", "done"
+    elif is_latest:
+        icon, row_cls = "⏳", "pending"
+    else:
+        icon, row_cls = "◦", "open"
+    date_title = f"{entry.date}〜{entry.date_end}" if entry.date_end else entry.date
     summary = entry.summary[:sum_len] + ("…" if len(entry.summary) > sum_len else "")
     result_text = re.sub(r"✅\s*", "", entry.result)[:35] if entry.result else "—"
     return (f'<div class="s-row {row_cls}">'
             f'<span class="s-icon">{icon}</span>'
             f'<span class="s-num">{html_mod.escape(entry.session)}</span>'
-            f'<span class="s-date">{date_short}</span>'
+            f'<span class="s-date" title="{date_title}">{date_short}</span>'
             f'<span class="s-sum" title="{html_mod.escape(entry.result)}">'
             f'{html_mod.escape(summary)}</span>'
             f'<span class="s-result">{html_mod.escape(result_text)}</span>'
@@ -335,12 +415,21 @@ def _unrec_badge(latest: str, act_date: str) -> str:
             f'⚠️ 未記帳</span>')
 
 
+def _history_rows_html(led, limit: int | None, sum_len: int) -> str:
+    """予定行（📅・新しい順）→ 記録済み行（新しい順・limit 件）。⏳ は最新の未完了行だけ。"""
+    hist = sorted(_hist(led), key=lambda e: (e.last_date, e.n or 0))
+    latest = hist[-1] if hist else None
+    shown = list(reversed(hist)) if limit is None else list(reversed(hist))[:limit]
+    planned = sorted(_planned(led), key=lambda e: (e.date, e.n or 0), reverse=True)
+    return ("".join(_session_row_html(e, sum_len, planned=True) for e in planned)
+            + "".join(_session_row_html(e, sum_len, is_latest=(e is latest)) for e in shown))
+
+
 def _track_card_html(led, model=None, act_date="", loc=None) -> str:
-    hist = [e for e in led.session_history() if not e.is_reserved]
-    last3 = list(reversed(hist[-3:]))  # 新しい順 (最大3件)
+    hist = _hist(led)
     count = len(hist)
     since = led.active_since()
-    latest = led.latest_session_date()
+    latest = _ledger_latest(led)
 
     # バッジの鮮度は max(台帳の最終行, jsonl実活動)（S17 A案）。統計欄は台帳ベース＝正本のまま
     eff = max((d for d in (latest, act_date) if d), default="")
@@ -385,9 +474,9 @@ def _track_card_html(led, model=None, act_date="", loc=None) -> str:
                         f'<div class="section-text">{_simple_html(blocked_text)}</div>'
                         f'</div>')
 
-    # セッション履歴
-    if last3:
-        rows_html = "".join(_session_row_html(e) for e in last3)
+    # セッション履歴（予定 📅 ＋ 直近3件）
+    if hist or _planned(led):
+        rows_html = _history_rows_html(led, 3, 55)
         more = f' <span style="color:var(--muted);font-size:11px">（全{count}S）</span>' if count > 3 else ""
         history_html = (f'<div class="track-history">'
                         f'<div class="history-label">📜 直近の討伐{more}</div>'
@@ -404,10 +493,10 @@ def _detail_page(led, model=None, act_date="", loc=None) -> str:
     """1トラック=1ページの詳細（ライブボードのトラック名リンク先）。
     上部＝構造化サマリ（現在地/Next/Blocked/全セッション履歴）、下部＝台帳全文（折りたたみ）。"""
     label = led.label
-    latest = led.latest_session_date()
+    latest = _ledger_latest(led)
     eff = max((d for d in (latest, act_date) if d), default="")
     status_label, status_cls = _activity_status(eff)
-    hist = [e for e in led.session_history() if not e.is_reserved]
+    hist = _hist(led)
     count = len(hist)
     since = led.active_since()
 
@@ -433,13 +522,14 @@ def _detail_page(led, model=None, act_date="", loc=None) -> str:
         return (f'<div class="track-section {cls}">'
                 f'<div class="section-label">{lbl}</div>'
                 f'<div class="section-text">{_simple_html(text)}</div></div>')
+    state_html = _state_section_html(led, latest)
     now_html = section("▶️ 現在地", "section-now", led.track_now(4))
     next_html = section("▶️ Next", "section-next", led.next_up(3))
     blocked_html = section("⛔ Blocked", "section-blocked", led.blockers(2))
 
-    # セッション履歴（全件・新しい順）
-    if hist:
-        rows = "".join(_session_row_html(e, 90) for e in reversed(hist))
+    # セッション履歴（予定 📅 ＋ 全件・新しい順）
+    if hist or _planned(led):
+        rows = _history_rows_html(led, None, 90)
         history_html = (f'<div class="track-history">'
                         f'<div class="history-label">📜 セッション履歴（全{count}S）</div>'
                         f'{rows}</div>')
@@ -460,9 +550,153 @@ def _detail_page(led, model=None, act_date="", loc=None) -> str:
                      f'</details>')
 
     nav = nav_html("", rel="../")   # 個別ページ＝3点全部リンク（ボード=同一タブ / マップ・戦績=新タブ）
-    body = (f'<div class="track-card detail-card">{header}{now_html}{next_html}'
+    body = (f'<div class="track-card detail-card">{header}{state_html}{now_html}{next_html}'
             f'{blocked_html}{history_html}{full_html}</div>')
     return _page(f"🗂️ {label}", body, nav=nav)
+
+
+# ── 状態ブロック（S19）────────────────────────────────────────
+STATE_KEYS = ("状態", "現S", "次の一手", "待ち", "期限", "更新")
+
+
+def _state_stale(led, latest: str) -> str:
+    """状態ブロックの 更新 が台帳の最終セッション日より古ければ警告文（無ければ ""）。"""
+    upd = (led.state or {}).get("更新", "")
+    m = re.search(r"\d{4}-\d{2}-\d{2}", upd)
+    if m and latest and m.group() < latest:
+        return f"⚠️ 状態ブロック {m.group()[5:]} ＜ 台帳 {latest[5:]}（更新漏れ）"
+    return ""
+
+
+def _due_class(due_raw: str) -> tuple:
+    """期限セルの (表示, class)。今日を過ぎたら赤、DUE_SOON_DAYS 以内は黄。日付が読めなければそのまま。"""
+    m = re.search(r"\d{4}-\d{2}-\d{2}", due_raw or "")
+    if not m:
+        return (due_raw or "—"), ""
+    try:
+        delta = (datetime.strptime(m.group(), "%Y-%m-%d").date() - TODAY).days
+    except ValueError:
+        return due_raw, ""
+    if delta < 0:
+        return f"{due_raw}（{-delta}日超過）", "due-over"
+    if delta <= DUE_SOON_DAYS:
+        return f"{due_raw}（あと{delta}日）", "due-soon"
+    return due_raw, ""
+
+
+def _state_section_html(led, latest: str) -> str:
+    """個別ページの 📌 状態ブロック（無ければ ⚠️ で「無い」ことを見せる）。"""
+    st = led.state or {}
+    if not st:
+        return ('<div class="track-section"><div class="section-label warn">📌 状態ブロックなし</div>'
+                '<div class="section-text fb">台帳先頭の <code>&lt;!-- track-state --&gt;</code> が未設置。'
+                '一覧表は台帳の Next/Blocked から推測表示中</div></div>')
+    items = []
+    for k in STATE_KEYS + tuple(x for x in st if x not in STATE_KEYS and x != "トラック名"):
+        v = st.get(k, "")
+        if not v:
+            continue
+        if k == "期限":
+            v_html, cls = _due_class(v)
+            v_html = f'<span class="{cls}">{html_mod.escape(v_html)}</span>' if cls else html_mod.escape(v_html)
+        else:
+            v_html = _simple_html(v)
+        items.append(f'<dt>{html_mod.escape(k)}</dt><dd>{v_html}</dd>')
+    stale = _state_stale(led, latest)
+    stale_html = f'<div class="section-text warn">{html_mod.escape(stale)}</div>' if stale else ""
+    return (f'<div class="track-section"><div class="section-label">📌 状態ブロック（台帳先頭・一次ソース）</div>'
+            f'<dl class="state-list">{"".join(items)}</dl>{stale_html}</div>')
+
+
+# ── 全トラック一覧（表）S19 ──────────────────────────────────
+TABLE_JS = """(function(){
+  var tb=document.getElementById('trt'); if(!tb) return;
+  var chk=document.getElementById('show-arch');
+  if(chk){chk.onchange=function(){tb.classList.toggle('show-arch',chk.checked);};}
+  var ths=tb.querySelectorAll('th[data-k]');
+  ths.forEach(function(th){th.onclick=function(){
+    var k=+th.dataset.k, asc=!th.classList.contains('asc');
+    ths.forEach(function(t){t.classList.remove('asc','desc');});
+    th.classList.add(asc?'asc':'desc');
+    var body=tb.tBodies[0], rows=Array.prototype.slice.call(body.rows);
+    rows.sort(function(a,b){var x=a.cells[k].dataset.v||'',y=b.cells[k].dataset.v||'';
+      return (x<y?-1:x>y?1:0)*(asc?1:-1);});
+    rows.forEach(function(r){body.appendChild(r);});
+  };});
+})();"""
+
+
+def _table_html(tracks, eff_of, act_of) -> str:
+    """全トラック1行ずつ。一次ソース＝状態ブロック。無い列は台帳から推測して斜体（fb）で埋め、
+    状態列に ⚠️ を出す＝書き忘れを機械が知らせる。アーカイブ行は既定で非表示（トグルで可逆）。"""
+    esc = html_mod.escape
+    head = "".join(
+        f'<th data-k="{i}">{h}</th>' for i, h in enumerate(
+            ("トラック名", "状態・現S", "次の一手", "待ち", "期限", "最終更新", "累計S")))
+    rows = []
+    for led in tracks:
+        st = led.state or {}
+        latest = _ledger_latest(led)
+        le = _latest_entry(led)
+        count = len(_hist(led))
+        arch = _is_archived(led)
+
+        # 状態・現S
+        if st:
+            st_txt = " ".join(x for x in (st.get("状態", ""), st.get("現S", "")) if x)
+            st_html = _simple_html(st_txt) if st_txt else '<span class="warn">⚠️ 状態/現S 未記入</span>'
+            stale = _state_stale(led, latest)
+            if stale:
+                st_html += f'<br><span class="warn" style="font-size:11px">{esc(stale)}</span>'
+            st_v = "1-" + st_txt
+        else:
+            fb = f"台帳: {le.session}{' ✅' if le.is_done and '✅' not in le.session else ''}" if le else ""
+            st_html = ('<span class="warn" title="台帳先頭に &lt;!-- track-state --&gt; が無い">⚠️ 状態ブロックなし</span>'
+                       + (f'<br><span class="fb">{esc(fb)}</span>' if fb else ""))
+            st_v = "9-"
+
+        # 次の一手 / 待ち（状態ブロック → 台帳 Next/Blocked 推測）
+        def _txt(key, fallback):
+            v = st.get(key, "")
+            if v:
+                return _simple_html(v), v
+            fbv = (fallback or "").strip().splitlines()
+            fbv = fbv[0] if fbv else ""
+            return (f'<span class="fb" title="台帳の見出しから推測">{_simple_html(fbv)}</span>' if fbv else "—"), fbv
+        next_html, next_v = _txt("次の一手", led.next_up(1))
+        wait_html, wait_v = _txt("待ち", led.blockers(1))
+
+        # 期限
+        due_raw = st.get("期限", "")
+        due_txt, due_cls = _due_class(due_raw)
+        due_html = f'<span class="{due_cls}">{esc(due_txt)}</span>' if due_cls else esc(due_txt)
+        dm = re.search(r"\d{4}-\d{2}-\d{2}", due_raw)
+        due_v = dm.group() if dm else "9999"
+
+        # 最終更新（実効日＝max(台帳, 実活動)）
+        eff = eff_of(led)
+        lab, cls = _activity_status(eff)
+        upd_html = (f'<span class="status-badge {cls}">{lab}</span>{_unrec_badge(latest, act_of(led))}')
+
+        tslug = slug((led.project or led.name or led.path.stem).strip())
+        ws = f'<span class="ws-label">{esc(led.ws_label)}</span>' if led.ws_label else ""
+        rows.append(
+            f'<tr class="{"arch" if arch else ""}">'
+            f'<td class="name" data-v="{esc(led.label)}"><a href="track/{tslug}.html">{esc(led.label)}</a>{ws}</td>'
+            f'<td class="st" data-v="{esc(st_v)}">{st_html}</td>'
+            f'<td class="txt" data-v="{esc(next_v)}">{next_html}</td>'
+            f'<td class="txt" data-v="{esc(wait_v)}">{wait_html}</td>'
+            f'<td class="due" data-v="{due_v}">{due_html}</td>'
+            f'<td class="upd" data-v="{eff or "0"}">{upd_html}</td>'
+            f'<td class="num" data-v="{count:04d}">{count}</td>'
+            f'</tr>')
+    n_arch = sum(1 for l in tracks if _is_archived(l))
+    toggle = (f'<label class="arch-toggle"><input type="checkbox" id="show-arch"> '
+              f'アーカイブ {n_arch}本 も表示</label>')
+    return (f'<h2>📋 全トラック一覧<span class="n">{len(tracks) - n_arch} トラック'
+            f'（列見出しクリックで並べ替え）</span>{toggle}</h2>'
+            f'<div class="tr-wrap"><table class="tr-table" id="trt"><thead><tr>{head}</tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table></div><script>{TABLE_JS}</script>')
 
 
 # ── ビルド ────────────────────────────────────────────────────
@@ -500,17 +734,21 @@ def build(open_browser: bool = True) -> Path:
     for l in ledgers:
         l.project = _canonical_key(l, mapper)
 
-    # セッション履歴があるものだけ対象
-    with_hist = [l for l in ledgers if l.session_count() > 0]
+    # 対象＝セッション履歴があるもの ＋ 状態ブロックを宣言しているもの（S19）
+    with_hist = [l for l in ledgers if l.session_history() or l.state]
 
-    # 案件名でデdup（セッション数が多い方を優先）
+    # 案件名でデdup（セッション数が多い方を優先・同数なら状態ブロック持ちを優先）
     by_name: dict = {}
     for l in with_hist:
         key = (l.project or l.name or l.path.stem).strip()
         existing = by_name.get(key)
-        if not existing or l.session_count() > existing.session_count():
+        if (not existing
+                or (l.session_count(), bool(l.state)) > (existing.session_count(), bool(existing.state))):
             by_name[key] = l
-    tracks = list(by_name.values())
+    all_tracks = list(by_name.values())
+    # カード（帯）にはアーカイブ以外。表には全部（アーカイブ行は既定で非表示・トグルで戻る）
+    tracks = [l for l in all_tracks if not _is_archived(l)]
+    archived = [l for l in all_tracks if _is_archived(l)]
 
     # トラック→直近セッションの model／実活動日（jsonl scan・キャッシュ利用）
     models, activity, locs = _latest_scan(cfg, mapper)
@@ -529,7 +767,7 @@ def build(open_browser: bool = True) -> Path:
 
     def _eff_date(led) -> str:
         """バッジ・帯判定の実効日＝max(台帳の最終行, jsonl実活動)（S17 A案）。"""
-        return max((d for d in (led.latest_session_date(), _act_of(led)) if d),
+        return max((d for d in (_ledger_latest(led), _act_of(led)) if d),
                    default="")
 
     # 並び順（S17 ふくちゃん決定）: バッジ帯（🟢≤7日/🟡≤30日/⚫それ以前）でグループ化し、
@@ -546,10 +784,11 @@ def build(open_browser: bool = True) -> Path:
 
     tracks.sort(key=lambda l: _eff_date(l) or "0", reverse=True)
     tracks.sort(key=lambda l: (_band(l), -l.session_count()))
+    archived.sort(key=lambda l: _eff_date(l) or "0", reverse=True)
 
-    # HTML生成（帯ごとにセクション）
+    # HTML生成: 先頭に全トラック一覧（表）、その下に帯ごとのカード
+    body_parts = [_table_html(tracks + archived, _eff_date, _act_of)]
     BANDS = [(0, "🟢 直近7日"), (1, "🟡 30日以内"), (2, "⚫ 休眠"), (3, "— 日付なし")]
-    body_parts = []
     for b, label in BANDS:
         subset = [l for l in tracks if _band(l) == b]
         if not subset:
@@ -561,11 +800,11 @@ def build(open_browser: bool = True) -> Path:
             + "".join(_track_card_html(l, _model_of(l), _act_of(l), _loc_of(l)) for l in subset)
             + '</div>')
 
-    # 戦績なし（type:project だがセッション履歴ゼロ）
-    no_hist = [l for l in ledgers if l.session_count() == 0 and l.project
-               and l not in tracks]
+    # 戦績なし（type:project だがセッション履歴ゼロ・状態ブロックもなし）
+    no_hist = [l for l in ledgers if not l.session_history() and not l.state and l.project
+               and l not in all_tracks]
     # dedup by name
-    no_hist_names = {(l.project or l.name or l.path.stem) for l in tracks}
+    no_hist_names = {(l.project or l.name or l.path.stem) for l in all_tracks}
     no_hist = [l for l in no_hist
                if (l.project or l.name or l.path.stem) not in no_hist_names]
     if no_hist:
@@ -579,9 +818,11 @@ def build(open_browser: bool = True) -> Path:
             f'<div class="no-hist">{items}</div></details>')
 
     total_s = sum(l.session_count() for l in tracks)
+    n_state = sum(1 for l in all_tracks if l.state)
     body_parts.append(
-        f'<footer>台帳 {len(ledgers)}本を走査 → 記録ありトラック {len(tracks)}本 / '
-        f'合計 {total_s}セッション。'
+        f'<footer>台帳 {len(ledgers)}本を走査 → トラック {len(tracks)}本（＋アーカイブ {len(archived)}本）/ '
+        f'合計 {total_s}セッション / 状態ブロックあり {n_state}本。'
+        f'アーカイブは台帳の状態ブロック「状態: アーカイブ」だけで決まる（日付では隠さない）。'
         f'CLI: <code>python track_record_gen.py [--no-open]</code></footer>')
 
     OUT_DIR.mkdir(exist_ok=True)
@@ -594,7 +835,7 @@ def build(open_browser: bool = True) -> Path:
     for old in track_dir.glob("*.html"):   # 前回の stale（canonical 変更・トラック消滅・改名）を掃除
         old.unlink()
     seen = set()
-    for led in tracks:
+    for led in tracks + archived:   # アーカイブも個別ページは持つ（表のトグルから辿れる）
         fname = _track_slug(led) + ".html"
         if fname in seen:   # by_name で案件名は一意だが 60字 truncate 衝突の保険（先勝ち）
             continue
@@ -602,7 +843,8 @@ def build(open_browser: bool = True) -> Path:
         (track_dir / fname).write_text(
             _detail_page(led, _model_of(led), _act_of(led), _loc_of(led)), encoding="utf-8")
 
-    print(f"✅ {out}  （{len(tracks)} トラック / {total_s}S / 個別ページ {len(seen)}枚）")
+    print(f"✅ {out}  （{len(tracks)} トラック＋アーカイブ {len(archived)} / {total_s}S / "
+          f"状態ブロック {n_state}本 / 個別ページ {len(seen)}枚）")
     if open_browser:
         webbrowser.open(out.as_uri())
     return out

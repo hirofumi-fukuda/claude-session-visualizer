@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import datetime as _dt
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,8 @@ KW_SESSION = ("セッション履歴", "session history", "session track", "sess
 # track_now() 専用: KW_CURRENT より広いフォールバック（"now /" で "Now / Next / Blocked" を拾う）
 KW_NOW_WIDE = ("現在地", "最新ステータス", "ステータス", "アクティブ", "now /", "現状")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+# 期間表記の終端（開始日の直後）: 「2026-08-29〜09-25」「2026-09-15〜18」「2026-07-31〜08-03」。「2026-09-28〜」は終端なし
+RANGE_END_RE = re.compile(r"\s*[〜～~]\s*((?:\d{4}-)?(?:\d{1,2}-)?\d{1,2})(?![\d:：月])")  # 「〜 13:10」「〜10月」は終端ではない
 
 # 見出し語（表記ゆれを含めてここに集約する。ワークスペース差もここで吸収）
 KW_CURRENT = ("現在地", "最新ステータス", "ステータス")
@@ -61,6 +64,7 @@ class Ledger:
     lead: str = ""                      # 最初の見出しより前の本文（見出しゼロの台帳の受け皿）
     sections: list = field(default_factory=list)
     project: str | None = None          # 案件名（config の alias で引けたときだけ入る）
+    state: dict = field(default_factory=dict)  # 状態ブロック（<!-- track-state --> 直後の「- キー: 値」。S19）
 
     @property
     def label(self) -> str:
@@ -102,8 +106,17 @@ class Ledger:
         テーブル行が実在する最初のセクションを使う。
         （例: "GWR運用（採番台帳）" は metadata 文章のみで空 → "🔢 セッション履歴" に落ちる）
         """
-        for sec in self.pick_all(KW_SESSION):
-            entries = parse_session_table(sec.body)
+        kws = [k.casefold() for k in KW_SESSION]
+        for i, sec in enumerate(self.sections):
+            if not any(k in sec.title.casefold() for k in kws):
+                continue
+            # 直下の小見出し（### PTA対応 / ### PTA開発 等）に表が割れている台帳は子セクションも束ねて読む
+            body = sec.body
+            for sub in self.sections[i + 1:]:
+                if sub.level <= sec.level:
+                    break
+                body += "\n" + sub.body
+            entries = parse_session_table(body)
             if entries:
                 return entries
         return []
@@ -117,14 +130,24 @@ class Ledger:
         return len([e for e in self.session_history() if not e.is_reserved])
 
     def active_since(self) -> str:
-        """最初のセッション日付（YYYY-MM-DD）。"""
-        hist = [e for e in self.session_history() if e.date]
-        return hist[0].date if hist else ""
+        """最初のセッション日付（YYYY-MM-DD）＝日付の min（行順に依存しない）。"""
+        dates = [e.date for e in self.session_history() if e.date]
+        return min(dates) if dates else ""
 
-    def latest_session_date(self) -> str:
-        """最後のセッション日付（YYYY-MM-DD）。"""
-        hist = [e for e in self.session_history() if e.date]
-        return hist[-1].date if hist else ""
+    def latest_session_date(self, upto: str = "") -> str:
+        """最新のセッション日付（YYYY-MM-DD）。
+
+        行順がバラバラな台帳（S16 の後に S15・S5・S3 が並ぶ等）があるので「最終行」ではなく max を取る。
+        期間表記「2026-08-29〜09-25」は終端を使う。upto（今日）を渡すと、それより先の予定行は無視し、
+        進行中の期間は upto で丸める（未来日付で「-3日前」にならないため・S19）。
+        """
+        dates = []
+        for e in self.session_history():
+            if not e.date or (upto and e.date > upto):
+                continue
+            d = e.last_date
+            dates.append(min(d, upto) if upto else d)
+        return max(dates) if dates else ""
 
     def track_now(self, max_lines: int = 2) -> str:
         """track_record 向けの現在地テキスト（KW_NOW_WIDE でより広くフォールバック）。"""
@@ -141,10 +164,18 @@ class SessionEntry:
     date: str      # "2026-07-29"（DATE_RE で抽出済み。予約/空は ""）
     summary: str   # 内容 / テーマ
     result: str    # 結果（"✅ ..." / "—" / ""）
+    date_end: str = ""  # 期間表記の終端 "2026-09-25"（単日・終端なしは ""）
+
+    @property
+    def last_date(self) -> str:
+        """その行の最終日＝期間なら終端、単日なら date。"""
+        return self.date_end or self.date
 
     @property
     def is_done(self) -> bool:
-        return any(c in self.result for c in ("✅", "✓", "完了", "Done", "done"))
+        # 結果列で判定。S 欄に ✅ を書く台帳（「S1 ✅」）も完了扱い（S19）
+        return (any(c in self.result for c in ("✅", "✓", "完了", "Done", "done"))
+                or "✅" in self.session)
 
     @property
     def is_reserved(self) -> bool:
@@ -193,9 +224,71 @@ def parse_session_table(text: str) -> list:
             continue
         dm = DATE_RE.search(raw_date)
         date = dm.group() if dm else ""
-        entries.append(SessionEntry(session=s, date=date,
-                                    summary=summary, result=result))
+        entries.append(SessionEntry(session=s, date=date, summary=summary, result=result,
+                                    date_end=parse_range_end(raw_date, dm) if dm else ""))
     return entries
+
+
+def parse_range_end(raw: str, dm) -> str:
+    """日付セルの期間終端を YYYY-MM-DD で返す（dm＝開始日の DATE_RE match）。
+
+    「2026-09-15〜18」→ 2026-09-18 ／「2026-08-29〜09-25」→ 2026-09-25 ／「2026-07-31〜08-03」→ 2026-08-03。
+    終端なし・暦日でない・開始より前は ""。
+    """
+    r = RANGE_END_RE.match(raw, dm.end())
+    if not r:
+        return ""
+    start = dm.group()
+    y, mo, d = start.split("-")
+    parts = r.group(1).split("-")
+    if len(parts) == 3:
+        y, mo, d = parts
+    elif len(parts) == 2:
+        mo, d = parts
+    else:
+        d = parts[0]
+    try:
+        end = _dt.date(int(y), int(mo), int(d)).isoformat()
+    except ValueError:
+        return ""
+    return end if end >= start else ""
+
+
+# ── 状態ブロック（S19）────────────────────────────────────────────
+# 台帳先頭（H1 の直後）に置く機械可読な「今」。ボードの一覧表はここを一次ソースとして読み、
+# 無い／台帳より古い は ⚠️ で見せる（書き忘れを機械が検出する＝人が覚えていなくても効く）。
+#   <!-- track-state -->
+#   - 状態: 進行中 | 待ち | 休眠 | アーカイブ
+#   - 現S: S19
+#   - 次の一手: 〜
+#   - 待ち: 〇〇さん（〜の回答）
+#   - 期限: 2026-09-28
+#   - 更新: 2026-09-25
+# 任意: 「- トラック名: 〇〇」で表示名を宣言（1ファイル複数トラック台帳・汎用stem の救済）。
+TRACK_STATE_MARK = "<!-- track-state -->"
+STATE_LINE_RE = re.compile(r"^\s*[-*・]\s*\**([^:：*]+?)\**\s*[:：]\s*(.*?)\s*$")
+
+
+def parse_track_state(text: str) -> dict:
+    """`<!-- track-state -->` 直後の「- キー: 値」行を dict で返す（無ければ {}）。
+
+    ブロックは最初の非該当行（空行・見出し・本文）で終わる。値は書いたまま返し、解釈は表示側で行う。
+    """
+    pos = text.find(TRACK_STATE_MARK)
+    if pos < 0:
+        return {}
+    out, started = {}, False
+    for line in text[pos + len(TRACK_STATE_MARK):].splitlines()[1:]:
+        if not line.strip():
+            if started:
+                break
+            continue
+        m = STATE_LINE_RE.match(line)
+        if not m:
+            break
+        started = True
+        out[re.sub(r"\s+", "", m.group(1))] = m.group(2).strip()
+    return out
 
 
 def parse_frontmatter(text: str) -> tuple[dict, str]:
@@ -254,7 +347,8 @@ def load_ledger(path: Path, ws_key: str, ws_label: str, mapper=None) -> Ledger |
     lead, sections = split_sections(body)
     led = Ledger(path=path, ws_key=ws_key, ws_label=ws_label,
                  name=meta.get("name", ""), description=meta.get("description", ""),
-                 modified=meta.get("modified", ""), lead=lead, sections=sections)
+                 modified=meta.get("modified", ""), lead=lead, sections=sections,
+                 state=parse_track_state(text))
     if mapper is not None:
         led.project = resolve_project(mapper, led.name, path.stem)
     return led
@@ -303,14 +397,15 @@ def load_track_file(path: Path, ws_key: str, ws_label: str, mapper=None) -> "Led
         any(k.casefold() in s.title.casefold() for k in KW_SESSION)
         for s in sections
     )
-    if not (has_project_type or has_session):
+    state = parse_track_state(text)   # 状態ブロックの宣言だけでもトラックとして読む（S19）
+    if not (has_project_type or has_session or state):
         return None
 
     # 案件名の決定（優先順位）:
     #   1. frontmatter の name フィールド
     #   2. 意味のある stem（"00-現在地" 等の汎用名でない場合）
     #   3. 最初の見出し（em-dash 以降のサフィックスを除去）
-    name = meta.get("name", "")
+    name = state.get("トラック名", "") or meta.get("name", "")
     if not name:
         stem_clean = re.sub(r"^\d+[_\-]", "", path.stem)
         if stem_clean.lower() not in _GENERIC_STEMS:
@@ -324,7 +419,7 @@ def load_track_file(path: Path, ws_key: str, ws_label: str, mapper=None) -> "Led
 
     led = Ledger(path=path, ws_key=ws_key, ws_label=ws_label,
                  name=name, description=meta.get("description", ""),
-                 modified=meta.get("modified", ""), lead=lead, sections=sections)
+                 modified=meta.get("modified", ""), lead=lead, sections=sections, state=state)
     # mapper は使わず抽出名をそのまま project に設定
     # （project_aliases の部分一致誤爆を防ぐ。memory台帳の resolve_project とは別管理）
     led.project = name or path.stem
