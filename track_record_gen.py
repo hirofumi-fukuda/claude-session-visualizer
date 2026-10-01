@@ -24,7 +24,7 @@ from pathlib import Path
 
 from claude_sv.ledger import (
     load_extra_files, load_ledgers, load_project_dirs, load_track_file,
-    parse_frontmatter, slug,
+    parse_frontmatter, slug, TRACK_STATE_MARK,
 )
 from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.mdlite import render as md_render
@@ -170,6 +170,8 @@ h2 .n{color:var(--muted);font-weight:400;font-size:11px}
 .section-now .section-label{color:var(--now)}
 .section-blocked .section-label{color:var(--blocked)}
 .section-text{color:var(--ink2);font-size:12px}
+.clamp3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.clamp3.open{display:block}
 .section-text strong{color:var(--ink)}
 .section-text code{background:var(--wash);border-radius:4px;padding:1px 5px;
   font-size:11px;font-family:ui-monospace,Consolas,monospace}
@@ -211,6 +213,9 @@ table.tr-table{border-collapse:collapse;width:100%;font-size:12px;table-layout:f
 .tr-table .clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
 .tr-table .clamp.open{display:block}
 .tr-table .sub{color:var(--muted);font-size:11px}
+.tr-table tr.mine td.name{box-shadow:inset 3px 0 0 var(--now)}
+.tr-table.only-mine tr:not(.mine){display:none}
+.tr-sum{font-weight:400;font-size:11.5px;margin-left:10px}.tr-sum b{font-weight:600}
 .tr-table tr.arch{display:none;opacity:.55}
 .tr-table.show-arch tr.arch{display:table-row}
 .fb{color:var(--muted);font-style:italic}
@@ -401,11 +406,17 @@ def _session_row_html(entry, sum_len: int = 55, is_latest: bool = False, planned
             f'</div>')
 
 
+def _now_text(led, n: int) -> str:
+    """台帳の現在地テキスト。見出しが無く冒頭にフォールバックした時、状態ブロックの生テキストは出さない。"""
+    t = led.track_now(n)
+    return "" if TRACK_STATE_MARK in t else t
+
+
 UNREC_RECENT_DAYS = 3  # ⚠️未記帳を出すのは実活動が直近この日数以内の時だけ（古い乖離=対処不能ノイズ）
 
 
 def _unrec_badge(latest: str, act_date: str) -> str:
-    """台帳より実活動(jsonl)が新しい＝進行中/締め忘れセッションの ⚠️未記帳 バッジ。
+    """台帳より実活動(jsonl)が新しい＝締め忘れセッションの ⚠️未記帳 バッジ。
     昔の乖離（翌朝跨ぎ等の1日ズレ痕跡）まで出すと狼少年になるので直近分に限定する。"""
     if not (act_date and act_date > (latest or "")):
         return ""
@@ -413,10 +424,10 @@ def _unrec_badge(latest: str, act_date: str) -> str:
         age = (TODAY - datetime.strptime(act_date, "%Y-%m-%d").date()).days
     except ValueError:
         return ""
-    if age > UNREC_RECENT_DAYS:
+    if age < 1 or age > UNREC_RECENT_DAYS:  # 当日分はまだ作業中＝警告にしない
         return ""
     return (f'<span class="status-badge status-unrec" title="実活動 {act_date[5:]} ＞ '
-            f'台帳 {latest[5:] if latest else "—"}（セッション未記帳＝進行中か締め忘れ）">'
+            f'台帳 {latest[5:] if latest else "—"}（前日以前のセッションが未記帳＝締め忘れ）">'
             f'⚠️ 未記帳</span>')
 
 
@@ -461,21 +472,23 @@ def _track_card_html(led, model=None, act_date="", loc=None) -> str:
               f'<span class="track-stats">{html_mod.escape(stats)}</span>{_loc_stat_html(loc)}'
               f'</div>')
 
-    # 現在地
-    now_text = led.track_now(2)
+    # 現在地（状態ブロックがあれば「次の一手／待ち」を一次ソースに。無ければ台帳の見出しから）
+    st = led.state or {}
+    st_wait = st.get("待ち", "").strip()
+    now_label, now_text = ("▶️ 次の一手", st.get("次の一手", "")) if st else ("▶️ 現在地", _now_text(led, 2))
     now_html = ""
-    if now_text:
+    if now_text and now_text != "—":
         now_html = (f'<div class="track-section section-now">'
-                    f'<div class="section-label">▶️ 現在地</div>'
-                    f'<div class="section-text">{_simple_html(now_text)}</div>'
+                    f'<div class="section-label">{now_label}</div>'
+                    f'<div class="section-text clamp3" title="クリックで全文">{_simple_html(now_text)}</div>'
                     f'</div>')
 
     # Blocked
-    blocked_text = led.blockers(1)
+    blocked_text = (st_wait if st_wait != "—" else "") if st else led.blockers(1)
     blocked_html = ""
     if blocked_text:
         blocked_html = (f'<div class="track-section section-blocked">'
-                        f'<div class="section-label">⛔ Blocked</div>'
+                        f'<div class="section-label">{"⏳ 待ち" if st else "⛔ Blocked"}</div>'
                         f'<div class="section-text">{_simple_html(blocked_text)}</div>'
                         f'</div>')
 
@@ -528,7 +541,7 @@ def _detail_page(led, model=None, act_date="", loc=None) -> str:
                 f'<div class="section-label">{lbl}</div>'
                 f'<div class="section-text">{_simple_html(text)}</div></div>')
     state_html = _state_section_html(led, latest)
-    now_html = section("▶️ 現在地", "section-now", led.track_now(4))
+    now_html = section("▶️ 現在地", "section-now", _now_text(led, 4))
     next_html = section("▶️ Next", "section-next", led.next_up(3))
     blocked_html = section("⛔ Blocked", "section-blocked", led.blockers(2))
 
@@ -642,6 +655,9 @@ TABLE_JS = """(function(){
   var tb=document.getElementById('trt'); if(!tb) return;
   var chk=document.getElementById('show-arch');
   if(chk){chk.onchange=function(){tb.classList.toggle('show-arch',chk.checked);};}
+  var mine=document.getElementById('only-mine');
+  if(mine){mine.onchange=function(){tb.classList.toggle('only-mine',mine.checked);};}
+  document.addEventListener('click',function(e){var c=e.target.closest('.clamp3');if(c)c.classList.toggle('open');});
   tb.addEventListener('click',function(e){var c=e.target.closest('.clamp');if(c)c.classList.toggle('open');});
   var ths=tb.querySelectorAll('th[data-k]');
   ths.forEach(function(th){th.onclick=function(){
@@ -656,7 +672,11 @@ TABLE_JS = """(function(){
 })();"""
 
 
-def _table_html(tracks, eff_of, act_of) -> str:
+STALL_DUE_DAYS = 7    # 期限がこの日数以内（超過含む）で
+STALL_IDLE_DAYS = 7   # 最終更新がこの日数以上前＝「期限が近いのに止まってる」
+
+
+def _table_html(tracks, eff_of, act_of, self_names=()) -> str:
     """全トラック1行ずつ。一次ソース＝状態ブロック。無い列は台帳から推測して斜体（fb）で埋め、
     状態列に ⚠️ を出す＝書き忘れを機械が知らせる。アーカイブ行は既定で非表示（トグルで可逆）。"""
     esc = html_mod.escape
@@ -668,6 +688,7 @@ def _table_html(tracks, eff_of, act_of) -> str:
     tracks = sorted(tracks, key=lambda l: eff_of(l) or "0", reverse=True)
     tracks.sort(key=lambda l: (_is_archived(l), _due_parts((l.state or {}).get("期限", ""))[0] or "9999"))
     rows = []
+    n_over = n_week = n_mine = 0
     for led in tracks:
         st = led.state or {}
         latest = _ledger_latest(led)
@@ -702,6 +723,9 @@ def _table_html(tracks, eff_of, act_of) -> str:
         next_html, next_v = _txt("次の一手", led.next_up(1))
         wait_html, wait_v = _txt("待ち", led.blockers(1))
         next_html, wait_html = _clamp(next_html, next_v), _clamp(wait_html, wait_v)
+        mine = bool(wait_v) and any(n in wait_v for n in self_names)
+        if mine:
+            wait_html = wait_html.replace('">', '">👤 ', 1)
 
         # 期限
         due_raw = st.get("期限", "")
@@ -713,13 +737,24 @@ def _table_html(tracks, eff_of, act_of) -> str:
 
         # 最終更新（実効日＝max(台帳, 実活動)）
         eff = eff_of(led)
+        if due_iso and not arch:
+            d_left = (datetime.strptime(due_iso, "%Y-%m-%d").date() - TODAY).days
+            n_over += d_left < 0
+            n_week += 0 <= d_left <= STALL_DUE_DAYS
+            try:
+                idle = (TODAY - datetime.strptime(eff, "%Y-%m-%d").date()).days
+            except ValueError:
+                idle = None
+            if d_left <= STALL_DUE_DAYS and idle is not None and idle >= STALL_IDLE_DAYS:
+                due_html += f'<div class="sub warn">⚠️ {idle}日動きなし</div>'
+        n_mine += mine and not arch
         lab, cls = _activity_status(eff)
         upd_html = (f'<span class="status-badge {cls}">{lab}</span>{_unrec_badge(latest, act_of(led))}')
 
         tslug = slug((led.project or led.name or led.path.stem).strip())
         ws = f'<span class="ws-label">{esc(led.ws_label)}</span>' if led.ws_label else ""
         rows.append(
-            f'<tr class="{"arch" if arch else ""}">'
+            f'<tr class="{" ".join(c for c, on in (("arch", arch), ("mine", mine)) if on)}">'
             f'<td class="name" data-v="{esc(led.label)}"><a href="track/{tslug}.html">{esc(led.label)}</a>{ws}</td>'
             f'<td class="st" data-v="{esc(st_v)}">{st_html}</td>'
             f'<td class="txt" data-v="{esc(next_v)}">{next_html}</td>'
@@ -729,10 +764,15 @@ def _table_html(tracks, eff_of, act_of) -> str:
             f'<td class="num" data-v="{count:04d}">{count}</td>'
             f'</tr>')
     n_arch = sum(1 for l in tracks if _is_archived(l))
-    toggle = (f'<label class="arch-toggle"><input type="checkbox" id="show-arch"> '
-              f'アーカイブ {n_arch}本 も表示</label>')
+    toggle = ((f'<label class="arch-toggle"><input type="checkbox" id="only-mine"> '
+               f'👤 自分ボールだけ</label>' if self_names else "")
+              + f'<label class="arch-toggle"{" style=margin-left:14px" if self_names else ""}>'
+                f'<input type="checkbox" id="show-arch"> アーカイブ {n_arch}本 も表示</label>')
+    summary = (f'<span class="tr-sum"><b class="due-over">超過 {n_over}</b>・'
+               f'<b class="due-soon">{STALL_DUE_DAYS}日以内 {n_week}</b>'
+               + (f'・<b>👤 自分ボール {n_mine}</b>' if self_names else "") + '</span>')
     return (f'<h2>📋 全トラック一覧<span class="n">{len(tracks) - n_arch} トラック'
-            f'（期限が近い順・期限なしは最終更新順／列見出しクリックで並べ替え）</span>{toggle}</h2>'
+            f'（期限が近い順・期限なしは最終更新順／列見出しクリックで並べ替え）</span>{summary}{toggle}</h2>'
             f'<div class="tr-wrap"><table class="tr-table" id="trt"><thead><tr>{head}</tr></thead>'
             f'<tbody>{"".join(rows)}</tbody></table></div><script>{TABLE_JS}</script>')
 
@@ -829,7 +869,8 @@ def build(open_browser: bool = True) -> Path:
     archived.sort(key=lambda l: _eff_date(l) or "0", reverse=True)
 
     # HTML生成: 先頭に全トラック一覧（表）、その下に帯ごとのカード
-    body_parts = [_table_html(tracks + archived, _eff_date, _act_of)]
+    body_parts = [_table_html(tracks + archived, _eff_date, _act_of,
+                              tuple(cfg.get("self_names", [])))]
     BANDS = [(0, "🟢 直近7日"), (1, "🟡 30日以内"), (2, "⚫ 休眠"), (3, "— 日付なし")]
     for b, label in BANDS:
         subset = [l for l in tracks if _band(l) == b]
