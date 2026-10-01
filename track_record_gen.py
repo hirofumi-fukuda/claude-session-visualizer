@@ -192,7 +192,9 @@ h2 .n{color:var(--muted);font-weight:400;font-size:11px}
 .s-row.planned .s-num{color:var(--now)}
 /* 全トラック一覧（表）S19 */
 .tr-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:11px}
-table.tr-table{border-collapse:collapse;width:100%;font-size:12px}
+table.tr-table{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed;min-width:980px}
+.tr-table th.c-name{width:190px}.tr-table th.c-st{width:19%}.tr-table th.c-wait{width:17%}
+.tr-table th.c-due{width:132px}.tr-table th.c-upd{width:104px}.tr-table th.c-num{width:52px}
 .tr-table th,.tr-table td{padding:6px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
 .tr-table th{font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap;cursor:pointer;
   user-select:none;background:var(--wash);position:sticky;top:0}
@@ -200,12 +202,15 @@ table.tr-table{border-collapse:collapse;width:100%;font-size:12px}
 .tr-table th.asc::after{content:" ▲";font-size:9px}
 .tr-table th.desc::after{content:" ▼";font-size:9px}
 .tr-table tr:last-child td{border-bottom:none}
-.tr-table td.name{white-space:nowrap;font-weight:600}
+.tr-table td.name{font-weight:600}
 .tr-table td.name a{color:var(--ink);text-decoration:none}
 .tr-table td.name a:hover{color:var(--cat-1);text-decoration:underline}
 .tr-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.tr-table td.st,.tr-table td.due,.tr-table td.upd{white-space:nowrap}
-.tr-table td.txt{color:var(--ink2);max-width:360px}
+.tr-table td.txt{color:var(--ink2)}
+.tr-table td{overflow-wrap:anywhere;line-height:1.5}
+.tr-table .clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.tr-table .clamp.open{display:block}
+.tr-table .sub{color:var(--muted);font-size:11px}
 .tr-table tr.arch{display:none;opacity:.55}
 .tr-table.show-arch tr.arch{display:table-row}
 .fb{color:var(--muted);font-style:italic}
@@ -584,6 +589,30 @@ def _due_class(due_raw: str) -> tuple:
     return due_raw, ""
 
 
+def _due_parts(due_raw: str) -> tuple:
+    """一覧表の期限セル用。(ISO日付 or "", 1行目の表示, class, 補足)。「10/8（…）」の M/D 表記も今年として読む。"""
+    raw = (due_raw or "").strip()
+    m = re.search(r"\d{4}-\d{2}-\d{2}", raw)
+    iso = m.group() if m else ""
+    if not m:
+        m = re.match(r"(\d{1,2})/(\d{1,2})", raw)
+        if m:
+            iso = f"{TODAY.year}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+    try:
+        delta = (datetime.strptime(iso, "%Y-%m-%d").date() - TODAY).days
+    except ValueError:
+        return "", (raw if raw != "—" else "—") or "—", "", ""
+    note = (raw[:m.start()] + raw[m.end():]).strip(" 　・")
+    if note.startswith("（") and note.endswith("）") and note.count("（") == 1:
+        note = note[1:-1]
+    main = iso[5:].replace("-", "/") if iso[:4] == str(TODAY.year) else iso.replace("-", "/")
+    if delta < 0:
+        return iso, f"{main}（{-delta}日超過）", "due-over", note
+    if delta <= DUE_SOON_DAYS:
+        return iso, f"{main}（{'今日' if delta == 0 else f'あと{delta}日'}）", "due-soon", note
+    return iso, f"{main}（あと{delta}日）", "", note
+
+
 def _state_section_html(led, latest: str) -> str:
     """個別ページの 📌 状態ブロック（無ければ ⚠️ で「無い」ことを見せる）。"""
     st = led.state or {}
@@ -613,6 +642,7 @@ TABLE_JS = """(function(){
   var tb=document.getElementById('trt'); if(!tb) return;
   var chk=document.getElementById('show-arch');
   if(chk){chk.onchange=function(){tb.classList.toggle('show-arch',chk.checked);};}
+  tb.addEventListener('click',function(e){var c=e.target.closest('.clamp');if(c)c.classList.toggle('open');});
   var ths=tb.querySelectorAll('th[data-k]');
   ths.forEach(function(th){th.onclick=function(){
     var k=+th.dataset.k, asc=!th.classList.contains('asc');
@@ -631,8 +661,12 @@ def _table_html(tracks, eff_of, act_of) -> str:
     状態列に ⚠️ を出す＝書き忘れを機械が知らせる。アーカイブ行は既定で非表示（トグルで可逆）。"""
     esc = html_mod.escape
     head = "".join(
-        f'<th data-k="{i}">{h}</th>' for i, h in enumerate(
-            ("トラック名", "状態・現S", "次の一手", "待ち", "期限", "最終更新", "累計S")))
+        f'<th data-k="{i}" class="{c}">{h}</th>' for i, (h, c) in enumerate(
+            (("トラック名", "c-name"), ("状態・現S", "c-st"), ("次の一手", "c-next"), ("待ち", "c-wait"),
+             ("期限", "c-due asc"), ("最終更新", "c-upd"), ("累計S", "c-num"))))
+    # 既定の並び＝期限が近い順（超過が先頭）。期限なしは後ろで最終更新の新しい順。アーカイブは末尾
+    tracks = sorted(tracks, key=lambda l: eff_of(l) or "0", reverse=True)
+    tracks.sort(key=lambda l: (_is_archived(l), _due_parts((l.state or {}).get("期限", ""))[0] or "9999"))
     rows = []
     for led in tracks:
         st = led.state or {}
@@ -663,15 +697,19 @@ def _table_html(tracks, eff_of, act_of) -> str:
             fbv = (fallback or "").strip().splitlines()
             fbv = fbv[0] if fbv else ""
             return (f'<span class="fb" title="台帳の見出しから推測">{_simple_html(fbv)}</span>' if fbv else "—"), fbv
+        def _clamp(h, v):
+            return f'<div class="clamp" title="{esc(v)}">{h}</div>' if v else h
         next_html, next_v = _txt("次の一手", led.next_up(1))
         wait_html, wait_v = _txt("待ち", led.blockers(1))
+        next_html, wait_html = _clamp(next_html, next_v), _clamp(wait_html, wait_v)
 
         # 期限
         due_raw = st.get("期限", "")
-        due_txt, due_cls = _due_class(due_raw)
+        due_iso, due_txt, due_cls, due_note = _due_parts(due_raw)
         due_html = f'<span class="{due_cls}">{esc(due_txt)}</span>' if due_cls else esc(due_txt)
-        dm = re.search(r"\d{4}-\d{2}-\d{2}", due_raw)
-        due_v = dm.group() if dm else "9999"
+        if due_note:
+            due_html += f'<div class="sub">{esc(due_note)}</div>'
+        due_v = due_iso or "9999"
 
         # 最終更新（実効日＝max(台帳, 実活動)）
         eff = eff_of(led)
@@ -694,7 +732,7 @@ def _table_html(tracks, eff_of, act_of) -> str:
     toggle = (f'<label class="arch-toggle"><input type="checkbox" id="show-arch"> '
               f'アーカイブ {n_arch}本 も表示</label>')
     return (f'<h2>📋 全トラック一覧<span class="n">{len(tracks) - n_arch} トラック'
-            f'（列見出しクリックで並べ替え）</span>{toggle}</h2>'
+            f'（期限が近い順・期限なしは最終更新順／列見出しクリックで並べ替え）</span>{toggle}</h2>'
             f'<div class="tr-wrap"><table class="tr-table" id="trt"><thead><tr>{head}</tr></thead>'
             f'<tbody>{"".join(rows)}</tbody></table></div><script>{TABLE_JS}</script>')
 
