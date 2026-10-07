@@ -37,6 +37,7 @@ from urllib.parse import quote
 from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.modelbadge import MDL_CSS, model_badge
+from claude_sv.daily_view import write_daily
 from claude_sv.nav import nav_html
 from claude_sv.parser import _clean_user_text, _iter_text_items
 
@@ -1251,6 +1252,11 @@ def main():
                             degraded=degraded),
                 encoding="utf-8")
             print(f"{datetime.now().strftime('%H:%M:%S')} updated -> {out_path}")
+            try:  # 日誌ビュー（S20）: 同じループに相乗り＝プロセスは1個のまま。失敗してもボードは止めない
+                if write_daily(load_config(REPO_ROOT), out_path.parent):
+                    print(f"{datetime.now().strftime('%H:%M:%S')} daily updated")
+            except Exception as e:  # noqa: BLE001
+                print(f"daily view error: {e!r}")
         else:
             if watch:
                 os.system("cls" if os.name == "nt" else "clear")

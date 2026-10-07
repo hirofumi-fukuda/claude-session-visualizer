@@ -27,6 +27,11 @@
   "workspace_hints": {
     "エンコード済みワークスペースディレクトリ名": "案件名"
   },
+  "_daily_view_comment": "日誌ビュー（S20）: live_board.py --html --watch が今日の daily/YYYY-MM-DD.md を reports/daily.html に書き出す。dir=日誌フォルダ（無ければ機能オフ）。open=最初から開く見出し（部分一致・\"親 > 子\" で親子指定）",
+  "daily_view": {
+    "dir": "~/path/to/daily",
+    "open": ["最重要", "Today's Focus", "本日の予定 > TOP", "返信待ち"]
+  },
   "_project_dirs_comment": "track_record_gen 専用: セッション履歴（🔢 セッション履歴）セクションを持つプロジェクト管理ファイルが入ったディレクトリ。path（必須）と label（表示用ラベル）を指定。OneDriveのprojects/フォルダ等を指定する。",
   "project_dirs": [
     { "path": "~/OneDrive - 株式会社グーフ/業務/業務マップ/projects", "label": "業務マップ" }
