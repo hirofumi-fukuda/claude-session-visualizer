@@ -129,16 +129,16 @@ CSS = """
   --border:rgba(255,255,255,.10);--wash:rgba(255,255,255,.055);--gold:#f5c542;--cyan:#5ad1e6;--mag:#e66fd1;--red:#e5533b}
 :root[data-theme="light"]{color-scheme:light;--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
   --border:rgba(11,11,11,.10);--wash:rgba(11,11,11,.045);--gold:#b8860b;--cyan:#1d8fa6;--mag:#b3399e;--red:#c2341f}
-body{margin:0;background:var(--plane);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","Yu Gothic UI",Meiryo,sans-serif;font-size:13px;line-height:1.5}
+body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:var(--plane);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","Yu Gothic UI",Meiryo,sans-serif;font-size:13px;line-height:1.5}
 header{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 header h1{font-size:16px;margin:0;font-weight:600} .sub{color:var(--muted);font-size:11.5px}
 .navs{margin-left:auto;display:flex;gap:6px;align-items:center}
 .tgl{background:none;border:1px solid var(--border);color:var(--ink2);border-radius:999px;padding:3px 11px;font-size:12px;cursor:pointer;text-decoration:none;font-family:inherit}
 .tgl:hover{background:var(--wash);color:var(--ink)} .tgl.cur{background:var(--wash);color:var(--ink);cursor:default}
-main{display:grid;grid-template-columns:1fr 380px;height:calc(100vh - 50px)}
-#scene{overflow:auto;background:#1b1d2a} svg{display:block;shape-rendering:crispEdges}
+main{display:grid;grid-template-columns:1fr 380px;flex:1;min-height:0}
+#scene{overflow:hidden;background:#1b1d2a;min-height:0} #scene svg{display:block;width:100%;height:100%;shape-rendering:crispEdges}
 aside{background:var(--surface);border-left:1px solid var(--border);overflow:auto;padding:10px 12px}
-aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600}
+aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px} aside h2 .tgl{margin-left:auto;padding:1px 8px;font-size:11px}
 .day{color:var(--muted);font-size:11px;margin:10px 0 2px;border-bottom:1px solid var(--border)}
 .row{padding:5px 6px;border-left:3px solid transparent;cursor:pointer;line-height:1.35;border-radius:0 6px 6px 0}
 .row:hover,.row.hl{background:var(--wash);border-left-color:var(--gold)}
@@ -205,7 +205,7 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
  return g+'</g>';}
 var pos={}; pos[HUB]=[CX,CY];
 D.tracks.forEach(function(t,i){var a=-Math.PI/2+i*2*Math.PI/Math.max(n,1);pos[t.name]=[Math.round(CX+RX*Math.cos(a)),Math.round(CY+RY*Math.sin(a))];});
-var svg='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="#2a2d3f"/><rect width="20" height="20" fill="#2f3348"/><rect x="20" y="20" width="20" height="20" fill="#2f3348"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>';
+var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="#2a2d3f"/><rect width="20" height="20" fill="#2f3348"/><rect x="20" y="20" width="20" height="20" fill="#2f3348"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>';
 var ts0=D.edges.length?Date.parse(D.edges[0].ts):0, ts1=D.edges.length?Date.parse(D.edges[D.edges.length-1].ts):1;
 D.edges.forEach(function(e,i){var A=pos[e.frm],B=pos[e.to];if(!A||!B)return;var x1=A[0],y1=A[1]+20,x2=B[0],y2=B[1]+20;
  var mx=(x1+x2)/2,my=(y1+y2)/2,dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ox=-dy/L*28,oy=dx/L*28;
@@ -231,17 +231,23 @@ if(D.human&&pos[D.human.track]){var hp=hpos(D.human.track),prev=null;try{prev=JS
 Object.keys(tints).forEach(function(id){svg+='<filter id="'+id+'" x="0" y="0" width="1" height="1"><feFlood flood-color="'+tints[id]+'" result="c"/><feComposite in="c" in2="SourceAlpha" operator="in" result="m"/><feBlend in="m" in2="SourceGraphic" mode="multiply"/></filter>';});
 svg+='</svg>';
 document.getElementById('scene').innerHTML=svg;
-var log=document.getElementById('log'), lastDay='';
-if(!D.edges.length)log.innerHTML='<div class="empty">直近 '+D.window_hours+'h にセッション間メッセージはない</div>';
-D.edges.forEach(function(e,i){if(e.day!==lastDay){lastDay=e.day;var d=document.createElement('div');d.className='day';d.textContent=e.day;log.appendChild(d);}
- var r=document.createElement('div');r.className='row';r.dataset.i=i;
- var st=!e.ok?' <span class="ng">❌不達</span>':e.removed?' <span class="rm">🗑破棄</span>':e.read===false?' <span class="un">📨未読</span>':'';
- r.innerHTML='<span class="t">'+e.t.slice(6)+'</span><span class="who">'+esc(e.frm+(e.frm_s?' S'+e.frm_s:''))+'</span> → <span class="who">'+esc(e.to+(e.to_s?' S'+e.to_s:''))+'</span>'+st+'<br><span class="sm">'+esc(e.summary)+'</span>';
- r.title=e.preview; r.onclick=function(){hl(i);}; log.appendChild(r);});
+var log=document.getElementById('log');
+// 並び順: 古い→新しい（最新が下・チャット式）／新しい→古い（最新が上）。localStorage で記憶。日付見出しは順に合わせて組み直す
+var ord=document.getElementById('ord'), desc=false; try{desc=localStorage.getItem('csv-log-desc')==='1';}catch(e){}
+function renderLog(){log.innerHTML='';var lastDay='';
+ if(!D.edges.length){log.innerHTML='<div class="empty">直近 '+D.window_hours+'h にセッション間メッセージはない</div>';return;}
+ var idx=D.edges.map(function(_,i){return i;}); if(desc)idx.reverse();
+ idx.forEach(function(i){var e=D.edges[i];if(e.day!==lastDay){lastDay=e.day;var d=document.createElement('div');d.className='day';d.textContent=e.day;log.appendChild(d);}
+  var r=document.createElement('div');r.className='row';r.dataset.i=i;
+  var st=!e.ok?' <span class="ng">❌不達</span>':e.removed?' <span class="rm">🗑破棄</span>':e.read===false?' <span class="un">📨未読</span>':'';
+  r.innerHTML='<span class="t">'+e.t.slice(6)+'</span><span class="who">'+esc(e.frm+(e.frm_s?' S'+e.frm_s:''))+'</span> → <span class="who">'+esc(e.to+(e.to_s?' S'+e.to_s:''))+'</span>'+st+'<br><span class="sm">'+esc(e.summary)+'</span>';
+  r.title=e.preview; r.onclick=function(){hl(i);}; log.appendChild(r);});
+ ord.textContent=desc?'⇅ 最新が上':'⇅ 最新が下'; log.scrollTop=desc?0:log.scrollHeight;}
 function hl(i){document.querySelectorAll('.hl').forEach(function(x){x.classList.remove('hl');});var p=document.getElementById('p'+i),r=document.querySelector('.row[data-i="'+i+'"]');if(p){p.classList.add('hl');p.parentNode.appendChild(p);}if(r){r.classList.add('hl');r.scrollIntoView({block:'nearest'});}}
 document.querySelectorAll('.edge').forEach(function(p){p.onclick=function(){hl(+p.dataset.i);};});
 document.getElementById('play').onclick=function(){D.edges.forEach(function(e,i){setTimeout(function(){hl(i);var g=document.getElementById('env'+i),a=document.getElementById('am'+i);if(!g)return;g.setAttribute('opacity','1');a.beginElement();setTimeout(function(){g.setAttribute('opacity','0');},900);},i*950);});};
-log.scrollTop=log.scrollHeight;
+ord.onclick=function(){desc=!desc;try{localStorage.setItem('csv-log-desc',desc?'1':'0');}catch(e){}renderLog();};
+renderLog();
 })();
 """
 
@@ -285,7 +291,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
 <div class="navs">{nav_html("office")}<button class="tgl" id="tgl" type="button"></button></div>
 <div style="flex-basis:100%">{legend}</div>
 </header>
-<main><div id="scene"></div><aside><h2>📨 やり取り（時刻順・クリックで矢印を強調）</h2><div id="log"></div></aside></main>
+<main><div id="scene"></div><aside><h2>📨 やり取り（クリックで矢印を強調）<button class="tgl" id="ord" type="button"></button></h2><div id="log"></div></aside></main>
 <footer>live_board.py --html --watch が同じループで書き換え中（変化があった時だけ・数秒〜10秒で反映）。ローカル閲覧専用＝案件名が入るので公開しない。</footer>
 <script>{js}</script>
 </body></html>"""
