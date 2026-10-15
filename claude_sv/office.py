@@ -87,6 +87,27 @@ def build_islands(order, cfg: dict) -> list:
     return islands
 
 
+def load_sprite_themes(sprite_dir: Path = SPRITE_DIR) -> dict:
+    """assets/sprites/<テーマ>/ ごとの絵を {テーマ名: {name: data URI}} で返す（人間の候補 human-2.png… も含む）。
+    ページのプルダウンで切り替える用。samples/（作業用）は除外。"""
+    out = {}
+    if not sprite_dir.is_dir():
+        return out
+    for d in sorted(sprite_dir.iterdir()):
+        if not d.is_dir() or d.name.startswith((".", "_")) or d.name == "samples":
+            continue
+        sp = load_sprites(d)
+        for f in sorted(d.glob("human-*.png")) + sorted(d.glob("human-*.svg")):
+            mime = "image/png" if f.suffix == ".png" else "image/svg+xml"
+            try:
+                sp[f.stem] = f"data:{mime};base64," + base64.b64encode(f.read_bytes()).decode()
+            except OSError:
+                pass
+        if sp:
+            out[d.name] = sp
+    return out
+
+
 def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     """messages.collect の結果＋ラベル＋稼働 rows から、描画用の D を組む（JS 側は配置と描画だけ）。"""
     hub_disp = (cfg.get("office") or {}).get("hub", "業務ハブ")
@@ -157,7 +178,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
         })
     unread = sum(1 for e in edges if e["ok"] and not e["removed"] and e["read"] is False)
     failed = sum(1 for e in edges if not e["ok"])
-    return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(),
+    return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(), "sprite_themes": load_sprite_themes(),
             "islands": build_islands(order, cfg),
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
@@ -181,6 +202,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;grid-template-rows:m
 aside{background:var(--surface);border-left:1px solid var(--border);overflow-y:auto;min-height:0;height:100%;padding:10px 12px}
 aside h2{position:sticky;top:-10px;background:var(--surface);padding:6px 0;z-index:1}
 aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px} aside h2 .tgl{margin-left:auto;padding:1px 8px;font-size:11px}
+#spr{font:inherit;font-size:11px;background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:1px 4px}
 .day{color:var(--muted);font-size:11px;margin:10px 0 2px;border-bottom:1px solid var(--border)}
 .row{padding:5px 6px;border-left:3px solid transparent;cursor:pointer;line-height:1.35;border-radius:0 6px 6px 0}
 .row:hover,.row.hl{background:var(--wash);border-left-color:var(--gold)}
@@ -222,7 +244,16 @@ var MODEL_COL=function(m){return !m?'#c24b4b':/opus/.test(m)?'#8a5cf6':/sonnet/.
 // エージェント＝ロボット（アンテナ・金属の頭・光る目）。シャツ色＝モデル。人間（下の HS）とは頭の形で見分ける
 var SPR=["....AA......","....AA......","..MMMMMMMM..",".MMMMMMMMMM.",".MVVMMMMVVM.",".MMMMMMMMMM.","..MMMMMMMM..","....MM......","..TTTTTTTT..",".TTTTTTTTTT.",".M.TTTTTT.M.",".M.TTTTTT.M.","...TTTTTT...","...MM..MM...","...MM..MM...","...BB..BB..."];
 var PAL={M:'#b8c0cc',V:'#5ad1e6',B:'#222'};
-var SP=D.sprites||{}, tints={};
+// 絵のテーマ: assets/sprites/ 直下（既定）か assets/sprites/<テーマ>/。選択は localStorage に残し、切替はページ再読込で反映
+var THEMES=D.sprite_themes||{}, SP=D.sprites||{}, tints={}, sprSel='';
+try{sprSel=localStorage.getItem('csv-sprite-theme')||'';}catch(e){}
+try{var sprQ=new URLSearchParams(location.search).get('spr');if(sprQ!==null)sprSel=sprQ;}catch(e){}  // ?spr=ninja で一時指定（スクショ・共有用）
+(function(){var sel=document.getElementById('spr');if(!sel)return;var E=function(v){return String(v).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});};var opts=[['','既定（直下の絵／無ければコード内）']];
+ Object.keys(THEMES).forEach(function(t){opts.push([t,t]);Object.keys(THEMES[t]).filter(function(k){return /^human-\d+$/.test(k);}).sort().forEach(function(k){opts.push([t+'/'+k,t+'（人間'+k.slice(6)+'）']);});});
+ if(sprSel&&!opts.some(function(o){return o[0]===sprSel;}))sprSel='';
+ sel.innerHTML=opts.map(function(o){return '<option value="'+E(o[0])+'"'+(o[0]===sprSel?' selected':'')+'>'+E(o[1])+'</option>';}).join('');
+ sel.onchange=function(){try{localStorage.setItem('csv-sprite-theme',sel.value);}catch(e){}location.reload();};
+ if(sprSel){var parts=sprSel.split('/'),th=THEMES[parts[0]];if(th){SP={};Object.keys(th).forEach(function(k){SP[k]=th[k];});if(parts[1]&&th[parts[1]])SP.human=th[parts[1]];}}})();
 function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" width="36" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"'+(filt?' filter="url(#'+filt+')"':'')+'/>';}
 function sprite(x,y,shirt,model){var key=model&&SP['agent-'+(/opus/.test(model)?'opus':/sonnet/.test(model)?'sonnet':/haiku/.test(model)?'haiku':/fable/.test(model)?'fable':'')];
  if(key)return img(key,x,y,null);
@@ -340,7 +371,8 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<i class="sw" style="background:#3b82f6"></i>Sonnet '
               '<i class="sw" style="background:#d4a017"></i>Haiku '
               '<i class="sw" style="background:#f472b6"></i>Fable</span>'
-              '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）</span></span>')
+              '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）</span>'
+              '<span>｜ 🎨 <select id="spr" title="絵のテーマ（assets/sprites/<テーマ>/）"></select></span></span>')
     js = (f"var D={json.dumps(D, ensure_ascii=False)},STAMP={json.dumps(stamp)},"
           f"POLL_MS={poll_ms},HUB={json.dumps(hub)};" + PAGE_JS)
     return f"""<!doctype html>
