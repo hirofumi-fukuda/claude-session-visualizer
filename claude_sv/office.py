@@ -157,9 +157,10 @@ setInterval(function(){var sc=document.createElement('script');sc.src='office_st
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});};
 var n=D.tracks.length, RX=Math.max(430, n*62), RY=270, W=RX*2+260, H=740, CX=W/2, CY=380;
 var MODEL_COL=function(m){return !m?'#c24b4b':/opus/.test(m)?'#8a5cf6':/sonnet/.test(m)?'#3b82f6':/haiku/.test(m)?'#d4a017':/fable/.test(m)?'#f472b6':'#c24b4b';};
-var SPR=["....HHHH....","...HHHHHH...","...HSSSSH...","...SSSSSS...","...SESSES...","...SSSSSS...","....SSSS....","..TTTTTTTT..",".TTTTTTTTTT.",".T.TTTTTT.T.",".S.TTTTTT.S.","...TTTTTT...","...PPPPPP...","...PP..PP...","...PP..PP...","...BB..BB..."];
-var PAL={H:'#3b2a1a',S:'#f2c9a0',E:'#222',P:'#2b3a67',B:'#222'};
-function sprite(x,y,shirt){var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=c==='T'?shirt:PAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
+// エージェント＝ロボット（アンテナ・金属の頭・光る目）。シャツ色＝モデル。人間（下の HS）とは頭の形で見分ける
+var SPR=["....AA......","....AA......","..MMMMMMMM..",".MMMMMMMMMM.",".MVVMMMMVVM.",".MMMMMMMMMM.","..MMMMMMMM..","....MM......","..TTTTTTTT..",".TTTTTTTTTT.",".M.TTTTTT.M.",".M.TTTTTT.M.","...TTTTTT...","...MM..MM...","...MM..MM...","...BB..BB..."];
+var PAL={M:'#b8c0cc',V:'#5ad1e6',B:'#222'};
+function sprite(x,y,shirt){var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=(c==='T'||c==='A')?shirt:PAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
 var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
 var unreadBy={}; D.edges.forEach(function(e){if(e.ok&&!e.removed&&e.read===false)unreadBy[e.to]=(unreadBy[e.to]||0)+1;});
 function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
