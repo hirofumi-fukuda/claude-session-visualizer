@@ -15,6 +15,7 @@ config の順）。ヘッダの 🧲 ボタンで切替（localStorage）。席�
 break_after_min 分で人間のスプライトが休憩室へ歩く（話しかけると席へ戻る・戻る席の点線枠は残す）。各島の角に観葉植物（飾り）。
 小物の絵は assets/props/<名前>.png があればそれ・無ければコード内の矩形描画（受け口が先・絵は後から差し替え）。
 🪑 hub_side（S22）: cfg.office.hub_side＝トラック名リスト。島に入れずハブの右隣に小机で並べる（同じ部屋・採番なしの運用型＝会議サポート等）。
+📱 Remote Control（S22）: 稼働台帳 sessions/<pid>.json に bridgeSessionId があれば RC オン＝席の右上に 📱（外出先から指示できる席・ハブ 10/15 発見）。
 🎨 配色（S22）: 図もページのテーマ（☀/☾・localStorage csv-theme＝他ページと共通）に追従。light＝明るいオフィス（白い壁・淡いタイル床・ベージュのカーペット）。オフィスは保存値が無ければ light・?theme=light|dark で一時上書き（保存しない・スクショ用）。
 🎨 絵のテーマの優先順（S22）: sprite_track_themes（トラック名）＞ sprite_tenant_themes（部屋名）＞ sprite_theme（全体）。部屋単位が要るのは
 workspace_hints の無い ws（副業）で名無しトラックが出るとトラック名キーでは追いつかないため。
@@ -212,6 +213,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
         live[sid] = {"status": STATUS_MAP.get(r.get("state"), "idle"),
                      "name": (registry.get(sid) or {}).get("name") or "",
                      "named": (registry.get(sid) or {}).get("nameSource") == "user",  # /rename 済み（自動命名でない）
+                     "rc": bool((registry.get(sid) or {}).get("bridgeSessionId")),  # 📱 Remote Control オン（キーの有無＝ハブ 10/15 発見・オフ時は消える/None 想定）
                      "model": r.get("model") or "", "title": (r.get("title") or "")[:60],
                      "last_human": r.get("last_human"),
                      "ws": r.get("ws") or "", "ws_key": r.get("ws_key") or "", "cwd": r.get("cwd") or ""}
@@ -433,9 +435,10 @@ var PAL=LIGHT?{tileA:'#e6e2d9',tileB:'#ebe7df',grid:'#d8d3c8',carpetA:'#dccfb5',
 function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
  var st='empty'; if(live){st=t.occupied_by.some(function(s){return s.live.status==='perm';})?'perm':t.occupied_by.some(function(s){return s.live.status==='busy';})?'busy':'idle';}
  var g='<g class="desk"'+(t.dormant?' opacity="'+(LIGHT?0.68:0.5)+'"':'')+'>';  // 休眠席は薄く（ライトは背景が明るいぶん濃いめ）
- var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
+ var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.rc?' 📱RC':'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
  g+='<title>'+esc(tip)+'</title>';
- if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});}
+ if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});
+  if(t.occupied_by.some(function(s){return s.live.rc;}))g+='<text x="'+(x+w/2-2)+'" y="'+(y-6)+'" text-anchor="end" font-size="15">📱</text>';}  // 📱 Remote Control オンの席（S22）
  else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="'+PAL.chair+'"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="'+PAL.chair2+'"/>';}
  g+='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="#8b5a2b"/><rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="8" fill="#b57a3e"/>';
  var nm=big?2:1;for(var i=0;i<nm;i++){var mx=x-(nm-1)*22+i*44-16;g+='<rect x="'+mx+'" y="'+(y+10)+'" width="32" height="22" fill="#111"/><rect x="'+(mx+2)+'" y="'+(y+12)+'" width="28" height="18" fill="'+SCR[st]+'"/>';if(st==='busy')g+='<rect class="cur" x="'+(mx+6)+'" y="'+(y+22)+'" width="4" height="4" fill="#fff"/>';}
@@ -635,6 +638,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<i class="sw" style="background:#d4a017"></i>Haiku '
               '<i class="sw" style="background:#f472b6"></i>Fable</span>'
               '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）</span>'
+              '<span>｜ 📱 Remote Control オン（外出先から指示できる席）</span>'
               '<span>｜ 🎨 <select id="spr" title="絵のテーマ（assets/sprites/<テーマ>/）"></select></span>'
               '<span id="wsf" title="部屋（ワークスペース）で絞る・?ws=〈部屋名の一部〉でも指定可"></span></span>')
     js = (f"var D={json.dumps(D, ensure_ascii=False)},STAMP={json.dumps(stamp)},"
