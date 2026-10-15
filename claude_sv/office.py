@@ -51,7 +51,8 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             continue
         live[sid] = {"status": STATUS_MAP.get(r.get("state"), "idle"),
                      "name": (registry.get(sid) or {}).get("name") or "",
-                     "model": r.get("model") or "", "title": (r.get("title") or "")[:60]}
+                     "model": r.get("model") or "", "title": (r.get("title") or "")[:60],
+                     "last_human": r.get("last_human")}
         if sid not in labels and r.get("project") and r["project"] != "—":
             labels[sid] = {"project": r["project"], "s": r.get("session_no")}
 
@@ -70,6 +71,19 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
                                 "live": False, "cur": None})
     order = sorted(tracks.values(), key=lambda t: (not t["live"], t["name"]))
 
+    # 人間の位置＝稼働セッションのうち「人間の最終発話」が最新の1件の席の横（S21・ハブ案）。
+    # 複数ウィンドウで同時に打っていても最新1件で割り切る。注意の所在の指標なので、話しかけて
+    # いないのに busy な席＝勝手に進んでいるエージェントが浮き上がる。表示名は cfg.office.human。
+    human = None
+    for t in [hub] + order:
+        for x in t["occupied_by"]:
+            lh = (x["live"] or {}).get("last_human")
+            if lh and (human is None or lh["ts"] > human["ts"]):
+                human = {"track": t["name"], "sid": x["sid"], "s": x["s"], "ts": lh["ts"],
+                         "t": datetime.fromtimestamp(lh["ts"]).strftime("%H:%M"), "text": lh["text"]}
+    if human:
+        human["name"] = (cfg.get("office") or {}).get("human", "人間")
+
     edges = []
     for e in res.get("edges") or []:
         fp, tp = proj(e["frm"]), proj(e["to"])
@@ -83,7 +97,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
         })
     unread = sum(1 for e in edges if e["ok"] and not e["removed"] and e["read"] is False)
     failed = sum(1 for e in edges if not e["ok"])
-    return {"hub": hub, "tracks": order, "edges": edges,
+    return {"hub": hub, "tracks": order, "edges": edges, "human": human,
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
             "window_hours": (cfg.get("office") or {}).get("window_hours", 48)}
@@ -120,6 +134,7 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600}
 @keyframes blink{50%{opacity:0}} .cur{animation:blink 1s step-end infinite}
 @keyframes type{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}} .typing{animation:type .5s steps(2) infinite}
 @keyframes alert{50%{opacity:.35}} .perm{animation:alert .8s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}} .human{animation:bob 1.6s ease-in-out infinite}
 .empty{padding:30px;color:var(--muted)}
 footer{padding:6px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
 """
@@ -173,7 +188,21 @@ D.edges.forEach(function(e,i){var A=pos[e.frm],B=pos[e.to];if(!A||!B)return;var 
  svg+='<path id="p'+i+'" class="edge'+(e.ok?'':' ng')+(e.removed?' rm':'')+'" data-i="'+i+'" d="M'+x1+','+y1+' Q'+(mx+ox)+','+(my+oy)+' '+x2+','+y2+'" stroke="'+col+'" opacity="'+op+'" marker-end="url(#ah)"><title>'+esc(e.t+' '+e.frm+' → '+e.to+'\n'+e.summary+(e.preview&&e.preview!==e.summary?'\n'+e.preview:''))+'</title></path>';
  svg+='<g id="env'+i+'" opacity="0"><rect x="-8" y="-6" width="16" height="12" fill="#fff" stroke="#333"/><polyline points="-8,-6 0,2 8,-6" fill="none" stroke="#333"/><animateMotion id="am'+i+'" dur="0.9s" begin="indefinite" fill="remove"><mpath href="#p'+i+'"/></animateMotion></g>';});
 D.tracks.forEach(function(t){var p=pos[t.name];svg+=desk(p[0],p[1],t,false);});
-svg+=desk(CX,CY,D.hub,true)+'</svg>';
+svg+=desk(CX,CY,D.hub,true);
+// 人間＝最後に話しかけた席の横に1人（席には座らない・歩き回る）。前回位置を覚えておき、席が変われば歩いて移動する。
+var HS=["....HHHH....","...HHHHHH...","...HSSSSH...","...SSSSSS...","...SESSES...","...SSSSSS...","....SSSS....","..GGGGGGGG..",".GGGGGGGGGG.",".G.GGGGGG.G.",".S.GGGGGG.S.","...GGGGGG...","...KKKKKK...","...KK..KK...","...KK..KK...","...BB..BB..."];
+var HP={H:'#111',S:'#f2c9a0',E:'#222',G:'#2e9e6b',K:'#444',B:'#222'};
+function hsprite(x,y){var s='',sc=3;HS.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+HP[c]+'"/>';});});return s;}
+function hpos(track){var p=pos[track];if(!p)return null;var w=track===HUB?190:120;return [p[0]+w/2+10,p[1]-50];}
+if(D.human&&pos[D.human.track]){var hp=hpos(D.human.track),prev=null;try{prev=JSON.parse(localStorage.getItem('csv-human-at')||'null');}catch(e){}
+ var from=(prev&&prev.track!==D.human.track)?hpos(prev.track):null;
+ var mins=Math.max(0,Math.round((Date.now()-D.human.ts*1000)/60000)), ago=mins<1?'いま':mins<60?mins+'分前':Math.floor(mins/60)+'時間'+(mins%60)+'分前';
+ var tip=D.human.name+'：最後に話しかけた席＝'+D.human.track+(D.human.s?' S'+D.human.s:'')+'（'+D.human.t+'・'+ago+'）\n「'+D.human.text+'」';
+ svg+='<g class="human"><title>'+esc(tip)+'</title>'+hsprite(hp[0],hp[1])+
+  '<rect x="'+(hp[0]-6)+'" y="'+(hp[1]-22)+'" width="'+(D.human.name.length*11+ago.length*7+30)+'" height="17" rx="3" fill="#fff" stroke="#333"/><text x="'+(hp[0]-2)+'" y="'+(hp[1]-9)+'" font-size="11" fill="#222">👤 '+esc(D.human.name)+' '+esc(ago)+'</text>'+
+  (from?'<animateTransform attributeName="transform" type="translate" from="'+(from[0]-hp[0])+' '+(from[1]-hp[1])+'" to="0 0" dur="1.4s" fill="freeze" calcMode="spline" keySplines="0.4 0 0.2 1"/>':'')+'</g>';
+ try{localStorage.setItem('csv-human-at',JSON.stringify({track:D.human.track}));}catch(e){}}
+svg+='</svg>';
 document.getElementById('scene').innerHTML=svg;
 var log=document.getElementById('log'), lastDay='';
 if(!D.edges.length)log.innerHTML='<div class="empty">直近 '+D.window_hours+'h にセッション間メッセージはない</div>';
@@ -211,7 +240,8 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<span>｜ シャツ <i class="sw" style="background:#8a5cf6"></i>Opus '
               '<i class="sw" style="background:#3b82f6"></i>Sonnet '
               '<i class="sw" style="background:#d4a017"></i>Haiku '
-              '<i class="sw" style="background:#f472b6"></i>Fable</span></span>')
+              '<i class="sw" style="background:#f472b6"></i>Fable</span>'
+              '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）</span></span>')
     js = (f"var D={json.dumps(D, ensure_ascii=False)},STAMP={json.dumps(stamp)},"
           f"POLL_MS={poll_ms},HUB={json.dumps(hub)};" + PAGE_JS)
     return f"""<!doctype html>

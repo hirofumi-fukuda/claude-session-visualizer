@@ -412,6 +412,64 @@ def _peek(transcript: Path, workspace: str):
     return summary
 
 
+_LAST_HUMAN_CACHE: dict = {}  # transcript path → (size, result)。ファイルが伸びた時だけ再走査する
+_LAST_HUMAN_WINDOWS = (65536, 1 << 20, 1 << 23)  # 末尾 64KB → 1MB → 8MB と広げて探す（長い作業ターンの後は数MB進む）
+_NOT_HUMAN_PREFIXES = ("<cross-session-message", "[Subagent hand-back]",
+                       "This session is being continued from a previous conversation")
+
+
+def _peek_last_human(transcript: Path, tail_bytes=None):
+    """末尾から読んで「人間が最後に打った発話」の時刻(epoch)と先頭80字を返す（無ければ None）。
+
+    オフィス配置図の「人間がいま注意を向けている席」判定用（S21・ハブ案）。他セッション便
+    （cross-session-message＝isMeta）・サブエージェント戻り・tool_result・スラッシュコマンド
+    （command-name タグ＝_clean_user_text で空になる）・コンパクション要約（"This session is being
+    continued…"＝system が user 役で挿入）は人間の発話に数えない。
+    """
+    key = str(transcript)
+    try:
+        size = transcript.stat().st_size
+    except OSError:
+        return None
+    hit = _LAST_HUMAN_CACHE.get(key)
+    if hit and hit[0] == size:
+        return hit[1]
+    windows = (tail_bytes,) if tail_bytes else _LAST_HUMAN_WINDOWS
+    result = None
+    for tb in windows:
+        try:
+            with open(transcript, "rb") as f:
+                f.seek(max(0, size - tb))
+                chunk = f.read().decode("utf-8", errors="replace")
+        except OSError:
+            return None
+        result = _scan_last_human(chunk)
+        if result or tb >= size:
+            break
+    _LAST_HUMAN_CACHE[key] = (size, result)
+    return result
+
+
+def _scan_last_human(chunk: str):
+    for line in reversed(chunk.splitlines()):
+        if '"type":"user"' not in line or '"isMeta":true' in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("type") != "user" or rec.get("isMeta") or rec.get("isSidechain"):
+            continue
+        for raw in _iter_text_items((rec.get("message") or {}).get("content")):
+            text = _clean_user_text(raw)
+            if not text or text.startswith(_NOT_HUMAN_PREFIXES):
+                continue
+            ts = _ts_epoch(rec.get("timestamp"))
+            if ts:
+                return {"ts": ts, "text": text[:80]}
+    return None
+
+
 def _peek_model(transcript: Path, tail_bytes=65536):
     """末尾だけ読んで最後の assistant レコードの model を短縮形で返す（委託のengine表記と対）。
 
@@ -601,6 +659,7 @@ def build_rows():
             "pinned": sid in pin_sids,  # 稼働中のピン済みは📌印を付ける（休眠セクションには出さない）
             "ws": _ci_get(ws_labels, ws, Path(cwd).name if cwd else ws[:16]),
             "model": _peek_model(transcript),  # 委託の engine 表記と対（誰が働いているか）
+            "last_human": _peek_last_human(transcript),  # 人間の最終発話（オフィス図の人間位置）
             "pid": rec.get("pid") or "",
             "sid": sid,   # タブ復元スナップショット用（claude-wt/restore_tabs.ps1）
             "cwd": cwd,
