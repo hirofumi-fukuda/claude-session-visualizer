@@ -13,6 +13,13 @@
   human.png            人間（候補が複数なら human-2.png, human-3.png ...）
   agent-<model>.png    モデル別（opus / sonnet / haiku / fable）。色分け＝下の MODEL_COLORS
   agent.png            共通のグレー版。モデル不明の席で office.py が乗算で色を乗せる用（全体が単色に染まる）
+テーマに SPECIES があれば（例: animal）、種類（トラックごとに割り当て）× モデルも書き出す:
+  agent-<種類>-<モデル>.png   BODY（モデル色の服）＋種類の層＋モデルの小物（ACCESSORIES）を重ねた絵
+  agent-<種類>-unknown.png    モデル不明（グレー版に赤を乗算した見え方を焼き込み）
+  agent-<種類>.png            種類のグレー版（未知のモデル用）
+  sheet-species.png           種類 × モデルの一覧（--install では置かない）
+POSES もあれば、上の 3 つをポーズごとにも書き出す（idle＝ポーズなしの絵なので作らない）:
+  agent-<種類>-<モデル>-<ポーズ>.png ／ agent-<種類>-unknown-<ポーズ>.png ／ agent-<種類>-<ポーズ>.png ／ sheet-species-<ポーズ>.png
 PNG は 36×48（1マス＝3px）。表示サイズと同じなので image-rendering が効かない環境でもにじまない。
 PNG には外側 1px の薄い白フチ（RIM）を焼き込む。黒髪・黒い服が office の暗い床に溶けないように。
 """
@@ -180,6 +187,48 @@ def theme_parts(mod):
     return pal, humans, agents, fallback
 
 
+def overlay(grid, layer, x=0, y=0):
+    """grid に layer を (x, y) から重ねる。'.' は透明、枠からはみ出す分は切る。"""
+    out = [list(row) for row in grid]
+    for r, row in enumerate(layer):
+        for c, ch in enumerate(row):
+            if ch != "." and 0 <= y + r < H and 0 <= x + c < W:
+                out[y + r][x + c] = ch
+    return ["".join(row) for row in out]
+
+
+def overlay_at(grid, stamps, at, anchors):
+    """stamps＝[(位置の名前, 絵)] を順に重ねる。位置は at（種類ごと）、無ければ anchors（テーマ共通）。"""
+    for anchor, stamp in stamps:
+        grid = overlay(grid, stamp, *at.get(anchor, anchors.get(anchor, (0, 0))))
+    return grid
+
+
+def species_parts(mod, pal):
+    """SPECIES のあるテーマ → {種類: (label, pal, {ポーズ: ({model: grid}, 小物なしの grid)})}。ポーズ None＝基本の絵。
+    1枚＝BODY（ポーズなら POSES の体）＋種類の層（頭・足・しっぽ）＋モデルの小物＋ポーズの手前の層（ノート PC・「!」など）。
+    小物・手前の層の位置は種類ごとの at、無ければ ANCHORS。"""
+    poses = {None: ("", mod.BODY, [])}
+    poses.update(getattr(mod, "POSES", {}))
+    out = {}
+    for sp, (label, sp_pal, layer, at) in mod.SPECIES.items():
+        p = dict(pal)
+        p.update(sp_pal)
+        by_pose = {}
+        for pose, (pose_label, body, front) in poses.items():
+            where = f"{mod.NAME} SPECIES[{sp}] {label}" + (f" POSES[{pose}]" if pose else "")
+            base = overlay(body, layer)
+            check_grid(base, p, where)
+            grids = {}
+            for m in MODELS:
+                g = overlay_at(overlay_at(base, mod.ACCESSORIES[m][1], at, mod.ANCHORS), front, at, mod.ANCHORS)
+                check_grid(g, p, f"{where} + {mod.ACCESSORIES[m][0]}")
+                grids[m] = g
+            by_pose[pose] = (grids, overlay_at(base, front, at, mod.ANCHORS))
+        out[sp] = (label, p, by_pose)
+    return out
+
+
 def write_theme(mod):
     pal, humans, agents, fallback = theme_parts(mod)
     d = OUT_DIR / mod.NAME
@@ -191,6 +240,16 @@ def write_theme(mod):
     for m, (label, grid) in agents.items():
         add_rim(render(grid, pal, model=m, scale=SCALE)).save(d / f"agent-{m}.png")
     add_rim(render(fallback[1], pal, gray=True, scale=SCALE)).save(d / "agent.png")
+    if hasattr(mod, "SPECIES"):
+        # agent-<種類>-<モデル>.png ＋ モデル不明（赤で乗算した見え方を焼き込み）＋ グレー agent-<種類>.png（未知のモデル用）。ポーズは末尾に -<ポーズ>
+        for sp, (label, p, by_pose) in species_parts(mod, pal).items():
+            for pose, (grids, base) in by_pose.items():
+                sfx = f"-{pose}" if pose else ""
+                for m, g in grids.items():
+                    add_rim(render(g, p, model=m, scale=SCALE)).save(d / f"agent-{sp}-{m}{sfx}.png")
+                gray = render(base, p, gray=True, scale=SCALE)
+                add_rim(tint_multiply(gray, UNKNOWN_COLOR)).save(d / f"agent-{sp}-unknown{sfx}.png")
+                add_rim(gray).save(d / f"agent-{sp}{sfx}.png")
     return pal, humans, agents, fallback
 
 
@@ -240,15 +299,22 @@ def _card(sheet, x, y, sprite, accent=None):
     sheet.alpha_composite(sprite, (x + 8, y + 8))
 
 
-def _desk_scene(sprites, human):
-    """office.py の desk() と同じ寸法で、実寸（36×48）の見え方を1枚にする。"""
-    w_, h_ = 340, 150
+def _floor(w_, h_):
+    """office の床（市松）。"""
     img = Image.new("RGBA", (w_, h_), CARD_BG + (255,))
     d = ImageDraw.Draw(img)
     for ty in range(0, h_, 40):
         for tx in range(0, w_, 40):
             d.rectangle([tx, ty, tx + 19, ty + 19], fill=CARD_BG2)
             d.rectangle([tx + 20, ty + 20, tx + 39, ty + 39], fill=CARD_BG2)
+    return img
+
+
+def _desk_scene(sprites, human):
+    """office.py の desk() と同じ寸法で、実寸（36×48）の見え方を1枚にする。"""
+    w_, h_ = 340, 150
+    img = _floor(w_, h_)
+    d = ImageDraw.Draw(img)
 
     def desk(cx, cy, pair, screen):
         dw, dh = 120, 40
@@ -311,6 +377,55 @@ def make_sheet(theme_rows, path: Path):
     sheet.save(path)
 
 
+def make_species_sheet(mod, pal, humans, path: Path, pose=None):
+    """種類 × モデルの一覧（6 倍）＋ 同じ並びの実寸（36×48）＋ 種類とモデルを混ぜて机に並べた見え方。pose でそのポーズの一覧。"""
+    parts = species_parts(mod, pal)
+    f_title, f_lab, f_small = _font(20, True), _font(13), _font(11)
+    gap, left, label_w, top = 10, 18, 96, 104
+    cols = [(MODEL_LABEL[m], mod.ACCESSORIES[m][0], MODEL_COLORS[m]) for m in MODELS]
+    cols += [("不明", "グレーに赤を乗算", UNKNOWN_COLOR), ("グレー", "未知のモデル用", None)]
+    row_h = CARD_H + gap
+    grid_x = left + label_w
+    real_x = grid_x + len(cols) * (CARD_W + gap) + 20
+    real_w = len(cols) * 44 + 12
+    scene_y = top + len(parts) * row_h + 34
+    width = max(real_x + real_w + 20, left + 3 * 350 + 10)
+    sheet = Image.new("RGBA", (width, scene_y + 150 + 20), SHEET_BG + (255,))
+    d = ImageDraw.Draw(sheet)
+    name = f"agent-<種類>-<モデル>-{pose}.png" if pose else "agent-<種類>-<モデル>.png"
+    d.text((left, 16), f"{mod.NAME}  種類 × モデル（{name}）6 倍／右は同じ並びの実寸 36×48", font=f_title, fill=INK)
+    note = f"ポーズ {pose}＝{mod.POSES[pose][0]}" if pose else "1枚＝モデル色のパーカー＋種類の頭・足・しっぽ＋モデルの小物。種類はトラックごとに割り当て"
+    d.text((left, 44), note, font=f_small, fill=INK2)
+    for i, (name, sub, color) in enumerate(cols):
+        x = grid_x + i * (CARD_W + gap)
+        d.text((x, top - 34), name, font=f_lab, fill=_hex(color) if color else INK2)
+        d.text((x, top - 17), sub, font=f_small, fill=INK2)
+    sheet.alpha_composite(_floor(real_w, len(parts) * row_h - gap), (real_x, top))
+    small = {}
+    for r, (sp, (label, p, by_pose)) in enumerate(parts.items()):
+        grids, base = by_pose[pose]
+        y = top + r * row_h
+        d.text((left, y + 36), sp, font=f_lab, fill=INK)
+        d.text((left, y + 56), label, font=f_small, fill=INK2)
+        gray = render(base, p, gray=True, scale=ZOOM)
+        imgs = [render(grids[m], p, model=m, scale=ZOOM) for m in MODELS] + [tint_multiply(gray, UNKNOWN_COLOR), gray]
+        for i, img in enumerate(imgs):
+            _card(sheet, grid_x + i * (CARD_W + gap), y, img, accent=cols[i][2])
+        gray1 = render(base, p, gray=True, scale=SCALE)
+        row = [render(grids[m], p, model=m, scale=SCALE) for m in MODELS] + [tint_multiply(gray1, UNKNOWN_COLOR), gray1]
+        for i, img in enumerate(row):
+            sheet.alpha_composite(add_rim(img), (real_x + 8 + i * 44, y + (CARD_H - 48) // 2))
+        small[sp] = dict(zip(MODELS + ["unknown"], (add_rim(img) for img in row)))
+    # 机のシーン: 種類とモデルを混ぜて 12 人（遠目でトラックを見分けられるか）
+    sps, mods = list(parts), MODELS + ["unknown"]
+    seq = [small[sps[k % len(sps)]][mods[k % len(mods)]] for k in range(12)]
+    d.text((left, scene_y - 22), "机に混ぜて並べた実寸（office と同じ寸法）", font=f_small, fill=INK2)
+    for j in range(3):
+        human = add_rim(render(humans[0][1], pal, scale=SCALE)) if j == 0 else None
+        sheet.alpha_composite(_desk_scene(seq[j * 4:j * 4 + 4], human), (left + j * 350, scene_y))
+    sheet.save(path)
+
+
 def _out(theme: str) -> Path:
     src = OUT_DIR / theme
     if not src.is_dir():
@@ -319,11 +434,11 @@ def _out(theme: str) -> Path:
 
 
 def install(theme: str):
-    """out/<theme>/ の絵（sheet.png 以外）を assets/sprites/<theme>/ に置く。人間の候補 human-N.png も全部。"""
+    """out/<theme>/ の絵（sheet*.png 以外）を assets/sprites/<theme>/ に置く。人間の候補 human-N.png も全部。"""
     src, dest = _out(theme), INSTALL_DIR / theme
     dest.mkdir(exist_ok=True)
     for s in sorted(src.glob("*.png")):
-        if s.name != "sheet.png":
+        if not s.name.startswith("sheet"):
             shutil.copyfile(s, dest / s.name)
     print(f"installed {theme}/ <- out/{theme}/")
 
@@ -360,6 +475,11 @@ def main():
     if not themes:
         raise SystemExit(f"テーマ {a.theme!r} が themes/ に無い")
     rows = [(mod,) + write_theme(mod) for mod in themes]
+    for mod, pal, humans, *_ in rows:
+        if hasattr(mod, "SPECIES"):
+            make_species_sheet(mod, pal, humans, OUT_DIR / mod.NAME / "sheet-species.png")
+            for pose in getattr(mod, "POSES", {}):
+                make_species_sheet(mod, pal, humans, OUT_DIR / mod.NAME / f"sheet-species-{pose}.png", pose)
     if a.theme:
         make_sheet(rows, OUT_DIR / a.theme / "sheet.png")
         print(f"wrote out/{a.theme}/ and out/{a.theme}/sheet.png")
