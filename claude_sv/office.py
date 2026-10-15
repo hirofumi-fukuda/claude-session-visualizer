@@ -47,6 +47,46 @@ def load_sprites(sprite_dir: Path = SPRITE_DIR) -> dict:
     return out
 
 
+def _norm(name: str) -> str:
+    """島わけ突合用の正規化: 空白・大小無視、末尾の「（仮）」等の括弧注記は落とす（registry の正式名と mapper の案件名のズレ吸収）。"""
+    n = re.sub(r"\s+", "", name or "")
+    n = re.sub(r"[（(][^（()）]*[)）]$", "", n) or n  # 「（未分類）」のように全部が括弧なら残す
+    return n.casefold()
+
+
+def build_islands(order, cfg: dict) -> list:
+    """cfg.office.teams（島名 → トラック名リスト・順序＝配置の優先）から島を組む。無ければ [] ＝従来の楕円配置。
+
+    トラック名は ProjectMapper の案件名（＝alias の正規名）と空白・大小無視で突合。どの島にも無い
+    トラックは「その他」島。cfg.office.island_slots で島の置き場を指定できる（r/l/t/b/tr/tl/br/bl）。
+    """
+    office = cfg.get("office") or {}
+    teams = office.get("teams") or {}
+    if not teams:
+        return []
+    slots = office.get("island_slots") or {}
+    names = [t["name"] for t in order]
+    by_norm = {_norm(n): n for n in names}
+    rank = {n: i for i, n in enumerate(names)}
+    assigned: set = set()
+    islands = []
+    for isl, members in teams.items():
+        picked = []
+        for m in members or []:
+            k = _norm(m)
+            if k in by_norm and k not in assigned:
+                picked.append(by_norm[k])
+                assigned.add(k)
+        if picked:
+            picked.sort(key=lambda n: rank[n])
+            islands.append({"name": isl, "tracks": picked, "slot": slots.get(isl)})
+    rest = [n for n in names if _norm(n) not in assigned]
+    if rest:
+        other = office.get("other_island", "その他")
+        islands.append({"name": other, "tracks": rest, "slot": slots.get(other)})
+    return islands
+
+
 def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     """messages.collect の結果＋ラベル＋稼働 rows から、描画用の D を組む（JS 側は配置と描画だけ）。"""
     hub_disp = (cfg.get("office") or {}).get("hub", "業務ハブ")
@@ -118,6 +158,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     unread = sum(1 for e in edges if e["ok"] and not e["removed"] and e["read"] is False)
     failed = sum(1 for e in edges if not e["ok"])
     return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(),
+            "islands": build_islands(order, cfg),
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
             "window_hours": (cfg.get("office") or {}).get("window_hours", 48)}
@@ -204,9 +245,31 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
  var un=unreadBy[t.name]||0;
  if(un)g+='<rect x="'+(x+w/2-30)+'" y="'+(y-14)+'" width="30" height="14" fill="#f5c542"/><text x="'+(x+w/2-15)+'" y="'+(y-3)+'" text-anchor="middle" font-size="11" fill="#222">📨'+un+'</text>';
  return g+'</g>';}
-var pos={}; pos[HUB]=[CX,CY];
-D.tracks.forEach(function(t,i){var a=-Math.PI/2+i*2*Math.PI/Math.max(n,1);pos[t.name]=[Math.round(CX+RX*Math.cos(a)),Math.round(CY+RY*Math.sin(a))];});
-var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="#2a2d3f"/><rect width="20" height="20" fill="#2f3348"/><rect x="20" y="20" width="20" height="20" fill="#2f3348"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>';
+var pos={}, floors='';
+if(D.islands&&D.islands.length){
+ // 島レイアウト: 3×3 のセル。中央＝ハブ。島は config の順に r,l,t,b,tr,tl,br,bl のセルへ（slot 指定があれば優先）。
+ // 同じセルに複数の島が来たら縦に積む。セルの幅・高さは中の島の最大で決める＝重ならない。
+ var PX=166,PY=135,PAD=22,TITLE=26,G=48,M=30, SLOT={r:[2,1],l:[0,1],t:[1,0],b:[1,2],tr:[2,0],tl:[0,0],br:[2,2],bl:[0,2]}, ORDER=['r','l','t','b','tr','tl','br','bl'];
+ var cells={}; for(var cx0=0;cx0<3;cx0++)for(var cy0=0;cy0<3;cy0++)cells[cx0+','+cy0]=[];
+ D.islands.forEach(function(isl,i){var sl=SLOT[isl.slot]||SLOT[ORDER[i%ORDER.length]];var m=isl.tracks.length,cols=Math.min(m,Math.ceil(Math.sqrt(m))),rows=Math.ceil(m/cols);
+  isl.cols=cols;isl.rows=rows;isl.w=(cols-1)*PX+120+PAD*2+30;isl.h=rows*PY-11+PAD*2+TITLE;cells[sl[0]+','+sl[1]].push(isl);});
+ var HUBW=260,HUBH=200, colW=[0,HUBW,0], rowH=[0,HUBH,0];
+ Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var w=Math.max.apply(null,L.map(function(x){return x.w;})),h=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
+  colW[c[0]]=Math.max(colW[c[0]],w);rowH[c[1]]=Math.max(rowH[c[1]],h);});
+ var colX=[M,M+colW[0]+(colW[0]?G:0)], rowY=[M,M+rowH[0]+(rowH[0]?G:0)]; colX[2]=colX[1]+colW[1]+G; rowY[2]=rowY[1]+rowH[1]+G;
+ W=colX[2]+colW[2]+(colW[2]?M:0); H=rowY[2]+rowH[2]+(rowH[2]?M:0); CX=colX[1]+colW[1]/2; CY=rowY[1]+rowH[1]/2+30;
+ var ISL_COL=['#f5c542','#39d353','#5ad1e6','#e66fd1','#f97316','#a78bfa','#94a3b8','#22c55e'];
+ Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var tot=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
+  var y=c[1]===0?rowY[0]+rowH[0]-tot:c[1]===2?rowY[2]:rowY[1]+(rowH[1]-tot)/2;
+  L.forEach(function(isl){var x=c[0]===0?colX[0]+colW[0]-isl.w:c[0]===2?colX[2]:colX[1]+(colW[1]-isl.w)/2;var col=ISL_COL[D.islands.indexOf(isl)%ISL_COL.length];
+   floors+='<rect x="'+x+'" y="'+y+'" width="'+isl.w+'" height="'+isl.h+'" rx="12" fill="'+col+'" fill-opacity="0.10" stroke="'+col+'" stroke-opacity="0.45" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+col+'">'+esc(isl.name)+'</text><text x="'+(x+isl.w-10)+'" y="'+(y+18)+'" text-anchor="end" font-size="11" fill="'+col+'" fill-opacity="0.8">'+isl.tracks.length+'席</text>';
+   isl.tracks.forEach(function(name,k){var cc=k%isl.cols,rr=Math.floor(k/isl.cols);pos[name]=[Math.round(x+PAD+60+cc*PX),Math.round(y+PAD+TITLE+62+rr*PY)];});
+   y+=isl.h+G;});});
+}else{
+ D.tracks.forEach(function(t,i){var a=-Math.PI/2+i*2*Math.PI/Math.max(n,1);pos[t.name]=[Math.round(CX+RX*Math.cos(a)),Math.round(CY+RY*Math.sin(a))];});
+}
+pos[HUB]=[CX,CY];
+var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="#2a2d3f"/><rect width="20" height="20" fill="#2f3348"/><rect x="20" y="20" width="20" height="20" fill="#2f3348"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>'+floors;
 var ts0=D.edges.length?Date.parse(D.edges[0].ts):0, ts1=D.edges.length?Date.parse(D.edges[D.edges.length-1].ts):1;
 D.edges.forEach(function(e,i){var A=pos[e.frm],B=pos[e.to];if(!A||!B)return;var x1=A[0],y1=A[1]+20,x2=B[0],y2=B[1]+20;
  var mx=(x1+x2)/2,my=(y1+y2)/2,dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ox=-dy/L*28,oy=dx/L*28;
@@ -214,17 +277,19 @@ D.edges.forEach(function(e,i){var A=pos[e.frm],B=pos[e.to];if(!A||!B)return;var 
  var rec=(Date.parse(e.ts)-ts0)/((ts1-ts0)||1), op=(0.25+0.75*rec).toFixed(2);
  svg+='<path id="p'+i+'" class="edge'+(e.ok?'':' ng')+(e.removed?' rm':'')+'" data-i="'+i+'" d="M'+x1+','+y1+' Q'+(mx+ox)+','+(my+oy)+' '+x2+','+y2+'" stroke="'+col+'" opacity="'+op+'" marker-end="url(#ah)"><title>'+esc(e.t+' '+e.frm+' → '+e.to+'\n'+e.summary+(e.preview&&e.preview!==e.summary?'\n'+e.preview:''))+'</title></path>';
  svg+='<g id="env'+i+'" opacity="0"><rect x="-8" y="-6" width="16" height="12" fill="#fff" stroke="#333"/><polyline points="-8,-6 0,2 8,-6" fill="none" stroke="#333"/><animateMotion id="am'+i+'" dur="0.9s" begin="indefinite" fill="remove"><mpath href="#p'+i+'"/></animateMotion></g>';});
-D.tracks.forEach(function(t){var p=pos[t.name];svg+=desk(p[0],p[1],t,false);});
+D.tracks.forEach(function(t){var p=pos[t.name];if(p)svg+=desk(p[0],p[1],t,false);});
 svg+=desk(CX,CY,D.hub,true);
 // 人間＝最後に話しかけた席の横に1人（席には座らない・歩き回る）。前回位置を覚えておき、席が変われば歩いて移動する。
 var HS=["....HHHH....","...HHHHHH...","...HSSSSH...","...SSSSSS...","...SESSES...","...SSSSSS...","....SSSS....","..GGGGGGGG..",".GGGGGGGGGG.",".G.GGGGGG.G.",".S.GGGGGG.S.","...GGGGGG...","...KKKKKK...","...KK..KK...","...KK..KK...","...BB..BB..."];
 var HP={H:'#111',S:'#f2c9a0',E:'#222',G:'#2e9e6b',K:'#444',B:'#222'};
 function hsprite(x,y){if(SP.human)return img(SP.human,x,y,null);var s='',sc=3;HS.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+HP[c]+'"/>';});});return s;}
-function hpos(track){var p=pos[track];if(!p)return null;var w=track===HUB?190:120;return [p[0]+w/2+10,p[1]-50];}
+function hpos(track){var p=pos[track];if(!p)return null;var w=track===HUB?190:120;return [p[0]+w/2+6,p[1]-50];}
 if(D.human&&pos[D.human.track]){var hp=hpos(D.human.track),prev=null;try{prev=JSON.parse(localStorage.getItem('csv-human-at')||'null');}catch(e){}
  var from=(prev&&prev.track!==D.human.track)?hpos(prev.track):null;
  var mins=Math.max(0,Math.round((Date.now()-D.human.ts*1000)/60000)), ago=mins<1?'いま':mins<60?mins+'分前':Math.floor(mins/60)+'時間'+(mins%60)+'分前';
  var tip=D.human.name+'：最後に話しかけた席＝'+D.human.track+(D.human.s?' S'+D.human.s:'')+'（'+D.human.t+'・'+ago+'）\n「'+D.human.text+'」';
+ var dp=pos[D.human.track],dw=D.human.track===HUB?190:120,dh=D.human.track===HUB?52:40;
+ svg+='<rect x="'+(dp[0]-dw/2-6)+'" y="'+(dp[1]-70)+'" width="'+(dw+12)+'" height="'+(dh+98)+'" rx="8" fill="#2e9e6b" fill-opacity="0.10" stroke="#2e9e6b" stroke-dasharray="6 4" stroke-width="2"/>';
  svg+='<g class="human"><title>'+esc(tip)+'</title>'+hsprite(hp[0],hp[1])+
   '<rect x="'+(hp[0]-6)+'" y="'+(hp[1]-22)+'" width="'+(D.human.name.length*11+ago.length*7+30)+'" height="17" rx="3" fill="#fff" stroke="#333"/><text x="'+(hp[0]-2)+'" y="'+(hp[1]-9)+'" font-size="11" fill="#222">👤 '+esc(D.human.name)+' '+esc(ago)+'</text>'+
   (from?'<animateTransform attributeName="transform" type="translate" from="'+(from[0]-hp[0])+' '+(from[1]-hp[1])+'" to="0 0" dur="1.4s" fill="freeze" calcMode="spline" keySplines="0.4 0 0.2 1"/>':'')+'</g>';
