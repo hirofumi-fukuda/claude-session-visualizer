@@ -15,6 +15,8 @@ config の順）。ヘッダの 🧲 ボタンで切替（localStorage）。席�
 break_after_min 分で人間のスプライトが休憩室へ歩く（話しかけると席へ戻る・戻る席の点線枠は残す）。各島の角に観葉植物（飾り）。
 小物の絵は assets/props/<名前>.png があればそれ・無ければコード内の矩形描画（受け口が先・絵は後から差し替え）。
 🪑 hub_side（S22）: cfg.office.hub_side＝トラック名リスト。島に入れずハブの右隣に小机で並べる（同じ部屋・採番なしの運用型＝会議サポート等）。
+🎨 絵のテーマの優先順（S22）: sprite_track_themes（トラック名）＞ sprite_tenant_themes（部屋名）＞ sprite_theme（全体）。部屋単位が要るのは
+workspace_hints の無い ws（副業）で名無しトラックが出るとトラック名キーでは追いつかないため。
 
 更新の仕組みは daily_view と同じ: 中身が変わった時だけ office.html を書き、ページは office_stamp.js を
 数秒おきに読んで差分があればリロードする（スクロール・選択は保たない＝配置図なので不要）。
@@ -320,6 +322,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "sprite_default": (cfg.get("office") or {}).get("sprite_theme", ""),  # 既定テーマ（プルダウン未選択時）
             "sprite_variants": (cfg.get("office") or {}).get("sprite_variants") or {},  # トラック名→種類名の固定割当（任意）
             "sprite_track_themes": (cfg.get("office") or {}).get("sprite_track_themes") or {},  # トラック名→テーマ名（席ごとの別テーマ・例: 業務ハブだけ ninja）
+            "sprite_tenant_themes": (cfg.get("office") or {}).get("sprite_tenant_themes") or {},  # 部屋名→テーマ名（副業の部屋ごとに別の絵・S22）
             "islands": islands, "rooms": rooms, "hub_side": hub_side,  # 🪑 ハブの右隣の小机（S22）
             "live_near_hub": bool((cfg.get("office") or {}).get("live_near_hub", False)),  # 🧲 稼働席をハブ側に詰める既定（S22）
             "lounge": _lounge(cfg), "props": load_props(),  # ☕ 休憩室（S22・無ければ None）と小物の絵（assets/props/）
@@ -405,10 +408,10 @@ function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" w
 // テーマ内の「種類」＝ agent-<種類>[-<モデル>][-<ポーズ>].png の <種類>（モデル名・ポーズ名以外のトークン）。トラック名のハッシュで固定割当（config office.sprite_variants で上書き可）
 var MODELS={opus:1,sonnet:1,haiku:1,fable:1,unknown:1}, POSES={typing:1,idle:1,wait:1};
 function varsOf(M){if(M.__vars)return M.__vars;var vs={};Object.keys(M).forEach(function(k){var t=k.split('-');if(t[0]!=='agent')return;t.slice(1).forEach(function(w){if(!MODELS[w]&&!POSES[w])vs[w]=1;});});return (M.__vars=Object.keys(vs).sort());}
-var VOVR=D.sprite_variants||{}, TOVR=D.sprite_track_themes||{};
+var VOVR=D.sprite_variants||{}, TOVR=D.sprite_track_themes||{}, NOVR=D.sprite_tenant_themes||{};
 function variantFor(track,M){var VARS=varsOf(M||SP);if(!VARS.length)return '';if(VOVR[track]&&VARS.indexOf(VOVR[track])>=0)return VOVR[track];var h=5381;for(var i=0;i<track.length;i++)h=((h*33)^track.charCodeAt(i))>>>0;return VARS[h%VARS.length];}
-// 席ごとの別テーマ（config office.sprite_track_themes {"トラック名": "テーマ"}）。テーマが無ければ画面のテーマに落ちる
-function mapFor(track){var th=TOVR[track];if(th){var tm=THEMES[String(th).split('/')[0]];if(tm)return tm;}return SP;}
+// 席ごとの別テーマ: トラック名（office.sprite_track_themes）＞部屋名（office.sprite_tenant_themes・trackRoom は部屋の配置時に埋まる）＞画面のテーマ。指定のテーマが無ければ次へ落ちる
+function mapFor(track){var th=TOVR[track]||NOVR[trackRoom[track]];if(th){var tm=THEMES[String(th).split('/')[0]];if(tm)return tm;}return SP;}
 function modelKey(model){return /opus/.test(model||'')?'opus':/sonnet/.test(model||'')?'sonnet':/haiku/.test(model||'')?'haiku':/fable/.test(model||'')?'fable':'unknown';}
 function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKey(model),pose=status==='busy'?'typing':status==='perm'?'wait':'idle',v=variantFor(track||'',M);
  var direct=[],gray=[];
