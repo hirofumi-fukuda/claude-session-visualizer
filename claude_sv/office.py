@@ -129,15 +129,16 @@ CSS = """
   --border:rgba(255,255,255,.10);--wash:rgba(255,255,255,.055);--gold:#f5c542;--cyan:#5ad1e6;--mag:#e66fd1;--red:#e5533b}
 :root[data-theme="light"]{color-scheme:light;--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
   --border:rgba(11,11,11,.10);--wash:rgba(11,11,11,.045);--gold:#b8860b;--cyan:#1d8fa6;--mag:#b3399e;--red:#c2341f}
-body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:var(--plane);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","Yu Gothic UI",Meiryo,sans-serif;font-size:13px;line-height:1.5}
-header{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+html,body{height:100%} body{margin:0;height:100vh;overflow:hidden;display:flex;flex-direction:column;background:var(--plane);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","Yu Gothic UI",Meiryo,sans-serif;font-size:13px;line-height:1.5}
+header{flex:none;padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 header h1{font-size:16px;margin:0;font-weight:600} .sub{color:var(--muted);font-size:11.5px}
 .navs{margin-left:auto;display:flex;gap:6px;align-items:center}
 .tgl{background:none;border:1px solid var(--border);color:var(--ink2);border-radius:999px;padding:3px 11px;font-size:12px;cursor:pointer;text-decoration:none;font-family:inherit}
 .tgl:hover{background:var(--wash);color:var(--ink)} .tgl.cur{background:var(--wash);color:var(--ink);cursor:default}
-main{display:grid;grid-template-columns:1fr 380px;flex:1;min-height:0}
-#scene{overflow:hidden;background:#1b1d2a;min-height:0} #scene svg{display:block;width:100%;height:100%;shape-rendering:crispEdges}
-aside{background:var(--surface);border-left:1px solid var(--border);overflow:auto;padding:10px 12px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 380px;grid-template-rows:minmax(0,1fr);flex:1 1 0;min-height:0;overflow:hidden}
+#scene{overflow:hidden;background:#1b1d2a;min-height:0;height:100%} #scene svg{display:block;width:100%;height:100%;shape-rendering:crispEdges}
+aside{background:var(--surface);border-left:1px solid var(--border);overflow-y:auto;min-height:0;height:100%;padding:10px 12px}
+aside h2{position:sticky;top:-10px;background:var(--surface);padding:6px 0;z-index:1}
 aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px} aside h2 .tgl{margin-left:auto;padding:1px 8px;font-size:11px}
 .day{color:var(--muted);font-size:11px;margin:10px 0 2px;border-bottom:1px solid var(--border)}
 .row{padding:5px 6px;border-left:3px solid transparent;cursor:pointer;line-height:1.35;border-radius:0 6px 6px 0}
@@ -156,7 +157,7 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 @keyframes alert{50%{opacity:.35}} .perm{animation:alert .8s ease-in-out infinite}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}} .human{animation:bob 1.6s ease-in-out infinite}
 .empty{padding:30px;color:var(--muted)}
-footer{padding:6px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
+footer{flex:none;padding:6px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
 """
 
 HEAD_JS = "try{var t=localStorage.getItem('csv-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}"
