@@ -460,14 +460,43 @@ def _scan_last_human(chunk: str):
             continue
         if rec.get("type") != "user" or rec.get("isMeta") or rec.get("isSidechain"):
             continue
-        for raw in _iter_text_items((rec.get("message") or {}).get("content")):
+        content = (rec.get("message") or {}).get("content")
+        for raw in _iter_text_items(content):
             text = _clean_user_text(raw)
             if not text or text.startswith(_NOT_HUMAN_PREFIXES):
                 continue
             ts = _ts_epoch(rec.get("timestamp"))
             if ts:
                 return {"ts": ts, "text": text[:80]}
+        # AskUserQuestion の回答（10/15 S21 見直し⑤）: ボタン回答は user テキストでなく tool_result
+        # （"Your questions have been answered: ..."）で残る。実際に人が答えているので発話に数える
+        ans = _ask_answer_text(content)
+        if ans:
+            ts = _ts_epoch(rec.get("timestamp"))
+            if ts:
+                return {"ts": ts, "text": ans[:80]}
     return None
+
+
+_ASK_ANSWER_PREFIX = "Your questions have been answered:"
+
+
+def _ask_answer_text(content):
+    """user レコードの tool_result から AskUserQuestion の回答本文（"質問"="回答", ...）を取り出す。無ければ ''。"""
+    if not isinstance(content, list):
+        return ""
+    for item in content:
+        if not (isinstance(item, dict) and item.get("type") == "tool_result"):
+            continue
+        body = item.get("content")
+        if isinstance(body, list):
+            body = " ".join(x.get("text", "") for x in body if isinstance(x, dict))
+        if not isinstance(body, str) or not body.startswith(_ASK_ANSWER_PREFIX):
+            continue
+        body = body[len(_ASK_ANSWER_PREFIX):].strip()
+        body = re.sub(r"\.?\s*You can now continue with these answers in mind\.?$", "", body).strip()
+        return "🔘 " + body
+    return ""
 
 
 def _peek_model(transcript: Path, tail_bytes=None):

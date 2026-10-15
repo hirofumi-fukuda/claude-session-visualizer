@@ -137,6 +137,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             continue
         live[sid] = {"status": STATUS_MAP.get(r.get("state"), "idle"),
                      "name": (registry.get(sid) or {}).get("name") or "",
+                     "named": (registry.get(sid) or {}).get("nameSource") == "user",  # /rename 済み（自動命名でない）
                      "model": r.get("model") or "", "title": (r.get("title") or "")[:60],
                      "last_human": r.get("last_human")}
         if sid not in labels and r.get("project") and r["project"] != "—":
@@ -144,7 +145,10 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
 
     tracks: dict = {}
     for sid in set(labels) | set(live):
-        p = proj(sid) or "（未分類）"
+        # トラックに紐づかない稼働セッションは、/rename 済みならその名前を席名にする（10/15 S21 見直し③・
+        # 例「絵の作成」）。自動命名（onedrive-6f 等）や名無しは従来どおり「（未分類）」
+        lv = live.get(sid) or {}
+        p = proj(sid) or (lv.get("name") if lv.get("named") else "") or "（未分類）"
         t = tracks.setdefault(p, {"name": p, "sessions": []})
         t["sessions"].append({"sid": sid, "s": (labels.get(sid) or {}).get("s"),
                               "live": live.get(sid)})
