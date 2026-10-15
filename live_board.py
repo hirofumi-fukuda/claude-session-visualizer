@@ -470,20 +470,32 @@ def _scan_last_human(chunk: str):
     return None
 
 
-def _peek_model(transcript: Path, tail_bytes=65536):
+def _peek_model(transcript: Path, tail_bytes=None):
     """末尾だけ読んで最後の assistant レコードの model を短縮形で返す（委託のengine表記と対）。
 
     /model で途中切替されるためヘッダではなく末尾が正。先頭ピーク(_peek)と対称の軽量読み。
     例: claude-fable-5 → fable-5 / claude-haiku-4-5-20251001 → haiku-4-5
+    末尾 64KB に assistant 行が無い（巨大な tool_result 1行の直後など）と「モデル不明」になるので、
+    _peek_last_human と同じく 64KB → 1MB → 8MB と広げて探す（S21・オフィスの席が一時的に赤くなった件）。
     """
     try:
-        with open(transcript, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - tail_bytes))
-            chunk = f.read().decode("utf-8", errors="replace")
+        size = transcript.stat().st_size
     except OSError:
         return ""
+    for tb in ((tail_bytes,) if tail_bytes else _LAST_HUMAN_WINDOWS):
+        try:
+            with open(transcript, "rb") as f:
+                f.seek(max(0, size - tb))
+                chunk = f.read().decode("utf-8", errors="replace")
+        except OSError:
+            return ""
+        model = _scan_model(chunk)
+        if model or tb >= size:
+            return model
+    return ""
+
+
+def _scan_model(chunk: str) -> str:
     for line in reversed(chunk.splitlines()):
         if '"model"' not in line:
             continue
