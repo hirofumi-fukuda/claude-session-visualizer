@@ -157,6 +157,20 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
                                 "live": False, "cur": None})
     order = sorted(tracks.values(), key=lambda t: (not t["live"], t["name"]))
 
+    # 止まっているトラックも空席で出す（10/15 ふくちゃん）: cfg.office.teams に載っている名前のうち
+    # 時間幅内にセッションが無いものを sessions=[] の席として足す（島わけで席が固定され、空席＝止まって
+    # いるトラックが見える）。既定 on・office.show_idle_tracks=false で従来どおり稼働分だけ。
+    office_cfg = cfg.get("office") or {}
+    if office_cfg.get("show_idle_tracks", True):
+        have = {_norm(t["name"]) for t in order} | {_norm(hub_disp)}
+        for members in (office_cfg.get("teams") or {}).values():
+            for m in members or []:
+                if _norm(m) in have:
+                    continue
+                have.add(_norm(m))
+                order.append({"name": m, "sessions": [], "occupied_by": [], "live": False,
+                              "cur": None, "dormant": True})
+
     # 人間の位置＝稼働セッションのうち「人間の最終発話」が最新の1件の席の横（S21・ハブ案）。
     # 複数ウィンドウで同時に打っていても最新1件で割り切る。注意の所在の指標なので、話しかけて
     # いないのに busy な席＝勝手に進んでいるエージェントが浮き上がる。表示名は cfg.office.human。
@@ -279,8 +293,8 @@ var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
 var unreadBy={}; D.edges.forEach(function(e){if(e.ok&&!e.removed&&e.read===false)unreadBy[e.to]=(unreadBy[e.to]||0)+1;});
 function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
  var st='empty'; if(live){st=t.occupied_by.some(function(s){return s.live.status==='perm';})?'perm':t.occupied_by.some(function(s){return s.live.status==='busy';})?'busy':'idle';}
- var g='<g class="desk">';
- var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):'空席（稼働セッションなし）')+'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' ');
+ var g='<g class="desk"'+(t.dormant?' opacity="0.5"':'')+'>';
+ var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
  g+='<title>'+esc(tip)+'</title>';
  if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});}
  else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="#3a3e58"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="#2a2d44"/>';}
@@ -298,7 +312,7 @@ if(D.islands&&D.islands.length){
  // 同じセルに複数の島が来たら縦に積む。セルの幅・高さは中の島の最大で決める＝重ならない。
  var PX=166,PY=135,PAD=22,TITLE=26,G=48,M=30, SLOT={r:[2,1],l:[0,1],t:[1,0],b:[1,2],tr:[2,0],tl:[0,0],br:[2,2],bl:[0,2]}, ORDER=['r','l','t','b','tr','tl','br','bl'];
  var cells={}; for(var cx0=0;cx0<3;cx0++)for(var cy0=0;cy0<3;cy0++)cells[cx0+','+cy0]=[];
- D.islands.forEach(function(isl,i){var sl=SLOT[isl.slot]||SLOT[ORDER[i%ORDER.length]];var m=isl.tracks.length,cols=Math.min(m,Math.ceil(Math.sqrt(m))),rows=Math.ceil(m/cols);
+ D.islands.forEach(function(isl,i){var sl=SLOT[isl.slot]||SLOT[ORDER[i%ORDER.length]];var m=isl.tracks.length,cols=Math.min(m,Math.max(Math.ceil(Math.sqrt(m)),Math.ceil(m/2))),rows=Math.ceil(m/cols);
   isl.cols=cols;isl.rows=rows;isl.w=(cols-1)*PX+120+PAD*2+30;isl.h=rows*PY-11+PAD*2+TITLE;cells[sl[0]+','+sl[1]].push(isl);});
  var HUBW=260,HUBH=200, colW=[0,HUBW,0], rowH=[0,HUBH,0];
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var w=Math.max.apply(null,L.map(function(x){return x.w;})),h=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
