@@ -10,6 +10,10 @@ workspace_labels の表示名]} の最初の部屋が本業（ハブと島わけ
 （隠した部屋宛の矢印は右端のドアへ出る＝壁の外へ出る線）。
 🧲 ハブ寄せ（S22）: cfg.office.live_near_hub=true で稼働中の席を島の中でハブに近いマスから詰める（休眠席は残りに
 config の順）。ヘッダの 🧲 ボタンで切替（localStorage）。席は状態で動く＝同じトラックが毎回同じマスとは限らない。
+☕ 休憩室（S22）: cfg.office.lounge {name, slot（既定 tr）, break_after_min（既定 20）} で島の空きセルに休憩室（ソファ・コーヒー・
+自販機・観葉植物・窓＝時刻で昼夕夜・ホワイトボード＝在席/未読・印刷機コーナー＝作業中の席があれば用紙が出る）。最後の発話から
+break_after_min 分で人間のスプライトが休憩室へ歩く（話しかけると席へ戻る・戻る席の点線枠は残す）。各島の角に観葉植物（飾り）。
+小物の絵は assets/props/<名前>.png があればそれ・無ければコード内の矩形描画（受け口が先・絵は後から差し替え）。
 
 更新の仕組みは daily_view と同じ: 中身が変わった時だけ office.html を書き、ページは office_stamp.js を
 数秒おきに読んで差分があればリロードする（スクロール・選択は保たない＝配置図なので不要）。
@@ -37,6 +41,23 @@ def _fmt_local(ts_iso: str) -> str:
 
 SPRITE_DIR = Path(__file__).resolve().parent.parent / "assets" / "sprites"
 SPRITE_NAMES = ("human", "agent", "agent-opus", "agent-sonnet", "agent-haiku", "agent-fable")
+PROPS_DIR = Path(__file__).resolve().parent.parent / "assets" / "props"
+PROP_NAMES = ("sofa", "table", "plant", "coffee", "vending", "printer")  # 休憩室の小物（S22）。表示箱の大きさは assets/props/README.md
+
+
+def load_props(props_dir: Path = PROPS_DIR) -> dict:
+    """assets/props/<name>.png|svg（休憩室の小物）を data URI で返す。無い物はコード内の矩形描画。仕様=同フォルダ README。"""
+    out = {}
+    for name in PROP_NAMES:
+        for ext, mime in (("png", "image/png"), ("svg", "image/svg+xml")):
+            f = props_dir / f"{name}.{ext}"
+            if f.exists():
+                try:
+                    out[name] = f"data:{mime};base64," + base64.b64encode(f.read_bytes()).decode()
+                except OSError:
+                    pass
+                break
+    return out
 
 
 def load_sprites(sprite_dir: Path = SPRITE_DIR) -> dict:
@@ -74,6 +95,20 @@ def _tenants(cfg: dict):
             idx[str(k).casefold()] = name
     names = list(tenants)
     return {"names": names, "main": names[0], "other": office.get("other_tenant", "その他"), "idx": idx}
+
+
+def _lounge(cfg: dict):
+    """cfg.office.lounge（dict か true）→ {name, slot, break_after_min}。無ければ None＝休憩室なし（S22）。"""
+    lg = (cfg.get("office") or {}).get("lounge")
+    if not lg:
+        return None
+    if not isinstance(lg, dict):
+        lg = {}
+    try:
+        mins = int(lg.get("break_after_min", 20))
+    except (TypeError, ValueError):
+        mins = 20
+    return {"name": str(lg.get("name") or "☕ 休憩室"), "slot": str(lg.get("slot") or "tr"), "break_after_min": max(1, mins)}
 
 
 def build_islands(order, cfg: dict) -> list:
@@ -271,6 +306,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "sprite_track_themes": (cfg.get("office") or {}).get("sprite_track_themes") or {},  # トラック名→テーマ名（席ごとの別テーマ・例: 業務ハブだけ ninja）
             "islands": islands, "rooms": rooms,
             "live_near_hub": bool((cfg.get("office") or {}).get("live_near_hub", False)),  # 🧲 稼働席をハブ側に詰める既定（S22）
+            "lounge": _lounge(cfg), "props": load_props(),  # ☕ 休憩室（S22・無ければ None）と小物の絵（assets/props/）
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
             "window_hours": (cfg.get("office") or {}).get("window_hours", 48)}
@@ -311,6 +347,9 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 @keyframes type{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}} .typing{animation:type .5s steps(2) infinite}
 @keyframes alert{50%{opacity:.35}} .perm{animation:alert .8s ease-in-out infinite}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}} .human{animation:bob 1.6s ease-in-out infinite}
+@keyframes steam{0%{opacity:.8;transform:translateY(0)}100%{opacity:0;transform:translateY(-12px)}} .steam{animation:steam 1.8s ease-out infinite;transform-box:fill-box} .steam.s2{animation-delay:.7s}
+@keyframes paper{0%{transform:translateX(-26px);opacity:0}25%{opacity:1}100%{transform:translateX(14px);opacity:0}} .paper{animation:paper 2.2s linear infinite;transform-box:fill-box}
+@keyframes wink{0%,100%{opacity:1}50%{opacity:.25}} .vend{animation:wink 2.4s ease-in-out infinite}
 .empty{padding:30px;color:var(--muted)}
 footer{flex:none;padding:6px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
 """
@@ -323,8 +362,8 @@ PAGE_JS = r"""
 var root=document.documentElement, btn=document.getElementById('tgl');
 function lab(){btn.textContent=root.dataset.theme==='light'?'☾ ダーク':'☀ ライト';} lab();
 btn.onclick=function(){root.dataset.theme=root.dataset.theme==='light'?'dark':'light';try{localStorage.setItem('csv-theme',root.dataset.theme);}catch(e){} lab();};
-var clk=document.getElementById('clock'), WD='日月火水木金土';
-function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
+var clk=document.getElementById('clock'), WD='日月火水木金土', skyFn=null;
+function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());if(skyFn)skyFn(d);}
 tick(); setInterval(tick,1000);
 window.__officeStamp=function(s){if(s&&s!==STAMP)location.reload();};
 setInterval(function(){var sc=document.createElement('script');sc.src='office_stamp.js?t='+Date.now();sc.onload=sc.onerror=function(){sc.remove();};document.head.appendChild(sc);},POLL_MS);
@@ -379,7 +418,7 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
  var un=unreadBy[t.name]||0;
  if(un)g+='<rect x="'+(x+w/2-30)+'" y="'+(y-14)+'" width="30" height="14" fill="#f5c542"/><text x="'+(x+w/2-15)+'" y="'+(y-3)+'" text-anchor="middle" font-size="11" fill="#222">📨'+un+'</text>';
  return g+'</g>';}
-var pos={}, floors='', walls='', door={}, trackRoom={}, hubVisible=true;
+var pos={}, floors='', walls='', door={}, trackRoom={}, hubVisible=true, LOUNGE=null, WIN=null;
 var ROOMS=D.rooms||[];
 // ---------- ビル＝テナント（部屋・S22）。?ws=〈部屋名の一部〉が最優先・無ければ localStorage（ヘッダのボタンで保存）・既定=全館 ----------
 var wsSel=''; try{wsSel=localStorage.getItem('csv-office-ws')||'';}catch(e){}
@@ -404,6 +443,35 @@ var byName={}; D.tracks.forEach(function(t){byName[t.name]=t;}); byName[HUB]=D.h
 function roomCount(r){var ts=roomTracks(r),live=0;ts.forEach(function(n){var t=byName[n];if(t)live+=(t.occupied_by||[]).length;});return ts.length+'席・'+live+'人';}
 var PX=166,PY=135,PAD=22,TITLE=26,G=48,M=24,RP=18,RT=36,RG=44;
 var ISL_COL=['#f5c542','#39d353','#5ad1e6','#e66fd1','#f97316','#a78bfa','#94a3b8','#22c55e'];
+// ---------- ☕ 休憩室と小物（S22）。assets/props/<名前>.png があれば絵・無ければ矩形で仮描き（箱の大きさは README） ----------
+var PR=D.props||{};
+function R(x,y,w,h,f,ex){return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="'+f+'"'+(ex||'')+'/>';}
+function prop(n,x,y,w,h){return PR[n]?'<image href="'+PR[n]+'" x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"/>':null;}
+function plant(ox,oy,k){k=k||1;var im=prop('plant',ox,oy,36*k,70*k);if(im)return im;var s='';[[6,46,24,24,'#c2410c'],[4,44,28,6,'#ea580c'],[16,20,4,28,'#166534'],[2,24,14,10,'#22c55e'],[20,14,16,10,'#16a34a'],[6,8,12,10,'#4ade80'],[18,30,12,8,'#22c55e']].forEach(function(p){s+=R(ox+p[0]*k,oy+p[1]*k,p[2]*k,p[3]*k,p[4]);});return s;}
+function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;function fits(ox,iw){return ox+iw<=right;}
+ s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" fill="url(#carpet)" stroke="'+col+'" stroke-opacity="0.5" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+col+'">'+esc(name)+'</text>';
+ // 壁側: 🪟 窓（空は skyFn が時刻で塗る）・📋 ホワイトボード（在席/未読＝ヘッダのタイルと同じ数字）
+ var wx=x+24,wy=y+34; if(fits(wx,128)){WIN={x:wx+6,y:wy+6,w:108,h:58};
+  s+=R(wx,wy,120,70,'#cbd5e1')+'<rect id="winsky" x="'+(wx+6)+'" y="'+(wy+6)+'" width="108" height="58" fill="#7dd3fc"/><g id="winstars" opacity="0">'+R(wx+20,wy+14,3,3,'#fff')+R(wx+50,wy+22,2,2,'#fff')+R(wx+90,wy+12,3,3,'#fff')+R(wx+70,wy+40,2,2,'#fff')+'</g><circle id="winsun" cx="'+(wx+40)+'" cy="'+(wy+26)+'" r="9" fill="#fde047"/>'+R(wx+58,wy+6,4,58,'#cbd5e1')+R(wx+6,wy+33,108,4,'#cbd5e1')+R(wx-4,wy+70,128,6,'#94a3b8');}
+ var bx=x+170,by=y+34; if(fits(bx,220)){var c=D.counts,d=new Date(),F=' font-family="Segoe Print,Yu Kyokasho N,UD Digi Kyokasho N-R,cursive" font-size="12"';
+  s+=R(bx,by,220,80,'#e5e7eb',' stroke="#9ca3af" stroke-width="2"')+R(bx+4,by+4,212,66,'#fff')+R(bx,by+80,220,5,'#9ca3af')+R(bx+8,by+8,6,6,'#ef4444')+R(bx+206,by+8,6,6,'#3b82f6');
+  s+='<text x="'+(bx+14)+'" y="'+(by+26)+'"'+F+' fill="#1d4ed8">'+(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'）</text>';
+  s+='<text x="'+(bx+14)+'" y="'+(by+44)+'"'+F+' fill="#111">在席 '+c.live+'人 ／ 未読 <tspan fill="'+(c.unread?'#dc2626':'#111')+'">'+c.unread+'</tspan>通</text>';
+  s+='<text x="'+(bx+14)+'" y="'+(by+62)+'"'+F+' fill="#111">📨 '+c.edges+'通 /'+D.window_hours+'h'+(c.failed?' ／ <tspan fill="#dc2626">不達 '+c.failed+'</tspan>':'')+'</text>';}
+ // 床側（左→右）: 🛋️ ソファ・テーブル・🪴 観葉植物・☕ コーヒー（右隣が人の立ち位置）・🥤 自販機・🖨️ 印刷機。幅が足りなければ右から落とす
+ var ox=x+24,im; if(fits(ox,120)){im=prop('sofa',ox,fy-56,120,56);s+=im||(R(ox,fy-52,120,24,'#3b5bdb',' rx="6"')+R(ox,fy-28,120,20,'#4c6ef5')+R(ox,fy-42,14,34,'#364fc7')+R(ox+106,fy-42,14,34,'#364fc7')+R(ox+59,fy-28,2,20,'#364fc7')+R(ox+10,fy-8,8,8,'#222')+R(ox+102,fy-8,8,8,'#222'));}
+ ox=x+156; if(fits(ox,56)){im=prop('table',ox,fy-50,56,50);s+=im||(R(ox,fy-36,56,10,'#8b5a2b')+R(ox,fy-26,56,4,'#6b4423')+R(ox+6,fy-22,6,22,'#5a3a1a')+R(ox+44,fy-22,6,22,'#5a3a1a')+R(ox+14,fy-46,10,10,'#fff')+R(ox+15,fy-45,8,2,'#5a3a1a')+R(ox+32,fy-46,10,10,'#fff')+R(ox+33,fy-45,8,2,'#5a3a1a')+R(ox+42,fy-43,3,4,'#fff'));}
+ ox=x+222; if(fits(ox,36))s+=plant(ox,fy-70,1);
+ ox=x+270; if(fits(ox,90)){im=prop('coffee',ox,fy-80,90,80);s+=im||(R(ox,fy-26,90,26,'#6b4423')+R(ox,fy-30,90,6,'#8b5a2b')+R(ox+20,fy-74,44,44,'#2d2d2d',' rx="3"')+R(ox+20,fy-78,44,6,'#444')+R(ox+24,fy-68,36,10,'#111')+R(ox+28,fy-65,4,4,'#39d353',' class="cur"')+R(ox+38,fy-52,8,6,'#555')+R(ox+36,fy-42,12,10,'#fff'));
+  s+=R(ox+38,fy-48,3,5,'#ddd',' class="steam"')+R(ox+44,fy-48,3,5,'#ddd',' class="steam s2"'); LOUNGE={spot:[ox+96,fy-48],name:name};}
+ ox=x+410; if(fits(ox,60)){im=prop('vending',ox,fy-104,60,104);if(im)s+=im;else{s+=R(ox,fy-104,60,100,'#dc2626',' rx="3"')+R(ox,fy-104,60,8,'#991b1b')+R(ox+6,fy-94,36,50,'#1e293b');
+  [[0,'#f59e0b','#3b82f6','#22c55e'],[16,'#22c55e','#f59e0b','#e66fd1'],[32,'#3b82f6','#ef4444','#f59e0b']].forEach(function(r){for(var i=0;i<3;i++)s+=R(ox+10+i*12,fy-88+r[0],8,12,r[i+1]);});
+  s+=R(ox+46,fy-92,10,40,'#111')+R(ox+48,fy-88,6,4,'#5ad1e6',' class="vend"')+R(ox+6,fy-34,36,14,'#111')+R(ox+4,fy-4,8,4,'#222')+R(ox+48,fy-4,8,4,'#222');}}
+ ox=x+480; if(fits(ox,176)){var busy=[D.hub].concat(D.tracks).some(function(t){return (t.occupied_by||[]).some(function(q){return q.live&&q.live.status==='busy';});});
+  im=prop('printer',ox,fy-100,176,100);s+=im||(R(ox+6,fy-16,128,14,'#4b5563')+R(ox+10,fy-2,10,4,'#222')+R(ox+120,fy-2,10,4,'#222')+R(ox,fy-76,140,60,'#9ca3af',' rx="4"')+R(ox,fy-80,140,6,'#d1d5db')+R(ox+10,fy-92,60,14,'#6b7280')+R(ox+12,fy-96,56,4,'#fff')+R(ox+100,fy-94,34,22,'#111',' rx="2"')+R(ox+103,fy-91,28,16,busy?'#39d353':'#4aa3ff')+R(ox+140,fy-46,36,8,'#6b7280')+R(ox+10,fy-60,120,4,'#6b7280'));
+  if(busy)s+=R(ox+146,fy-54,24,6,'#fff',' class="paper"');  // 作業中の席があれば用紙が出続ける
+  s+='<text x="'+(ox+70)+'" y="'+(fy+14)+'" text-anchor="middle" font-size="10" fill="#cbd5e1" fill-opacity=".8">🖨️ 印刷機'+(busy?'（稼働中）':'')+'</text>';}
+ return s;}
 // 島レイアウト: 3×3 のセル。中央＝ハブ。島は config の順に r,l,t,b,tr,tl,br,bl のセルへ（slot 指定があれば優先）。
 // 同じセルに複数の島が来たら縦に積む。セルの幅・高さは中の島の最大で決める＝重ならない。原点 (OX,OY) からの相対で組む
 function layoutIslands(islands,OX,OY){
@@ -411,15 +479,18 @@ function layoutIslands(islands,OX,OY){
  var cells={}; for(var cx0=0;cx0<3;cx0++)for(var cy0=0;cy0<3;cy0++)cells[cx0+','+cy0]=[];
  islands.forEach(function(isl,i){var sl=SLOT[isl.slot]||SLOT[ORDER[i%ORDER.length]];var m=isl.tracks.length,cols=Math.min(m,Math.max(Math.ceil(Math.sqrt(m)),Math.ceil(m/2))),rows=Math.ceil(m/cols);
   isl.cols=cols;isl.rows=rows;isl.w=(cols-1)*PX+120+PAD*2+30;isl.h=rows*PY-11+PAD*2+TITLE;cells[sl[0]+','+sl[1]].push(isl);});
+ var LG=D.lounge?{lounge:true,name:D.lounge.name,w:420,h:230}:null; if(LG){var ls=SLOT[D.lounge.slot]||SLOT.tr;cells[ls[0]+','+ls[1]].push(LG);}  // ☕ 休憩室＝島の空きセル（既定 tr）。島と同居なら縦に積む
  var HUBW=260,HUBH=200, colW=[0,HUBW,0], rowH=[0,HUBH,0];
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var w=Math.max.apply(null,L.map(function(x){return x.w;})),h=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
   colW[c[0]]=Math.max(colW[c[0]],w);rowH[c[1]]=Math.max(rowH[c[1]],h);});
  var colX=[OX,OX+colW[0]+(colW[0]?G:0)], rowY=[OY,OY+rowH[0]+(rowH[0]?G:0)]; colX[2]=colX[1]+colW[1]+G; rowY[2]=rowY[1]+rowH[1]+G;
  var hx=colX[1]+colW[1]/2, hy=rowY[1]+rowH[1]/2+30;  // ハブの中心（🧲 の距離の基準）
+ if(LG)Object.keys(cells).forEach(function(k){var L=cells[k];if(L.length===1&&L[0]===LG){var c=k.split(',').map(Number);LG.w=colW[c[0]];LG.h=rowH[c[1]];}});  // セルを独占するなら目一杯に広げる
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var tot=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
   var y=c[1]===0?rowY[0]+rowH[0]-tot:c[1]===2?rowY[2]:rowY[1]+(rowH[1]-tot)/2;
-  L.forEach(function(isl){var x=c[0]===0?colX[0]+colW[0]-isl.w:c[0]===2?colX[2]:colX[1]+(colW[1]-isl.w)/2;var col=ISL_COL[islands.indexOf(isl)%ISL_COL.length];
+  L.forEach(function(isl){var x=c[0]===0?colX[0]+colW[0]-isl.w:c[0]===2?colX[2]:colX[1]+(colW[1]-isl.w)/2;if(isl.lounge){floors+=drawLounge(x,y,isl.w,isl.h,isl.name);y+=isl.h+G;return;}var col=ISL_COL[islands.indexOf(isl)%ISL_COL.length];
    floors+='<rect x="'+x+'" y="'+y+'" width="'+isl.w+'" height="'+isl.h+'" rx="12" fill="'+col+'" fill-opacity="0.10" stroke="'+col+'" stroke-opacity="0.45" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+col+'">'+esc(isl.name)+'</text><text x="'+(x+isl.w-10)+'" y="'+(y+18)+'" text-anchor="end" font-size="11" fill="'+col+'" fill-opacity="0.8">'+isl.tracks.length+'席</text>';
+   floors+=plant(x+isl.w-36,y+isl.h-55,0.7);  // 🪴 島の角の観葉植物（飾り・配置計算には影響しない）
    var cellsOf=[];for(var k=0;k<isl.tracks.length;k++){var cc=k%isl.cols,rr=Math.floor(k/isl.cols);cellsOf.push([Math.round(x+PAD+60+cc*PX),Math.round(y+PAD+TITLE+62+rr*PY)]);}
    var names=isl.tracks.slice();if(MAGNET){cellsOf.sort(function(a,b){return Math.hypot(a[0]-hx,a[1]-hy)-Math.hypot(b[0]-hx,b[1]-hy);});names.sort(function(a,b){return liveRank(a)-liveRank(b);});}
    names.forEach(function(name,k){pos[name]=cellsOf[k];});
@@ -451,7 +522,7 @@ if(ROOMS.length){hubVisible=false;
  D.tracks.forEach(function(t,i){var a=-Math.PI/2+i*2*Math.PI/Math.max(n,1);pos[t.name]=[Math.round(CX+RX*Math.cos(a)),Math.round(CY+RY*Math.sin(a))];});
 }
 if(hubVisible)pos[HUB]=[CX,CY];
-var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="#2a2d3f"/><rect width="20" height="20" fill="#2f3348"/><rect x="20" y="20" width="20" height="20" fill="#2f3348"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>'+walls+floors;
+var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="#2a2d3f"/><rect width="20" height="20" fill="#2f3348"/><rect x="20" y="20" width="20" height="20" fill="#2f3348"/></pattern><pattern id="carpet" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="16" height="16" fill="#3d3330"/><rect x="2" y="2" width="4" height="4" fill="#4a3f3a"/><rect x="10" y="10" width="4" height="4" fill="#4a3f3a"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>'+walls+floors;
 var ts0=D.edges.length?Date.parse(D.edges[0].ts):0, ts1=D.edges.length?Date.parse(D.edges[D.edges.length-1].ts):1;
 D.edges.forEach(function(e,i){var A=pos[e.frm]||doorOf(e.frm),B=pos[e.to]||doorOf(e.to);if(!A||!B||(!pos[e.frm]&&!pos[e.to]))return;var x1=A[0],y1=A[1]+20,x2=B[0],y2=B[1]+20;
  var mx=(x1+x2)/2,my=(y1+y2)/2,dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ox=-dy/L*28,oy=dx/L*28;
@@ -466,20 +537,30 @@ var HS=["....HHHH....","...HHHHHH...","...HSSSSH...","...SSSSSS...","...SESSES..
 var HP={H:'#111',S:'#f2c9a0',E:'#222',G:'#2e9e6b',K:'#444',B:'#222'};
 function hsprite(x,y){if(SP.human)return img(SP.human,x,y,null);var s='',sc=3;HS.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+HP[c]+'"/>';});});return s;}
 function hpos(track){var p=pos[track];if(p){var w=track===HUB?190:120;return [p[0]+w/2+6,p[1]-50];}var d=doorOf(track);return d?[d[0]-190,d[1]-50]:null;}  // 隠した部屋ならドアの前
-if(D.human&&hpos(D.human.track)){var hp=hpos(D.human.track),prev=null;try{prev=JSON.parse(localStorage.getItem('csv-human-at')||'null');}catch(e){}
- var from=(prev&&prev.track!==D.human.track)?hpos(prev.track):null;
- var mins=Math.max(0,Math.round((Date.now()-D.human.ts*1000)/60000)), ago=mins<1?'いま':mins<60?mins+'分前':Math.floor(mins/60)+'時間'+(mins%60)+'分前';
- var tip=D.human.name+'：最後に話しかけた席＝'+D.human.track+(D.human.s?' S'+D.human.s:'')+'（'+D.human.t+'・'+ago+'）\n「'+D.human.text+'」';
+// ☕ 休憩（S22）: 最後の発話から break_after_min 分で人間は休憩室へ（話しかけると席へ戻る・戻る席の点線枠は残す）。しきい値をまたぐ時刻に自前で再読込
+var BREAK_MIN=(D.lounge&&D.lounge.break_after_min)||20, mins=D.human?Math.max(0,Math.round((Date.now()-D.human.ts*1000)/60000)):0, onBreak=!!(D.human&&LOUNGE&&mins>=BREAK_MIN);
+var hp=D.human?(onBreak?LOUNGE.spot:hpos(D.human.track)):null;
+if(hp){var prev=null;try{prev=JSON.parse(localStorage.getItem('csv-human-at')||'null');}catch(e){}
+ var from=(prev&&(prev.track!==D.human.track||!!prev.brk!==onBreak))?(prev.brk&&LOUNGE?LOUNGE.spot:hpos(prev.track)):null;
+ var ago=mins<1?'いま':mins<60?mins+'分前':Math.floor(mins/60)+'時間'+(mins%60)+'分前';
+ var tip=D.human.name+(onBreak?'：☕ 休憩中（最後に話しかけてから '+ago+'）\n戻る席＝':'：最後に話しかけた席＝')+D.human.track+(D.human.s?' S'+D.human.s:'')+'（'+D.human.t+'・'+ago+'）\n「'+D.human.text+'」';
  var dp=pos[D.human.track],dw=D.human.track===HUB?190:120,dh=D.human.track===HUB?52:40;
  if(dp)svg+='<rect x="'+(dp[0]-dw/2-6)+'" y="'+(dp[1]-70)+'" width="'+(dw+12)+'" height="'+(dh+98)+'" rx="8" fill="#2e9e6b" fill-opacity="0.10" stroke="#2e9e6b" stroke-dasharray="6 4" stroke-width="2"/>';
- var hname=D.human.name+(dp?'':'→'+(trackRoom[D.human.track]||'別の部屋'));  // 隠した部屋にいる時は部屋名を添える
+ var hname=onBreak?D.human.name+' 休憩中':D.human.name+(dp?'':'→'+(trackRoom[D.human.track]||'別の部屋'));  // 隠した部屋にいる時は部屋名を添える
  svg+='<g class="human"><title>'+esc(tip)+'</title>'+hsprite(hp[0],hp[1])+
-  '<rect x="'+(hp[0]-6)+'" y="'+(hp[1]-22)+'" width="'+(hname.length*11+ago.length*7+30)+'" height="17" rx="3" fill="#fff" stroke="#333"/><text x="'+(hp[0]-2)+'" y="'+(hp[1]-9)+'" font-size="11" fill="#222">👤 '+esc(hname)+' '+esc(ago)+'</text>'+
+  '<rect x="'+(hp[0]-6)+'" y="'+(hp[1]-22)+'" width="'+(hname.length*11+ago.length*7+30)+'" height="17" rx="3" fill="#fff" stroke="#333"/><text x="'+(hp[0]-2)+'" y="'+(hp[1]-9)+'" font-size="11" fill="#222">'+(onBreak?'☕ ':'👤 ')+esc(hname)+' '+esc(ago)+'</text>'+
   (from?'<animateTransform attributeName="transform" type="translate" from="'+(from[0]-hp[0])+' '+(from[1]-hp[1])+'" to="0 0" dur="1.4s" fill="freeze" calcMode="spline" keySplines="0.4 0 0.2 1"/>':'')+'</g>';
- try{localStorage.setItem('csv-human-at',JSON.stringify({track:D.human.track}));}catch(e){}}
+ try{localStorage.setItem('csv-human-at',JSON.stringify({track:D.human.track,brk:onBreak}));}catch(e){}
+ if(!onBreak&&LOUNGE){var left=BREAK_MIN*60000-(Date.now()-D.human.ts*1000);if(left>0)setTimeout(function(){location.reload();},Math.min(left+800,2e9));}}
 Object.keys(tints).forEach(function(id){svg+='<filter id="'+id+'" x="0" y="0" width="1" height="1"><feFlood flood-color="'+tints[id]+'" result="c"/><feComposite in="c" in2="SourceAlpha" operator="in" result="m"/><feBlend in="m" in2="SourceGraphic" mode="multiply"/></filter>';});
 svg+='</svg>';
 document.getElementById('scene').innerHTML=svg;
+// 🪟 休憩室の窓: 時刻で昼（6-16時）・夕（17-18時）・夜。毎秒の tick から呼ばれ、時が変わった時だけ描き直す
+skyFn=(function(){var last=-1;return function(d){var h=d.getHours();if(h===last||!WIN)return;last=h;var sky=document.getElementById('winsky'),sun=document.getElementById('winsun'),st=document.getElementById('winstars');if(!sky||!sun||!st)return;
+ var day=h>=6&&h<17,eve=h>=17&&h<19,f=day?(h-6)/10:eve?(h-17):0.78;
+ sky.setAttribute('fill',day?'#7dd3fc':eve?'#fb923c':'#0f172a');sun.setAttribute('fill',day?'#fde047':eve?'#fb7185':'#e2e8f0');
+ sun.setAttribute('cx',Math.round(WIN.x+14+(WIN.w-28)*f));sun.setAttribute('cy',Math.round(WIN.y+(day?12+Math.abs(f-0.5)*2*22:eve?34+f*8:16)));st.setAttribute('opacity',(day||eve)?'0':'1');};})();
+skyFn(new Date());
 var log=document.getElementById('log');
 // 並び順: 古い→新しい（最新が下・チャット式）／新しい→古い（最新が上）。localStorage で記憶。日付見出しは順に合わせて組み直す
 var ord=document.getElementById('ord'), desc=false; try{desc=localStorage.getItem('csv-log-desc')==='1';}catch(e){}
