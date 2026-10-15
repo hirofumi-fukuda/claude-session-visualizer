@@ -243,14 +243,13 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
         return tc["other"]
 
     def seat(sid):
-        """席名: 案件名 → /rename 済みの名前（10/15 S21 見直し③・例「絵の作成」）→ 未分類。
+        """席名: 案件名 → 未分類。/rename 名（nameSource=user）は mapping.py ⓪ で最優先に案件名へ正規化済み
+        （S23・相棒セッション「絵の作成」は名前そのままが案件名になる）なのでここでは見ない。
         本業以外の部屋の未分類席はワークスペース名で出す（部屋をまたいで「（未分類）」1席に溶けないため）。"""
         p = proj(sid)
         if p:
             return p
         lv = live.get(sid) or {}
-        if lv.get("named") and lv.get("name"):
-            return lv["name"]
         if tc and tenant_of(sid) != tc["main"]:
             w = (labels.get(sid) or {}).get("ws") or lv.get("ws")
             if w:

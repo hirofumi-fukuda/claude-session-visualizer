@@ -1,6 +1,11 @@
 """セッション→案件マッピング（採番規約は config に外出し・汎用コア）。
 
 判定の優先順位:
+  ⓪ /rename 名（稼働台帳 sessions/*.json の name・nameSource=user のみ＝自動命名は無視）＝最優先
+     （S23・2026-10-16。それまでは案件名＞/rename 名で「/rename しても席が変わらない」）。
+     `〈トラック名〉S〈n〉` は末尾の S を剥がし、別名の**完全一致だけ**で案件名に正規化する
+     （部分一致はしない＝略称 rename が広い案件〔TOPPAN 等〕に吸われないため）。当たらなければ
+     名前そのまま＝相棒席（例「絵の作成」）。S が無ければ番号だけ ① の同一案件ヒットから拾う
   ① kickoff_patterns（採番合言葉）を ai-title → 冒頭発話プール → last-prompt に照合
   ② title_hints（タイトル/冒頭発話のキーワード含有 → 案件。業務ハブ等の非採番セッション用）
   ③ workspace_hints（専用リポジトリのワークスペース → 案件）
@@ -26,6 +31,9 @@ def load_config(repo_root: Path) -> dict:
 
 
 class ProjectMapper:
+    # /rename 名の「〈トラック名〉S〈n〉」（空白の有無は問わない・例「GEMiNX本体開発S15」「本体開発 S12」）
+    RENAME_RX = re.compile(r"^\s*(?P<project>.+?)\s*[SsＳ]\s*(?P<n>\d{1,3})\s*$")
+
     def __init__(self, cfg: dict):
         self.patterns = [re.compile(p, re.IGNORECASE) for p in cfg.get("kickoff_patterns", [])]
         self.alias_to_canonical = {}
@@ -53,6 +61,16 @@ class ProjectMapper:
             return self.alias_to_canonical[(ending or contained)[0]]
         return raw.strip()
 
+    def map_user_name(self, name: str):
+        """/rename 名 → (案件名, S番号|None)。別名は完全一致だけ・当たらなければ名前そのまま。空なら None。"""
+        name = (name or "").strip()
+        if not name:
+            return None
+        m = self.RENAME_RX.match(name)
+        raw, n = (m.group("project"), int(m.group("n"))) if m else (name, None)
+        raw = raw.strip()
+        return self.alias_to_canonical.get(self._norm(raw), raw), n
+
     def _try_match(self, text: str):
         for pat in self.patterns:
             m = pat.search(text)
@@ -76,6 +94,14 @@ class ProjectMapper:
         #   ・番号付きの後に同一案件の番号付きが来れば新しい方を採用
         #     （「S8 開始」で始めて台帳と食い違いに気づき「S18 開始」と打ち直す訂正採番・S18）
         project, session_no, match_source = None, None, None
+        # ⓪ /rename 名が最優先（S23）。番号まで付いていれば確定。無ければ番号だけ下の合言葉から拾う
+        hit = self.map_user_name(summary.get("user_name") or "")
+        if hit:
+            project, session_no, match_source = hit[0], hit[1], "user-rename"
+            if session_no is not None:
+                summary["project"], summary["session_no"] = project, session_no
+                summary["match_source"] = match_source
+                return summary
         for source, texts in candidates:
             for text in texts:
                 hit = self._try_match(text)
