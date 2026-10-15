@@ -17,6 +17,8 @@ break_after_min 分で人間のスプライトが休憩室へ歩く（話しか�
 🪑 hub_side（S22）: cfg.office.hub_side＝トラック名リスト。島に入れずハブの右隣に小机で並べる（同じ部屋・採番なしの運用型＝会議サポート等）。
 📱 Remote Control（S22）: 稼働台帳 sessions/<pid>.json に bridgeSessionId があれば RC オン＝席の右上に 📱（外出先から指示できる席・ハブ 10/15 発見）。
 🎨 配色（S22）: 図もページのテーマ（☀/☾・localStorage csv-theme＝他ページと共通）に追従。light＝明るいオフィス（白い壁・淡いタイル床・ベージュのカーペット）。オフィスは保存値が無ければ light・?theme=light|dark で一時上書き（保存しない・スクショ用）。
+🧾 ホワイトボード（S23・ハブ提案 10/15）: 休憩室の壁いっぱいに今日の daily の要点＝🔴 TOP 見出し3行・⏰ 次の時刻固定イベント・⏸ 返信待ち（件数と相手）・
+端に在席/未読/不達。中身は daily_view.load_board（機械的に取れる分だけ・新しい記録場所は作らない）。クリックで 📓 日誌。幅か高さが足りない時は S22 の小さい板。
 🎨 絵のテーマの優先順（S22）: sprite_track_themes（トラック名）＞ sprite_tenant_themes（部屋名）＞ sprite_theme（全体）。部屋単位が要るのは
 workspace_hints の無い ws（副業）で名無しトラックが出るとトラック名キーでは追いつかないため。
 
@@ -31,6 +33,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from .daily_view import load_board
 from .messages import hub_names
 from .nav import nav_html
 
@@ -125,6 +128,14 @@ def _lounge(cfg: dict):
     except (TypeError, ValueError):
         mins = 20
     return {"name": str(lg.get("name") or "☕ 休憩室"), "slot": str(lg.get("slot") or "tr"), "break_after_min": max(1, mins)}
+
+
+def _board(cfg: dict):
+    """🧾 休憩室のホワイトボードに書く今日の daily の要点（S23）。daily_view が無い／読めない時は None＝S22 の小さい板。"""
+    try:
+        return load_board(cfg)
+    except Exception:  # daily の書式ゆれで配置図全体を落とさない
+        return None
 
 
 def build_islands(order, cfg: dict) -> list:
@@ -329,6 +340,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "islands": islands, "rooms": rooms, "hub_side": hub_side,  # 🪑 ハブの右隣の小机（S22）
             "live_near_hub": bool((cfg.get("office") or {}).get("live_near_hub", False)),  # 🧲 稼働席をハブ側に詰める既定（S22）
             "lounge": _lounge(cfg), "props": load_props(),  # ☕ 休憩室（S22・無ければ None）と小物の絵（assets/props/）
+            "board": _board(cfg),  # 🧾 ホワイトボードの要点（S23・daily から）
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
             "window_hours": (cfg.get("office") or {}).get("window_hours", 48)}
@@ -479,16 +491,49 @@ var PR=D.props||{};
 function R(x,y,w,h,f,ex){return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="'+f+'"'+(ex||'')+'/>';}
 function prop(n,x,y,w,h){return PR[n]?'<image href="'+PR[n]+'" x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"/>':null;}
 function plant(ox,oy,k){k=k||1;var im=prop('plant',ox,oy,36*k,70*k);if(im)return im;var s='';[[6,46,24,24,'#c2410c'],[4,44,28,6,'#ea580c'],[16,20,4,28,'#166534'],[2,24,14,10,'#22c55e'],[20,14,16,10,'#16a34a'],[6,8,12,10,'#4ade80'],[18,30,12,8,'#22c55e']].forEach(function(p){s+=R(ox+p[0]*k,oy+p[1]*k,p[2]*k,p[3]*k,p[4]);});return s;}
+// 🧾 ホワイトボード（S23・ハブ提案 10/15）: 休憩室の壁いっぱいに今日の daily の要点＝🔴 TOP 見出し3行（未済→済の順）・⏰ 次の時刻固定イベント・⏸ 返信待ち・端に在席/未読/不達。
+// 中身は D.board（daily_view.load_board）。クリックで 📓 日誌。幅か高さが足りない（島と同居で h=230 等）時は S22 の小さい板（日付・在席/未読・通数）
+var BOARD=D.board||null, WBF=' font-family="Segoe Print,Yu Kyokasho N,UD Digi Kyokasho N-R,cursive"', WB={};
+function tw(s,fs){var w=0;Array.from(s).forEach(function(ch){var c=ch.codePointAt(0);w+=c>0xffff?fs*1.15:c>=0x2e80?fs:c>0xff?fs*0.8:fs*0.62;});return w;}  // 文字幅の見積り（CJK=1em・絵文字=1.15em・英数=0.62em）
+function fit(s,px,fs){if(tw(s,fs)<=px)return s;var o='',a=Array.from(s);for(var i=0;i<a.length;i++){if(tw(o+a[i]+'…',fs)>px)break;o+=a[i];}return o+'…';}
+function hm2m(t){var m=/^(\d{1,2}):(\d{2})$/.exec(t||'');return m?(+m[1])*60+(+m[2]):null;}
+// ⏰ の1行: 「いま 15:00〜17:00 出荷完了処理 ／ 次 17:00 DotB 注文連携（あと1時間20分） → 19:00 定時」。until＝次に描き直す時刻（分）
+function evLine(){if(!BOARD||!BOARD.events||!BOARD.events.length)return null;var d=new Date(),now=d.getHours()*60+d.getMinutes(),cur=null,nxt=[];
+ BOARD.events.forEach(function(e){var a=hm2m(e.hm),b=hm2m(e.to);if(a==null)return;if(a>now)nxt.push(e);else if(b!=null&&now<b)cur=e;});
+ function lab(e){return e.hm+(e.to?'〜'+e.to:'')+' '+e.label;}
+ var s='',until=null;if(cur){s+='いま '+lab(cur)+' ／ ';until=hm2m(cur.to);}
+ if(nxt.length){var m=hm2m(nxt[0].hm)-now;s+='次 '+lab(nxt[0])+'（あと'+(m>=60?Math.floor(m/60)+'時間':'')+((m%60||m<60)?(m%60)+'分':'')+'）'+(nxt[1]?' → '+lab(nxt[1]):'');until=until==null?hm2m(nxt[0].hm):Math.min(until,hm2m(nxt[0].hm));}
+ else s+=cur?'このあとの時刻固定はなし':'今日の時刻固定イベントは終了';
+ return {text:'⏰ '+s,until:until};}
+function whiteboard(bx,by,bw,bhMax){var c=D.counts,d=new Date(),date=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'）',s='';
+ function board(W,Hh){return R(bx,by,W,Hh,'#e5e7eb',' stroke="#9ca3af" stroke-width="2"')+R(bx+4,by+4,W-8,Hh-14,'#fff')+R(bx,by+Hh,W,5,'#9ca3af')+R(bx+8,by+8,6,6,'#ef4444')+R(bx+W-14,by+8,6,6,'#3b82f6');}
+ if(!BOARD||bw<320||bhMax<120){if(bw<220)return '';var F=WBF+' font-size="12"';  // S22 の小さい板
+  s+=board(220,80)+'<text x="'+(bx+14)+'" y="'+(by+26)+'"'+F+' fill="#1d4ed8">'+date+'</text>';
+  s+='<text x="'+(bx+14)+'" y="'+(by+44)+'"'+F+' fill="#111">在席 '+c.live+'人 ／ 未読 <tspan fill="'+(c.unread?'#dc2626':'#111')+'">'+c.unread+'</tspan>通</text>';
+  s+='<text x="'+(bx+14)+'" y="'+(by+62)+'"'+F+' fill="#111">📨 '+c.edges+'通 /'+D.window_hours+'h'+(c.failed?' ／ <tspan fill="#dc2626">不達 '+c.failed+'</tspan>':'')+'</text>';return s;}
+ var fs=14,LH=19,maxw=bw-28,lines=[];  // 板の字は机名より大きく（画面全体が縮むので）
+ if(BOARD.missing)lines.push({t:'📓 今日の日誌はまだ（業務ハブを起動すると作られる）',col:'#6b7280'});
+ else{var top=BOARD.top||[],pend=top.filter(function(t){return !t.done;}),done=top.filter(function(t){return t.done;});
+  pend.concat(done).slice(0,3).forEach(function(t){lines.push({t:(t.mark||'・')+' '+t.t,col:t.done?'#9ca3af':'#111',strike:t.done,tip:t.t});});
+  if(!top.length)lines.push({t:'（🔴 TOP の見出しなし）',col:'#9ca3af'});
+  var ev=evLine();if(ev)lines.push({t:ev.text,col:'#b45309',id:'wbev'});
+  var wt=BOARD.waiting;if(wt&&wt.n)lines.push({t:'⏸ 返信待ち '+wt.n+'件'+(wt.urgent?'（🔴'+wt.urgent+'）':'')+'：'+(wt.items||[]).join('・'),col:'#111',tip:'返信待ち（こちらボール外）\n'+(wt.items||[]).join('\n')});}
+ var Hh=Math.min(bhMax,44+lines.length*LH+10),y0=by+24;
+ s+='<a href="daily.html" target="_blank" rel="noopener" style="cursor:pointer"><title>📓 日誌を開く（daily.html）</title>'+board(bw,Hh);
+ s+='<text x="'+(bx+14)+'" y="'+y0+'"'+WBF+' font-size="15" font-weight="700" fill="#1d4ed8">'+date+' 今日</text>';
+ s+='<text x="'+(bx+bw-14)+'" y="'+y0+'" text-anchor="end"'+WBF+' font-size="13" fill="#111">在席 '+c.live+'人 ／ 未読 <tspan fill="'+(c.unread?'#dc2626':'#111')+'"'+(c.unread?' font-weight="700"':'')+'>'+c.unread+'</tspan>通 ／ 不達 <tspan fill="'+(c.failed?'#dc2626':'#111')+'"'+(c.failed?' font-weight="700"':'')+'>'+c.failed+'</tspan> ／ 📨 '+c.edges+'通/'+D.window_hours+'h</text>';
+ s+=R(bx+12,y0+6,bw-24,2,'#1d4ed8',' fill-opacity=".45"');
+ var y=y0+10+LH;lines.forEach(function(L){if(y>by+Hh-8)return;s+='<text'+(L.id?' id="'+L.id+'"':'')+' x="'+(bx+14)+'" y="'+y+'"'+WBF+' font-size="'+fs+'" fill="'+L.col+'"'+(L.strike?' text-decoration="line-through"':'')+'>'+(L.tip?'<title>'+esc(L.tip)+'</title>':'')+esc(fit(L.t,maxw,fs))+'</text>';y+=LH;});
+ s+='</a>';WB={maxw:maxw,fs:fs};
+ var ev0=evLine();if(ev0){setInterval(function(){var el=document.getElementById('wbev'),e=evLine();if(el&&e)el.textContent=fit(e.text,WB.maxw,WB.fs);},30000);  // 「あと n分」は30秒ごとに書き直す
+  if(ev0.until!=null){var left=(ev0.until-(d.getHours()*60+d.getMinutes()))*60000-d.getSeconds()*1000;if(left>0)setTimeout(function(){location.reload();},Math.min(left+1500,2e9));}}  // 次のイベント境界で描き直し
+ return s;}
 function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;function fits(ox,iw){return ox+iw<=right;}
  s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" fill="url(#carpet)" stroke="'+PAL.txt(col)+'" stroke-opacity="0.5" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(name)+'</text>';
- // 壁側: 🪟 窓（空は skyFn が時刻で塗る）・📋 ホワイトボード（在席/未読＝ヘッダのタイルと同じ数字）
+ // 壁側: 🪟 窓（空は skyFn が時刻で塗る）・🧾 ホワイトボード（S23: 今日の daily の要点・狭ければ S22 の小さい板）
  var wx=x+24,wy=y+34; if(fits(wx,128)){WIN={x:wx+6,y:wy+6,w:108,h:58};
   s+=R(wx,wy,120,70,'#cbd5e1')+'<rect id="winsky" x="'+(wx+6)+'" y="'+(wy+6)+'" width="108" height="58" fill="#7dd3fc"/><g id="winstars" opacity="0">'+R(wx+20,wy+14,3,3,'#fff')+R(wx+50,wy+22,2,2,'#fff')+R(wx+90,wy+12,3,3,'#fff')+R(wx+70,wy+40,2,2,'#fff')+'</g><circle id="winsun" cx="'+(wx+40)+'" cy="'+(wy+26)+'" r="9" fill="#fde047"/>'+R(wx+58,wy+6,4,58,'#cbd5e1')+R(wx+6,wy+33,108,4,'#cbd5e1')+R(wx-4,wy+70,128,6,'#94a3b8');}
- var bx=x+170,by=y+34; if(fits(bx,220)){var c=D.counts,d=new Date(),F=' font-family="Segoe Print,Yu Kyokasho N,UD Digi Kyokasho N-R,cursive" font-size="12"';
-  s+=R(bx,by,220,80,'#e5e7eb',' stroke="#9ca3af" stroke-width="2"')+R(bx+4,by+4,212,66,'#fff')+R(bx,by+80,220,5,'#9ca3af')+R(bx+8,by+8,6,6,'#ef4444')+R(bx+206,by+8,6,6,'#3b82f6');
-  s+='<text x="'+(bx+14)+'" y="'+(by+26)+'"'+F+' fill="#1d4ed8">'+(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'）</text>';
-  s+='<text x="'+(bx+14)+'" y="'+(by+44)+'"'+F+' fill="#111">在席 '+c.live+'人 ／ 未読 <tspan fill="'+(c.unread?'#dc2626':'#111')+'">'+c.unread+'</tspan>通</text>';
-  s+='<text x="'+(bx+14)+'" y="'+(by+62)+'"'+F+' fill="#111">📨 '+c.edges+'通 /'+D.window_hours+'h'+(c.failed?' ／ <tspan fill="#dc2626">不達 '+c.failed+'</tspan>':'')+'</text>';}
+ var bx=x+170; if(!fits(bx,220))bx=x+24; s+=whiteboard(bx,y+34,right-bx,h-172);  // 板の高さ＝床側の自販機（104）に当たらない範囲
  // 床側（左→右）: 🛋️ ソファ・テーブル・🪴 観葉植物・☕ コーヒー（右隣が人の立ち位置）・🥤 自販機・🖨️ 印刷機。幅が足りなければ右から落とす
  var ox=x+24,im; if(fits(ox,120)){im=prop('sofa',ox,fy-56,120,56);s+=im||(R(ox,fy-52,120,24,'#3b5bdb',' rx="6"')+R(ox,fy-28,120,20,'#4c6ef5')+R(ox,fy-42,14,34,'#364fc7')+R(ox+106,fy-42,14,34,'#364fc7')+R(ox+59,fy-28,2,20,'#364fc7')+R(ox+10,fy-8,8,8,'#222')+R(ox+102,fy-8,8,8,'#222'));}
  ox=x+156; if(fits(ox,56)){im=prop('table',ox,fy-50,56,50);s+=im||(R(ox,fy-36,56,10,'#8b5a2b')+R(ox,fy-26,56,4,'#6b4423')+R(ox+6,fy-22,6,22,'#5a3a1a')+R(ox+44,fy-22,6,22,'#5a3a1a')+R(ox+14,fy-46,10,10,'#fff')+R(ox+15,fy-45,8,2,'#5a3a1a')+R(ox+32,fy-46,10,10,'#fff')+R(ox+33,fy-45,8,2,'#5a3a1a')+R(ox+42,fy-43,3,4,'#fff'));}

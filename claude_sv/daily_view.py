@@ -9,6 +9,7 @@
 - 相対リンクは daily ディレクトリ基準で file:/// の絶対 URI に解決
 
 段階2（ブラウザから ⬜→✅）に備えて、変換（render_daily）は I/O から切り離した純関数にしてある。
+S23: 末尾の board_summary / load_board＝office.html の休憩室ホワイトボードに書く要点（TOP 見出し・⏰ 縛り・返信待ち）。
 """
 import hashlib
 import html as html_mod
@@ -300,6 +301,116 @@ def write_daily(cfg: dict, out_dir: Path, today: date = None, poll_ms: int = 500
     out_path.write_text(_page(title, sub, body, stamp, day, poll_ms), encoding="utf-8")
     stamp_path.write_text(stamp_js, encoding="utf-8")  # 本体の後に書く＝読み込み時は必ず新しい本体
     return True
+
+
+# ---------------------------------------------------------------- 🧾 ホワイトボード用の要点（S23）
+# office.html の休憩室ホワイトボードに書く「今日の daily の要点」。機械的に取れる分だけ（ハブ提案 10/15）:
+#   🔴 TOP の見出し（本日の予定 > TOP の h4・番号と済みの別）／⏰ 今日の縛り（時刻つきの予定だけ）／返信待ちの件数と相手
+
+_MARK_RX = re.compile(r"^([\U0001F300-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\u23E9-\u23FA]\uFE0F?)\s*")
+_TIME_RX = re.compile(
+    r"(\d{1,2})[:：](\d{2})(?:\s*[〜~～\-]\s*(\d{1,2})[:：](\d{2}))?(?:\s*[〜~～])?(?:前後|頃|ごろ|過ぎ)?"
+    r"|(\d{1,2})時(?:(\d{1,2})分|(半))?(?:前後|頃|ごろ|過ぎ)?")
+
+
+def _plain(s: str) -> str:
+    """markdown の飾りを落として1行に（リンク→文字・**/__/~~/` を除去）。"""
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)
+    s = re.sub(r"\*\*|__|~~|`", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _find(nodes, key, path=()):
+    """_matches 形式の key（"本日の予定 > TOP"）に最初に合う見出しノード（文書順）。"""
+    for n in nodes:
+        titles = list(path) + [n["title"]]
+        if _matches(titles, key):
+            return n
+        hit = _find(n["kids"], key, titles)
+        if hit:
+            return hit
+    return None
+
+
+def _top_items(top) -> list:
+    node = _find(top, "本日の予定 > TOP") or _find(top, "TOP")
+    if not node:
+        return []
+    heads = [k["title"] for k in node["kids"]]
+    if not heads:  # 見出しでなく箇条書きで書かれている日
+        heads = [ln[2:] for ln in node["lines"] if ln.startswith("- ")]
+    out = []
+    for h in heads:
+        done = "~~" in h  # 打ち消し線＝済み
+        t = re.sub(r"^\d+[.．)]\s*", "", _plain(h))
+        m = _MARK_RX.match(t)
+        mark = m.group(1) if m else ""
+        if m:
+            t = t[m.end():]
+        out.append({"t": t, "mark": mark, "done": done or mark.startswith("✅")})
+    return out
+
+
+def _events(md: str) -> list:
+    """「⏰ 今日の縛り: 10:00 朝会／12:00〜 ロジクラ連携／…」→ [{hm, to, label}]（時刻順）。時刻の無い項目は落とす。"""
+    m = re.search(r"⏰\s*今日の縛り\s*[:：]\s*(.+)", md) or re.search(r"^\s*-\s*⏰\s*(.+)", md, re.M)
+    if not m:
+        return []
+    out = []
+    for item in re.split(r"\s*／\s*", _plain(m.group(1))):
+        tm = _TIME_RX.search(item)
+        if not tm:
+            continue
+        if tm.group(1):
+            hm = f"{int(tm.group(1)):02d}:{tm.group(2)}"
+            to = f"{int(tm.group(3)):02d}:{tm.group(4)}" if tm.group(3) else None
+        else:
+            mi = int(tm.group(6)) if tm.group(6) else (30 if tm.group(7) else 0)
+            hm, to = f"{int(tm.group(5)):02d}:{mi:02d}", None
+        label = (item[:tm.start()] + " " + item[tm.end():]).strip()
+        label = re.sub(r"[（(]\s*[)）]", "", label).strip(" 〜~～-・:：") or "予定"
+        out.append({"hm": hm, "to": to, "label": label})
+    out.sort(key=lambda e: e["hm"])
+    return out
+
+
+def _waiting(top):
+    """「返信待ち」見出し直下の箇条書き＝1件。✅ 始まりは解消済みで除外・🔴 始まりは先頭に。相手は【…】を採る。"""
+    node = _find(top, "返信待ち")
+    if not node:
+        return None
+    rows = []
+    for ln in node["lines"]:
+        if not ln.startswith("- "):
+            continue  # 入れ子（補足）は数えない
+        body = ln[2:].strip()
+        if body.startswith("✅"):
+            continue
+        urgent = body.startswith("🔴")
+        m = re.search(r"【([^】]+)】", body)
+        rows.append((0 if urgent else 1, _plain(m.group(1)) if m else _plain(body)[:14]))
+    rows.sort(key=lambda r: r[0])
+    return {"n": len(rows), "urgent": sum(1 for r in rows if r[0] == 0), "items": [r[1] for r in rows]}
+
+
+def board_summary(md: str) -> dict:
+    """🧾 ホワイトボードに書く要点（I/O なし）。{"top": [{t, mark, done}], "events": [{hm, to, label}], "waiting": {n, urgent, items} | None}"""
+    _, _, top = _parse(md)
+    return {"top": _top_items(top), "events": _events(md), "waiting": _waiting(top)}
+
+
+def load_board(cfg: dict, today: date = None):
+    """今日の daily → board_summary。daily_view 未設定なら None（＝板は S22 の小さいまま）・日誌が無ければ {"missing": True}。"""
+    dv = cfg.get("daily_view") or {}
+    if not dv.get("dir"):
+        return None
+    today = today or date.today()
+    src = Path(dv["dir"]).expanduser() / f"{today.isoformat()}.md"
+    if not src.exists():
+        return {"day": today.isoformat(), "missing": True}
+    b = board_summary(src.read_text(encoding="utf-8", errors="replace"))
+    b["day"] = today.isoformat()
+    return b
 
 
 if __name__ == "__main__":  # 単発生成: python -m claude_sv.daily_view
