@@ -15,6 +15,7 @@ config の順）。ヘッダの 🧲 ボタンで切替（localStorage）。席�
 break_after_min 分で人間のスプライトが休憩室へ歩く（話しかけると席へ戻る・戻る席の点線枠は残す）。各島の角に観葉植物（飾り）。
 小物の絵は assets/props/<名前>.png があればそれ・無ければコード内の矩形描画（受け口が先・絵は後から差し替え）。
 🪑 hub_side（S22）: cfg.office.hub_side＝トラック名リスト。島に入れずハブの右隣に小机で並べる（同じ部屋・採番なしの運用型＝会議サポート等）。
+🎨 配色（S22）: 図もページのテーマ（☀/☾・localStorage csv-theme＝他ページと共通）に追従。light＝明るいオフィス（白い壁・淡いタイル床・ベージュのカーペット）。オフィスは保存値が無ければ light・?theme=light|dark で一時上書き（保存しない・スクショ用）。
 🎨 絵のテーマの優先順（S22）: sprite_track_themes（トラック名）＞ sprite_tenant_themes（部屋名）＞ sprite_theme（全体）。部屋単位が要るのは
 workspace_hints の無い ws（副業）で名無しトラックが出るとトラック名キーでは追いつかないため。
 
@@ -334,9 +335,9 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
 CSS = """
 *{box-sizing:border-box}
 :root{color-scheme:dark;--plane:#0d0d0d;--surface:#1a1a19;--ink:#fff;--ink2:#c3c2b7;--muted:#898781;
-  --border:rgba(255,255,255,.10);--wash:rgba(255,255,255,.055);--gold:#f5c542;--cyan:#5ad1e6;--mag:#e66fd1;--red:#e5533b}
+  --border:rgba(255,255,255,.10);--wash:rgba(255,255,255,.055);--gold:#f5c542;--cyan:#5ad1e6;--mag:#e66fd1;--red:#e5533b;--scene:#1b1d2a}
 :root[data-theme="light"]{color-scheme:light;--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
-  --border:rgba(11,11,11,.10);--wash:rgba(11,11,11,.045);--gold:#b8860b;--cyan:#1d8fa6;--mag:#b3399e;--red:#c2341f}
+  --border:rgba(11,11,11,.10);--wash:rgba(11,11,11,.045);--gold:#b8860b;--cyan:#1d8fa6;--mag:#b3399e;--red:#c2341f;--scene:#e9e5dc}
 html,body{height:100%} body{margin:0;height:100vh;overflow:hidden;display:flex;flex-direction:column;background:var(--plane);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","Yu Gothic UI",Meiryo,sans-serif;font-size:13px;line-height:1.5}
 header{flex:none;padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 header h1{font-size:16px;margin:0;font-weight:600} .sub{color:var(--muted);font-size:11.5px}
@@ -345,7 +346,7 @@ header h1{font-size:16px;margin:0;font-weight:600} .sub{color:var(--muted);font-
 .tgl:hover{background:var(--wash);color:var(--ink)} .tgl.cur{background:var(--wash);color:var(--ink);cursor:default}
 .wsb{padding:1px 8px;font-size:11px;margin-left:3px} .tgl.on{background:var(--wash);color:var(--ink);border-color:var(--ink2)}
 main{display:grid;grid-template-columns:minmax(0,1fr) 380px;grid-template-rows:minmax(0,1fr);flex:1 1 0;min-height:0;overflow:hidden}
-#scene{overflow:hidden;background:#1b1d2a;min-height:0;height:100%} #scene svg{display:block;width:100%;height:100%;shape-rendering:crispEdges}
+#scene{overflow:hidden;background:var(--scene);min-height:0;height:100%} #scene svg{display:block;width:100%;height:100%;shape-rendering:crispEdges}
 aside{background:var(--surface);border-left:1px solid var(--border);overflow-y:auto;min-height:0;height:100%;padding:10px 12px}
 aside h2{position:sticky;top:-10px;background:var(--surface);padding:6px 0;z-index:1}
 aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px} aside h2 .tgl{margin-left:auto;padding:1px 8px;font-size:11px}
@@ -360,7 +361,7 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 .sw{display:inline-block;width:10px;height:10px;margin-right:4px;vertical-align:middle;border-radius:2px}
 .tiles{display:flex;gap:8px} .tile{border:1px solid var(--border);border-radius:8px;padding:2px 10px;font-size:12px;color:var(--ink2)}
 .tile b{color:var(--ink);font-size:14px;margin-right:3px} .tile.warn b{color:var(--gold)} .tile.bad b{color:var(--red)}
-.edge{fill:none;stroke-width:3;cursor:pointer} .edge.hl{stroke-width:5;filter:drop-shadow(0 0 4px #fff)}
+.edge{fill:none;stroke-width:3;cursor:pointer} .edge.hl{stroke-width:5;filter:drop-shadow(0 0 4px #fff)} :root[data-theme="light"] .edge.hl{filter:drop-shadow(0 0 3px rgba(0,0,0,.45))}
 .edge.ng{stroke-dasharray:6 5} .edge.rm{stroke-dasharray:2 4}
 @keyframes blink{50%{opacity:0}} .cur{animation:blink 1s step-end infinite}
 @keyframes type{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}} .typing{animation:type .5s steps(2) infinite}
@@ -373,14 +374,16 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 footer{flex:none;padding:6px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
 """
 
-HEAD_JS = "try{var t=localStorage.getItem('csv-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}"
+# テーマの優先順: ?theme=light|dark（保存しない・スクショ用）＞ 保存値 csv-theme（他ページと共通）＞ light（オフィスだけの既定・S22）
+HEAD_JS = "try{var t=localStorage.getItem('csv-theme');try{var q=new URLSearchParams(location.search).get('theme');if(q==='light'||q==='dark')t=q;}catch(e){}document.documentElement.dataset.theme=t||'light';}catch(e){}"
 
 # D / STAMP / POLL_MS / HUB はサーバ側で埋める
 PAGE_JS = r"""
 (function(){
 var root=document.documentElement, btn=document.getElementById('tgl');
 function lab(){btn.textContent=root.dataset.theme==='light'?'☾ ダーク':'☀ ライト';} lab();
-btn.onclick=function(){root.dataset.theme=root.dataset.theme==='light'?'dark':'light';try{localStorage.setItem('csv-theme',root.dataset.theme);}catch(e){} lab();};
+btn.onclick=function(){root.dataset.theme=root.dataset.theme==='light'?'dark':'light';try{localStorage.setItem('csv-theme',root.dataset.theme);}catch(e){} lab();
+ var u=new URL(location.href);if(u.searchParams.has('theme')){u.searchParams.delete('theme');location.href=u.toString();}else location.reload();};  // 図の配色は読み込み時に決めるので再読込（?theme= の一時上書きは外す）
 var clk=document.getElementById('clock'), WD='日月火水木金土', skyFn=null;
 function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());if(skyFn)skyFn(d);}
 tick(); setInterval(tick,1000);
@@ -422,17 +425,22 @@ function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKe
  var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=(c==='T'||c==='A')?shirt:PAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
 var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
 var unreadBy={}; D.edges.forEach(function(e){if(e.ok&&!e.removed&&e.read===false)unreadBy[e.to]=(unreadBy[e.to]||0)+1;});
+// 🎨 図の配色（S22）: ページのテーマ（☀/☾）に追従。light＝明るいオフィス（白い壁・淡いタイル床・ベージュのカーペット・島名は濃い色）／dark＝従来
+var LIGHT=document.documentElement.dataset.theme==='light';
+function shade(c,f){var n=parseInt(c.slice(1),16);function k(v){return Math.max(0,Math.min(255,Math.round(v*f)));}return '#'+((1<<24)|(k(n>>16&255)<<16)|(k(n>>8&255)<<8)|k(n&255)).toString(16).slice(1);}
+var PAL=LIGHT?{tileA:'#e6e2d9',tileB:'#ebe7df',grid:'#d8d3c8',carpetA:'#dccfb5',carpetB:'#d0c2a5',wall:'#fbfaf6',wallOp:1,wallStroke:'#8f887b',wallStrokeOp:0.9,wallW:6,roomTxt:'#1f2937',roomSub:'#4b5563',emptyTxt:'#6b7280',chair:'#5b6478',chair2:'#404859',plate:'#fffdf8',plateStroke:'#bfb8a8',islOp:0.18,sideOp:0.12,propTxt:'#374151',doorTxt:'#374151',doorStroke:'#6b7280',txt:function(c){return shade(c,0.66);}}
+:{tileA:'#2a2d3f',tileB:'#2f3348',grid:null,carpetA:'#3d3330',carpetB:'#4a3f3a',wall:'#000',wallOp:0.16,wallStroke:'#cbd5e1',wallStrokeOp:0.5,wallW:4,roomTxt:'#e2e8f0',roomSub:'#cbd5e1',emptyTxt:'#94a3b8',chair:'#3a3e58',chair2:'#2a2d44',plate:'#f3efe0',plateStroke:null,islOp:0.10,sideOp:0.05,propTxt:'#cbd5e1',doorTxt:'#cbd5e1',doorStroke:'#cbd5e1',txt:function(c){return c;}};
 function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
  var st='empty'; if(live){st=t.occupied_by.some(function(s){return s.live.status==='perm';})?'perm':t.occupied_by.some(function(s){return s.live.status==='busy';})?'busy':'idle';}
- var g='<g class="desk"'+(t.dormant?' opacity="0.5"':'')+'>';
+ var g='<g class="desk"'+(t.dormant?' opacity="'+(LIGHT?0.68:0.5)+'"':'')+'>';  // 休眠席は薄く（ライトは背景が明るいぶん濃いめ）
  var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
  g+='<title>'+esc(tip)+'</title>';
  if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});}
- else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="#3a3e58"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="#2a2d44"/>';}
+ else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="'+PAL.chair+'"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="'+PAL.chair2+'"/>';}
  g+='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="#8b5a2b"/><rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="8" fill="#b57a3e"/>';
  var nm=big?2:1;for(var i=0;i<nm;i++){var mx=x-(nm-1)*22+i*44-16;g+='<rect x="'+mx+'" y="'+(y+10)+'" width="32" height="22" fill="#111"/><rect x="'+(mx+2)+'" y="'+(y+12)+'" width="28" height="18" fill="'+SCR[st]+'"/>';if(st==='busy')g+='<rect class="cur" x="'+(mx+6)+'" y="'+(y+22)+'" width="4" height="4" fill="#fff"/>';}
  var label=t.name+(cur&&cur.s?' S'+cur.s:'');
- g+='<rect x="'+(x-w/2)+'" y="'+(y+h+4)+'" width="'+w+'" height="18" fill="#f3efe0"/><text x="'+x+'" y="'+(y+h+17)+'" text-anchor="middle" font-size="'+(label.length>12?10:12)+'" fill="#222">'+esc(label)+'</text>';
+ g+='<rect x="'+(x-w/2)+'" y="'+(y+h+4)+'" width="'+w+'" height="18" fill="'+PAL.plate+'"'+(PAL.plateStroke?' stroke="'+PAL.plateStroke+'"':'')+'/><text x="'+x+'" y="'+(y+h+17)+'" text-anchor="middle" font-size="'+(label.length>12?10:12)+'" fill="#222">'+esc(label)+'</text>';
  if(t.occupied_by.length>1)g+='<text x="'+(x+w/2-4)+'" y="'+(y+h+17)+'" text-anchor="end" font-size="10" fill="#777">+'+(t.occupied_by.length-1)+'</text>';
  var un=unreadBy[t.name]||0;
  if(un)g+='<rect x="'+(x+w/2-30)+'" y="'+(y-14)+'" width="30" height="14" fill="#f5c542"/><text x="'+(x+w/2-15)+'" y="'+(y-3)+'" text-anchor="middle" font-size="11" fill="#222">📨'+un+'</text>';
@@ -469,7 +477,7 @@ function R(x,y,w,h,f,ex){return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height=
 function prop(n,x,y,w,h){return PR[n]?'<image href="'+PR[n]+'" x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"/>':null;}
 function plant(ox,oy,k){k=k||1;var im=prop('plant',ox,oy,36*k,70*k);if(im)return im;var s='';[[6,46,24,24,'#c2410c'],[4,44,28,6,'#ea580c'],[16,20,4,28,'#166534'],[2,24,14,10,'#22c55e'],[20,14,16,10,'#16a34a'],[6,8,12,10,'#4ade80'],[18,30,12,8,'#22c55e']].forEach(function(p){s+=R(ox+p[0]*k,oy+p[1]*k,p[2]*k,p[3]*k,p[4]);});return s;}
 function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;function fits(ox,iw){return ox+iw<=right;}
- s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" fill="url(#carpet)" stroke="'+col+'" stroke-opacity="0.5" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+col+'">'+esc(name)+'</text>';
+ s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" fill="url(#carpet)" stroke="'+PAL.txt(col)+'" stroke-opacity="0.5" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(name)+'</text>';
  // 壁側: 🪟 窓（空は skyFn が時刻で塗る）・📋 ホワイトボード（在席/未読＝ヘッダのタイルと同じ数字）
  var wx=x+24,wy=y+34; if(fits(wx,128)){WIN={x:wx+6,y:wy+6,w:108,h:58};
   s+=R(wx,wy,120,70,'#cbd5e1')+'<rect id="winsky" x="'+(wx+6)+'" y="'+(wy+6)+'" width="108" height="58" fill="#7dd3fc"/><g id="winstars" opacity="0">'+R(wx+20,wy+14,3,3,'#fff')+R(wx+50,wy+22,2,2,'#fff')+R(wx+90,wy+12,3,3,'#fff')+R(wx+70,wy+40,2,2,'#fff')+'</g><circle id="winsun" cx="'+(wx+40)+'" cy="'+(wy+26)+'" r="9" fill="#fde047"/>'+R(wx+58,wy+6,4,58,'#cbd5e1')+R(wx+6,wy+33,108,4,'#cbd5e1')+R(wx-4,wy+70,128,6,'#94a3b8');}
@@ -490,7 +498,7 @@ function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;
  ox=x+480; if(fits(ox,176)){var busy=[D.hub].concat(D.tracks).some(function(t){return (t.occupied_by||[]).some(function(q){return q.live&&q.live.status==='busy';});});
   im=prop('printer',ox,fy-100,176,100);s+=im||(R(ox+6,fy-16,128,14,'#4b5563')+R(ox+10,fy-2,10,4,'#222')+R(ox+120,fy-2,10,4,'#222')+R(ox,fy-76,140,60,'#9ca3af',' rx="4"')+R(ox,fy-80,140,6,'#d1d5db')+R(ox+10,fy-92,60,14,'#6b7280')+R(ox+12,fy-96,56,4,'#fff')+R(ox+100,fy-94,34,22,'#111',' rx="2"')+R(ox+103,fy-91,28,16,busy?'#39d353':'#4aa3ff')+R(ox+140,fy-46,36,8,'#6b7280')+R(ox+10,fy-60,120,4,'#6b7280'));
   if(busy)s+=R(ox+146,fy-54,24,6,'#fff',' class="paper"');  // 作業中の席があれば用紙が出続ける
-  s+='<text x="'+(ox+70)+'" y="'+(fy+14)+'" text-anchor="middle" font-size="10" fill="#cbd5e1" fill-opacity=".8">🖨️ 印刷機'+(busy?'（稼働中）':'')+'</text>';}
+  s+='<text x="'+(ox+70)+'" y="'+(fy+14)+'" text-anchor="middle" font-size="10" fill="'+PAL.propTxt+'" fill-opacity=".8">🖨️ 印刷機'+(busy?'（稼働中）':'')+'</text>';}
  return s;}
 // 島レイアウト: 3×3 のセル。中央＝ハブ。島は config の順に r,l,t,b,tr,tl,br,bl のセルへ（slot 指定があれば優先）。
 // 同じセルに複数の島が来たら縦に積む。セルの幅・高さは中の島の最大で決める＝重ならない。原点 (OX,OY) からの相対で組む
@@ -506,12 +514,12 @@ function layoutIslands(islands,OX,OY){
  var colX=[OX,OX+colW[0]+(colW[0]?G:0)], rowY=[OY,OY+rowH[0]+(rowH[0]?G:0)]; colX[2]=colX[1]+colW[1]+G; rowY[2]=rowY[1]+rowH[1]+G;
  var hx=colX[1]+colW[1]/2-SHIFT, hy=rowY[1]+rowH[1]/2+30;  // ハブの中心（🧲 の距離の基準）
  SIDE.forEach(function(n,k){pos[n]=[Math.round(hx+165+k*140),Math.round(hy)];});  // 小机＝ハブ（幅190）の右 10px から 140px 間隔
- if(NS)floors+='<rect x="'+(hx-111)+'" y="'+(hy-82)+'" width="'+(352+(NS-1)*140)+'" height="166" rx="12" fill="#f5c542" fill-opacity="0.05" stroke="#f5c542" stroke-opacity="0.35" stroke-dasharray="6 4" stroke-width="1.5"/>';  // ハブと小机をひとつの床で囲う
+ if(NS)floors+='<rect x="'+(hx-111)+'" y="'+(hy-82)+'" width="'+(352+(NS-1)*140)+'" height="166" rx="12" fill="#f5c542" fill-opacity="'+PAL.sideOp+'" stroke="'+PAL.txt('#f5c542')+'" stroke-opacity="0.45" stroke-dasharray="6 4" stroke-width="1.5"/>';  // ハブと小机をひとつの床で囲う
  if(LG)Object.keys(cells).forEach(function(k){var L=cells[k];if(L.length===1&&L[0]===LG){var c=k.split(',').map(Number);LG.w=colW[c[0]];LG.h=rowH[c[1]];}});  // セルを独占するなら目一杯に広げる
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var tot=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
   var y=c[1]===0?rowY[0]+rowH[0]-tot:c[1]===2?rowY[2]:rowY[1]+(rowH[1]-tot)/2;
   L.forEach(function(isl){var x=c[0]===0?colX[0]+colW[0]-isl.w:c[0]===2?colX[2]:colX[1]+(colW[1]-isl.w)/2;if(isl.lounge){floors+=drawLounge(x,y,isl.w,isl.h,isl.name);y+=isl.h+G;return;}var col=ISL_COL[islands.indexOf(isl)%ISL_COL.length];
-   floors+='<rect x="'+x+'" y="'+y+'" width="'+isl.w+'" height="'+isl.h+'" rx="12" fill="'+col+'" fill-opacity="0.10" stroke="'+col+'" stroke-opacity="0.45" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+col+'">'+esc(isl.name)+'</text><text x="'+(x+isl.w-10)+'" y="'+(y+18)+'" text-anchor="end" font-size="11" fill="'+col+'" fill-opacity="0.8">'+isl.tracks.length+'席</text>';
+   floors+='<rect x="'+x+'" y="'+y+'" width="'+isl.w+'" height="'+isl.h+'" rx="12" fill="'+col+'" fill-opacity="'+PAL.islOp+'" stroke="'+PAL.txt(col)+'" stroke-opacity="0.45" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(isl.name)+'</text><text x="'+(x+isl.w-10)+'" y="'+(y+18)+'" text-anchor="end" font-size="11" fill="'+PAL.txt(col)+'" fill-opacity="0.8">'+isl.tracks.length+'席</text>';
    floors+=plant(x+isl.w-36,y+isl.h-55,0.7);  // 🪴 島の角の観葉植物（飾り・配置計算には影響しない）
    var cellsOf=[];for(var k=0;k<isl.tracks.length;k++){var cc=k%isl.cols,rr=Math.floor(k/isl.cols);cellsOf.push([Math.round(x+PAD+60+cc*PX),Math.round(y+PAD+TITLE+62+rr*PY)]);}
    var names=isl.tracks.slice();if(MAGNET){cellsOf.sort(function(a,b){return Math.hypot(a[0]-hx,a[1]-hy)-Math.hypot(b[0]-hx,b[1]-hy);});names.sort(function(a,b){return liveRank(a)-liveRank(b);});}
@@ -527,8 +535,8 @@ function placeRoom(r,X,Y){var inner;
  if(r.main){inner=layoutIslands(r.islands||[],X+RP,Y+RT);CX=inner.cx;CY=inner.cy;hubVisible=true;}
  else inner=layoutGrid(r.tracks||[],X+RP,Y+RT);
  var w=Math.max(inner.w+RP*2,r.name.length*16+140), h=inner.h+RT+RP;
- walls+='<rect x="'+X+'" y="'+Y+'" width="'+w+'" height="'+h+'" rx="16" fill="#000" fill-opacity="0.16" stroke="#cbd5e1" stroke-opacity="0.5" stroke-width="4"/><text x="'+(X+16)+'" y="'+(Y+25)+'" font-size="16" font-weight="700" fill="#e2e8f0">'+esc(r.name)+'</text><text x="'+(X+w-14)+'" y="'+(Y+25)+'" text-anchor="end" font-size="12" fill="#cbd5e1" fill-opacity="0.85">'+esc(roomCount(r))+'</text>';
- if(inner.empty)walls+='<text x="'+(X+w/2)+'" y="'+(Y+RT+62)+'" text-anchor="middle" font-size="13" fill="#94a3b8">空室（この時間幅にセッションなし）</text>';
+ walls+='<rect x="'+X+'" y="'+Y+'" width="'+w+'" height="'+h+'" rx="16" fill="'+PAL.wall+'" fill-opacity="'+PAL.wallOp+'" stroke="'+PAL.wallStroke+'" stroke-opacity="'+PAL.wallStrokeOp+'" stroke-width="'+PAL.wallW+'"/><text x="'+(X+16)+'" y="'+(Y+25)+'" font-size="16" font-weight="700" fill="'+PAL.roomTxt+'">'+esc(r.name)+'</text><text x="'+(X+w-14)+'" y="'+(Y+25)+'" text-anchor="end" font-size="12" fill="'+PAL.roomSub+'" fill-opacity="0.85">'+esc(roomCount(r))+'</text>';
+ if(inner.empty)walls+='<text x="'+(X+w/2)+'" y="'+(Y+RT+62)+'" text-anchor="middle" font-size="13" fill="'+PAL.emptyTxt+'">空室（この時間幅にセッションなし）</text>';
  return {w:w,h:h};}
 if(ROOMS.length){hubVisible=false;
  // 1つ目の部屋を左に・残りは右に縦積み（本業が横長なので）。絞り込み中は shown だけ
@@ -538,13 +546,13 @@ if(ROOMS.length){hubVisible=false;
  // 絞り込みで隠した部屋＝右端のドア。そこ宛／そこ発の矢印は壁の外へ出る線になる
  if(hidden.length){var DX=W;W+=260;H=Math.max(H,M+40+hidden.length*110);
   hidden.forEach(function(r,k){var dp=[DX+230,M+80+k*110];door[r.name]=dp;
-   walls+='<g><title>'+esc(r.name+'（絞り込みで非表示・ボタンで表示）')+'</title><rect x="'+(dp[0]-14)+'" y="'+(dp[1]-32)+'" width="28" height="64" rx="4" fill="#8b5a2b" stroke="#cbd5e1" stroke-opacity=".5" stroke-width="2"/><circle cx="'+(dp[0]+6)+'" cy="'+dp[1]+'" r="3" fill="#f5c542"/><text x="'+(dp[0]-22)+'" y="'+(dp[1]+4)+'" text-anchor="end" font-size="11" fill="#cbd5e1">🚪 '+esc(r.name)+'</text></g>';});}
+   walls+='<g><title>'+esc(r.name+'（絞り込みで非表示・ボタンで表示）')+'</title><rect x="'+(dp[0]-14)+'" y="'+(dp[1]-32)+'" width="28" height="64" rx="4" fill="#8b5a2b" stroke="'+PAL.doorStroke+'" stroke-opacity=".6" stroke-width="2"/><circle cx="'+(dp[0]+6)+'" cy="'+dp[1]+'" r="3" fill="#f5c542"/><text x="'+(dp[0]-22)+'" y="'+(dp[1]+4)+'" text-anchor="end" font-size="11" fill="'+PAL.doorTxt+'">🚪 '+esc(r.name)+'</text></g>';});}
 }else if(D.islands&&D.islands.length){var r1=layoutIslands(D.islands,M,M);CX=r1.cx;CY=r1.cy;W=r1.w+M*2;H=r1.h+M*2;
 }else{
  D.tracks.forEach(function(t,i){var a=-Math.PI/2+i*2*Math.PI/Math.max(n,1);pos[t.name]=[Math.round(CX+RX*Math.cos(a)),Math.round(CY+RY*Math.sin(a))];});
 }
 if(hubVisible)pos[HUB]=[CX,CY];
-var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="#2a2d3f"/><rect width="20" height="20" fill="#2f3348"/><rect x="20" y="20" width="20" height="20" fill="#2f3348"/></pattern><pattern id="carpet" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="16" height="16" fill="#3d3330"/><rect x="2" y="2" width="4" height="4" fill="#4a3f3a"/><rect x="10" y="10" width="4" height="4" fill="#4a3f3a"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>'+walls+floors;
+var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="'+PAL.tileA+'"/><rect width="20" height="20" fill="'+PAL.tileB+'"/><rect x="20" y="20" width="20" height="20" fill="'+PAL.tileB+'"/>'+(PAL.grid?'<path d="M0,0.5 H40 M0.5,0 V40" stroke="'+PAL.grid+'" stroke-width="1" fill="none"/>':'')+'</pattern><pattern id="carpet" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="16" height="16" fill="'+PAL.carpetA+'"/><rect x="2" y="2" width="4" height="4" fill="'+PAL.carpetB+'"/><rect x="10" y="10" width="4" height="4" fill="'+PAL.carpetB+'"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>'+walls+floors;
 var ts0=D.edges.length?Date.parse(D.edges[0].ts):0, ts1=D.edges.length?Date.parse(D.edges[D.edges.length-1].ts):1;
 D.edges.forEach(function(e,i){var A=pos[e.frm]||doorOf(e.frm),B=pos[e.to]||doorOf(e.to);if(!A||!B||(!pos[e.frm]&&!pos[e.to]))return;var x1=A[0],y1=A[1]+20,x2=B[0],y2=B[1]+20;
  var mx=(x1+x2)/2,my=(y1+y2)/2,dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ox=-dy/L*28,oy=dx/L*28;
