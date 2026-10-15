@@ -409,7 +409,8 @@ def peek_summary(transcript: Path, workspace: str) -> dict:
 
 def label_sessions(sids, claude_dir: Path, mapper, ws_labels: dict | None = None,
                    known: dict | None = None) -> dict:
-    """sid → {"project", "s", "ws", "title"}。known（live_board の rows 等）があれば優先して使う。"""
+    """sid → {"project", "s", "ws", "ws_key", "title"}。known（live_board の rows 等）があれば優先して使う。
+    ws=表示名（workspace_labels）・ws_key=encoded ws dir（office のテナント判定用・S22）。"""
     ws_labels = ws_labels or {}
     out = {}
     for sid in sids:
@@ -418,13 +419,14 @@ def label_sessions(sids, claude_dir: Path, mapper, ws_labels: dict | None = None
             continue
         tr = find_transcript(claude_dir, sid)
         if tr is None:
-            out[sid] = {"project": None, "s": None, "ws": "", "title": ""}
+            out[sid] = {"project": None, "s": None, "ws": "", "ws_key": "", "title": ""}
             continue
         ws = tr.parent.name
         summ = peek_summary(tr, ws)
         mapper.map_session(summ)
         out[sid] = {"project": summ.get("project"), "s": summ.get("session_no"),
-                    "ws": ws_labels.get(ws, ws), "title": (summ.get("first_user_text") or "")[:80]}
+                    "ws": ws_labels.get(ws, ws), "ws_key": ws,
+                    "title": (summ.get("first_user_text") or "")[:80]}
     return out
 
 

@@ -32,16 +32,17 @@
     "dir": "~/path/to/daily",
     "open": ["最重要", "Today's Focus", "本日の予定 > TOP", "返信待ち"]
   },
-  "_office_comment": "バーチャルオフィス（S21・reports/office.html）。human=人間の表示名（最後に話しかけた席の横に立つ）。window_hours=やり取りを拾う時間幅。teams=島わけ（島名→トラック名の配列・config の順に ハブ右/左/上/下/右上/左上/右下/左下 へ）。表にないトラックは other_island（既定「その他」）。show_idle_tracks=teams に載っていて時間幅内にセッションが無いトラックも空席（半透明）で出す（既定 true）。island_slots=島の置き場を指定（r/l/t/b/tr/tl/br/bl）。sprite_theme=既定の絵のテーマ（assets/sprites/<テーマ>/・\"office/human-3\" のように人間候補も指定可）。sprite_track_themes=席ごとに別テーマ（{\"トラック名\": \"テーマ\"}・例: 業務ハブだけ ninja。そのテーマに無い絵は画面のテーマには落ちず、テーマ内の粗い名前へ落ちる）",
+  "_office_comment": "バーチャルオフィス（S21・reports/office.html）。human=人間の表示名（最後に話しかけた席の横に立つ）。window_hours=やり取りを拾う時間幅。teams=島わけ（島名→トラック名の配列・config の順に ハブ右/左/上/下/右上/左上/右下/左下 へ）。表にないトラックは other_island（既定「その他」）。show_idle_tracks=teams に載っていて時間幅内にセッションが無いトラックも空席（半透明）で出す（既定 true）。island_slots=島の置き場を指定（r/l/t/b/tr/tl/br/bl）。sprite_theme=既定の絵のテーマ（assets/sprites/<テーマ>/・\"office/human-3\" のように人間候補も指定可）。sprite_track_themes=席ごとに別テーマ（{\"トラック名\": \"テーマ\"}・例: 業務ハブだけ ninja。そのテーマに無い絵は画面のテーマには落ちず、テーマ内の粗い名前へ落ちる）。tenants=ビル＝部屋（ワークスペース単位・S22）{部屋名: [encoded ws dir または workspace_labels の表示名]}。最初の部屋が本業＝ハブと teams（島わけ）はここ・2つ目以降は部屋ごとに席を格子で並べる・どの部屋にも無い ws は other_tenant（既定「その他」）の部屋（席がある時だけ出す）。?ws=〈部屋名の一部〉／ヘッダのボタンで1部屋だけに絞れる（隠した部屋宛の矢印は右端のドアへ）",
   "office": {
     "human": "人間",
+    "tenants": { "🏢 本業": ["c--Users-me-work-main", "GeminxEE"], "💼 副業X": ["c--source-side-x"] },
+    "other_tenant": "🚪 その他",
     "window_hours": 48,
     "teams": {
       "🏠 運用サポート": ["案件A", "案件B"],
-      "🏭 現場・生産": ["案件C"],
-      "💼 副業": ["副業X"]
+      "🏭 現場・生産": ["案件C"]
     },
-    "island_slots": { "💼 副業": "bl" },
+    "island_slots": { "🏭 現場・生産": "l" },
     "other_island": "その他",
     "show_idle_tracks": true,
     "sprite_theme": "animal",

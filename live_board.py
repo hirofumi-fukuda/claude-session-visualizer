@@ -699,6 +699,7 @@ def build_rows():
             "is_new": is_new,
             "pinned": sid in pin_sids,  # 稼働中のピン済みは📌印を付ける（休眠セクションには出さない）
             "ws": _ci_get(ws_labels, ws, Path(cwd).name if cwd else ws[:16]),
+            "ws_key": ws,  # encoded ws dir（office のテナント＝部屋の判定に使う・S22）
             "model": _peek_model(transcript),  # 委託の engine 表記と対（誰が働いているか）
             "last_human": _peek_last_human(transcript),  # 人間の最終発話（オフィス図の人間位置）
             "pid": rec.get("pid") or "",
@@ -1307,7 +1308,8 @@ def _messages(cfg, rows):
         hours = (cfg.get("office") or {}).get("window_hours", 48)
         res = collect_messages(claude_dir, REPO_ROOT / "cache" / "messages_cache.json", hours)
         known = {r["sid"]: {"project": r.get("project"), "s": r.get("session_no"),
-                            "ws": r.get("ws", ""), "title": r.get("title", "")}
+                            "ws": r.get("ws", ""), "ws_key": r.get("ws_key", ""),
+                            "cwd": r.get("cwd", ""), "title": r.get("title", "")}
                  for r in rows if r.get("sid")}
         labels = label_sessions(res["sids"], claude_dir, ProjectMapper(cfg),
                                 cfg.get("workspace_labels"), known)
