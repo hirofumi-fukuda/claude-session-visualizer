@@ -14,6 +14,7 @@ config の順）。ヘッダの 🧲 ボタンで切替（localStorage）。席�
 自販機・観葉植物・窓＝時刻で昼夕夜・ホワイトボード＝在席/未読・印刷機コーナー＝作業中の席があれば用紙が出る）。最後の発話から
 break_after_min 分で人間のスプライトが休憩室へ歩く（話しかけると席へ戻る・戻る席の点線枠は残す）。各島の角に観葉植物（飾り）。
 小物の絵は assets/props/<名前>.png があればそれ・無ければコード内の矩形描画（受け口が先・絵は後から差し替え）。
+🪑 hub_side（S22）: cfg.office.hub_side＝トラック名リスト。島に入れずハブの右隣に小机で並べる（同じ部屋・採番なしの運用型＝会議サポート等）。
 
 更新の仕組みは daily_view と同じ: 中身が変わった時だけ office.html を書き、ページは office_stamp.js を
 数秒おきに読んで差分があればリロードする（スクロール・選択は保たない＝配置図なので不要）。
@@ -97,6 +98,17 @@ def _tenants(cfg: dict):
     return {"names": names, "main": names[0], "other": office.get("other_tenant", "その他"), "idx": idx}
 
 
+def _hub_side(order, cfg: dict) -> list:
+    """cfg.office.hub_side（トラック名リスト）→ ハブの右隣に小机で並べるトラック名（order にある名前へ正規化・S22）。"""
+    by_norm = {_norm(t["name"]): t["name"] for t in order}
+    out = []
+    for m in (cfg.get("office") or {}).get("hub_side") or []:
+        n = by_norm.get(_norm(m))
+        if n and n not in out:
+            out.append(n)
+    return out
+
+
 def _lounge(cfg: dict):
     """cfg.office.lounge（dict か true）→ {name, slot, break_after_min}。無ければ None＝休憩室なし（S22）。"""
     lg = (cfg.get("office") or {}).get("lounge")
@@ -122,7 +134,8 @@ def build_islands(order, cfg: dict) -> list:
     if not teams:
         return []
     slots = office.get("island_slots") or {}
-    names = [t["name"] for t in order]
+    side = {_norm(m) for m in (office.get("hub_side") or [])}  # 🪑 ハブの隣に置くトラックは島に入れない（S22）
+    names = [t["name"] for t in order if _norm(t["name"]) not in side]
     by_norm = {_norm(n): n for n in names}
     rank = {n: i for i, n in enumerate(names)}
     assigned: set = set()
@@ -254,7 +267,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     office_cfg = cfg.get("office") or {}
     if office_cfg.get("show_idle_tracks", True):
         have = {_norm(t["name"]) for t in order} | {_norm(hub_disp)}
-        for members in (office_cfg.get("teams") or {}).values():
+        for members in list((office_cfg.get("teams") or {}).values()) + [office_cfg.get("hub_side") or []]:
             for m in members or []:
                 if _norm(m) in have:
                     continue
@@ -293,8 +306,11 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     # other（どこにも無い ws）は席がある時だけ出す。部屋が未設定なら従来どおり islands だけ
     rooms = []
     islands = build_islands(order, cfg)
+    hub_side = _hub_side(order, cfg)
     if tc:
-        islands = build_islands([t for t in order if t["tenant"] == tc["main"]], cfg)
+        main_order = [t for t in order if t["tenant"] == tc["main"]]
+        islands = build_islands(main_order, cfg)
+        hub_side = _hub_side(main_order, cfg)
         rooms.append({"name": tc["main"], "main": True, "islands": islands})
         for n in tc["names"][1:] + [tc["other"]]:
             ts = [t["name"] for t in order if t["tenant"] == n]
@@ -304,7 +320,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "sprite_default": (cfg.get("office") or {}).get("sprite_theme", ""),  # 既定テーマ（プルダウン未選択時）
             "sprite_variants": (cfg.get("office") or {}).get("sprite_variants") or {},  # トラック名→種類名の固定割当（任意）
             "sprite_track_themes": (cfg.get("office") or {}).get("sprite_track_themes") or {},  # トラック名→テーマ名（席ごとの別テーマ・例: 業務ハブだけ ninja）
-            "islands": islands, "rooms": rooms,
+            "islands": islands, "rooms": rooms, "hub_side": hub_side,  # 🪑 ハブの右隣の小机（S22）
             "live_near_hub": bool((cfg.get("office") or {}).get("live_near_hub", False)),  # 🧲 稼働席をハブ側に詰める既定（S22）
             "lounge": _lounge(cfg), "props": load_props(),  # ☕ 休憩室（S22・無ければ None）と小物の絵（assets/props/）
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
@@ -431,7 +447,8 @@ function roomKey(s){return String(s||'').replace(/\s+/g,'').toLowerCase();}
 function roomMatch(r,q){return !q||roomKey(r.name).indexOf(roomKey(q))>=0;}
 var shown=ROOMS.filter(function(r){return roomMatch(r,wsSel);}); if(ROOMS.length&&!shown.length){wsSel='';shown=ROOMS.slice();}
 var hidden=ROOMS.filter(function(r){return shown.indexOf(r)<0;});
-function roomTracks(r){var ts=r.main?[HUB]:(r.tracks||[]).slice();if(r.main)(r.islands||[]).forEach(function(i){ts=ts.concat(i.tracks);});return ts;}
+var SIDE=D.hub_side||[];  // 🪑 ハブの右隣に小机で並べるトラック（島には入らない・S22）
+function roomTracks(r){var ts=r.main?[HUB].concat(SIDE):(r.tracks||[]).slice();if(r.main)(r.islands||[]).forEach(function(i){ts=ts.concat(i.tracks);});return ts;}
 ROOMS.forEach(function(r){roomTracks(r).forEach(function(t){trackRoom[t]=r.name;});});
 function doorOf(name){var rn=trackRoom[name];return (rn&&door[rn])||null;}
 (function(){var el=document.getElementById('wsf');if(!el)return;var h='';
@@ -480,11 +497,13 @@ function layoutIslands(islands,OX,OY){
  islands.forEach(function(isl,i){var sl=SLOT[isl.slot]||SLOT[ORDER[i%ORDER.length]];var m=isl.tracks.length,cols=Math.min(m,Math.max(Math.ceil(Math.sqrt(m)),Math.ceil(m/2))),rows=Math.ceil(m/cols);
   isl.cols=cols;isl.rows=rows;isl.w=(cols-1)*PX+120+PAD*2+30;isl.h=rows*PY-11+PAD*2+TITLE;cells[sl[0]+','+sl[1]].push(isl);});
  var LG=D.lounge?{lounge:true,name:D.lounge.name,w:420,h:230}:null; if(LG){var ls=SLOT[D.lounge.slot]||SLOT.tr;cells[ls[0]+','+ls[1]].push(LG);}  // ☕ 休憩室＝島の空きセル（既定 tr）。島と同居なら縦に積む
- var HUBW=260,HUBH=200, colW=[0,HUBW,0], rowH=[0,HUBH,0];
+ var NS=SIDE.length, SHIFT=NS?65+(NS-1)*70:0, HUBW=NS?390+(NS-1)*140:260, HUBH=200, colW=[0,HUBW,0], rowH=[0,HUBH,0];  // 🪑 hub_side の小机の分だけ中央セルを広げ、ハブを左へずらす
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var w=Math.max.apply(null,L.map(function(x){return x.w;})),h=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
   colW[c[0]]=Math.max(colW[c[0]],w);rowH[c[1]]=Math.max(rowH[c[1]],h);});
  var colX=[OX,OX+colW[0]+(colW[0]?G:0)], rowY=[OY,OY+rowH[0]+(rowH[0]?G:0)]; colX[2]=colX[1]+colW[1]+G; rowY[2]=rowY[1]+rowH[1]+G;
- var hx=colX[1]+colW[1]/2, hy=rowY[1]+rowH[1]/2+30;  // ハブの中心（🧲 の距離の基準）
+ var hx=colX[1]+colW[1]/2-SHIFT, hy=rowY[1]+rowH[1]/2+30;  // ハブの中心（🧲 の距離の基準）
+ SIDE.forEach(function(n,k){pos[n]=[Math.round(hx+165+k*140),Math.round(hy)];});  // 小机＝ハブ（幅190）の右 10px から 140px 間隔
+ if(NS)floors+='<rect x="'+(hx-111)+'" y="'+(hy-82)+'" width="'+(352+(NS-1)*140)+'" height="166" rx="12" fill="#f5c542" fill-opacity="0.05" stroke="#f5c542" stroke-opacity="0.35" stroke-dasharray="6 4" stroke-width="1.5"/>';  // ハブと小机をひとつの床で囲う
  if(LG)Object.keys(cells).forEach(function(k){var L=cells[k];if(L.length===1&&L[0]===LG){var c=k.split(',').map(Number);LG.w=colW[c[0]];LG.h=rowH[c[1]];}});  // セルを独占するなら目一杯に広げる
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var tot=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
   var y=c[1]===0?rowY[0]+rowH[0]-tot:c[1]===2?rowY[2]:rowY[1]+(rowH[1]-tot)/2;
@@ -495,7 +514,7 @@ function layoutIslands(islands,OX,OY){
    var names=isl.tracks.slice();if(MAGNET){cellsOf.sort(function(a,b){return Math.hypot(a[0]-hx,a[1]-hy)-Math.hypot(b[0]-hx,b[1]-hy);});names.sort(function(a,b){return liveRank(a)-liveRank(b);});}
    names.forEach(function(name,k){pos[name]=cellsOf[k];});
    y+=isl.h+G;});});
- return {w:(colW[2]?colX[2]+colW[2]:colX[1]+colW[1])-OX, h:(rowH[2]?rowY[2]+rowH[2]:rowY[1]+rowH[1])-OY, cx:colX[1]+colW[1]/2, cy:rowY[1]+rowH[1]/2+30};}
+ return {w:(colW[2]?colX[2]+colW[2]:colX[1]+colW[1])-OX, h:(rowH[2]?rowY[2]+rowH[2]:rowY[1]+rowH[1])-OY, cx:hx, cy:hy};}
 // 本業以外の部屋: 島なし・席を格子に並べるだけ
 function layoutGrid(tracks,OX,OY){var m=tracks.length;if(!m)return {w:300,h:110,empty:true};var cols=Math.min(m,Math.max(2,Math.ceil(Math.sqrt(m)))),rows=Math.ceil(m/cols);
  tracks.forEach(function(name,k){var cc=k%cols,rr=Math.floor(k/cols);pos[name]=[Math.round(OX+PAD+60+cc*PX),Math.round(OY+PAD+62+rr*PY)];});
