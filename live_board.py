@@ -38,6 +38,8 @@ from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.modelbadge import MDL_CSS, model_badge
 from claude_sv.daily_view import write_daily
+from claude_sv.messages import collect as collect_messages, label_sessions, recent_html
+from claude_sv.office import write_office
 from claude_sv.nav import nav_html
 from claude_sv.parser import _clean_user_text, _iter_text_items
 
@@ -987,7 +989,7 @@ def _jobs_html(running, finished):
 
 def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
                 suggest_unnum=None, suggest_num=None,
-                jobs_running=None, jobs_finished=None, degraded=False):
+                jobs_running=None, jobs_finished=None, degraded=False, messages_html=""):
     now = datetime.now().strftime("%H:%M:%S")
     pinned_rows, suggest_unnum = pinned_rows or [], suggest_unnum or []
     suggest_num = suggest_num or []
@@ -1059,6 +1061,9 @@ def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
 <h2>👋 あなた待ち<span class="s">許可待ち → 待機中の順・新しいものが上</span></h2>
 {need_html}
 {footnote}
+
+<h2>📨 最近のやり取り<span class="s">セッション間メッセージ（SendMessage）・新しい順・配置図は 🏢 オフィス</span></h2>
+{messages_html}
 {_dormant_html(pinned_rows, suggest_unnum, suggest_num)}
 <footer>
   ピン <code>python live_board.py pin &lt;sid&gt; [メモ]</code>
@@ -1194,6 +1199,24 @@ def _cmd_candidates(cfg, claude_dir, days):
               + _pad("最終 " + r["last_age"], 13) + _trim(r["title"], 46))
 
 
+def _messages(cfg, rows):
+    """セッション間メッセージ（S21）: jsonl と稼働台帳から送受信を突合し、ボード用 HTML と
+    オフィス図用の素材（edges・labels）を返す。失敗してもボードは止めない（空で返す）。"""
+    try:
+        claude_dir = Path(cfg.get("claude_dir", "~/.claude")).expanduser()
+        hours = (cfg.get("office") or {}).get("window_hours", 48)
+        res = collect_messages(claude_dir, REPO_ROOT / "cache" / "messages_cache.json", hours)
+        known = {r["sid"]: {"project": r.get("project"), "s": r.get("session_no"),
+                            "ws": r.get("ws", ""), "title": r.get("title", "")}
+                 for r in rows if r.get("sid")}
+        labels = label_sessions(res["sids"], claude_dir, ProjectMapper(cfg),
+                                cfg.get("workspace_labels"), known)
+        return recent_html(res["edges"], labels, cfg, limit=12, esc=html_mod.escape), res, labels
+    except Exception as e:  # noqa: BLE001
+        print(f"messages error: {e!r}")
+        return '<div class="empty">取得エラー（messages.py）</div>', None, {}
+
+
 def main():
     args = sys.argv[1:]
 
@@ -1246,12 +1269,19 @@ def main():
             _write_tabs_snapshot(rows)  # タブ復元用（claude-wt/restore_tabs.ps1 が読む）
         if html_mode:
             out_path.parent.mkdir(exist_ok=True)
+            cfg_now = load_config(REPO_ROOT)
+            msg_html, msg_res, msg_labels = _messages(cfg_now, rows)
             out_path.write_text(
                 render_html(rows, watch or 10, skipped, pinned_rows,
                             suggest_unnum, suggest_num, jobs_running, jobs_finished,
-                            degraded=degraded),
+                            degraded=degraded, messages_html=msg_html),
                 encoding="utf-8")
             print(f"{datetime.now().strftime('%H:%M:%S')} updated -> {out_path}")
+            try:  # バーチャルオフィス配置図（S21 段階②）: 同じループに相乗り
+                if msg_res is not None and write_office(cfg_now, out_path.parent, msg_res, msg_labels, rows):
+                    print(f"{datetime.now().strftime('%H:%M:%S')} office updated")
+            except Exception as e:  # noqa: BLE001
+                print(f"office view error: {e!r}")
             try:  # 日誌ビュー（S20）: 同じループに相乗り＝プロセスは1個のまま。失敗してもボードは止めない
                 if write_daily(load_config(REPO_ROOT), out_path.parent):
                     print(f"{datetime.now().strftime('%H:%M:%S')} daily updated")

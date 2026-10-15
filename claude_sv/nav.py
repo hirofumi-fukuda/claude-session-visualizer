@@ -12,6 +12,7 @@ _ITEMS = [
     ("map",    "claude_dashboard.html", "📊 アクティビティ", True),
     ("record", "track_record.html",     "🏆 トラックレコード", True),
     ("daily",  "daily.html",            "📓 日誌", True),
+    ("office", "office.html",           "🏢 オフィス", True),
 ]
 
 
