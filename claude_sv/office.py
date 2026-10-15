@@ -19,6 +19,8 @@ break_after_min 分で人間のスプライトが休憩室へ歩く（話しか�
 🎨 配色（S22）: 図もページのテーマ（☀/☾・localStorage csv-theme＝他ページと共通）に追従。light＝明るいオフィス（白い壁・淡いタイル床・ベージュのカーペット）。オフィスは保存値が無ければ light・?theme=light|dark で一時上書き（保存しない・スクショ用）。
 🧾 ホワイトボード（S23・ハブ提案 10/15）: 休憩室の壁いっぱいに今日の daily の要点＝🔴 TOP 見出し3行・⏰ 次の時刻固定イベント・⏸ 返信待ち（件数と相手）・
 端に在席/未読/不達。中身は daily_view.load_board（機械的に取れる分だけ・新しい記録場所は作らない）。クリックで 📓 日誌。幅か高さが足りない時は S22 の小さい板。
+🔔 新着の矢印（S23）: 直近 15 分の矢印は流れる破線で動く（同じ席ペアは同じ曲線に重なるので▶を押さなくても新着が分かる・15 分で止まる）。
+矢じりは机の手前で止める（机の下に隠れない。隠した部屋のドア宛はそのまま）。
 🎨 絵のテーマの優先順（S22）: sprite_track_themes（トラック名）＞ sprite_tenant_themes（部屋名）＞ sprite_theme（全体）。部屋単位が要るのは
 workspace_hints の無い ws（副業）で名無しトラックが出るとトラック名キーでは追いつかないため。
 
@@ -375,7 +377,7 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 .tiles{display:flex;gap:8px} .tile{border:1px solid var(--border);border-radius:8px;padding:2px 10px;font-size:12px;color:var(--ink2)}
 .tile b{color:var(--ink);font-size:14px;margin-right:3px} .tile.warn b{color:var(--gold)} .tile.bad b{color:var(--red)}
 .edge{fill:none;stroke-width:3;cursor:pointer} .edge.hl{stroke-width:5;filter:drop-shadow(0 0 4px #fff)} :root[data-theme="light"] .edge.hl{filter:drop-shadow(0 0 3px rgba(0,0,0,.45))}
-.edge.ng{stroke-dasharray:6 5} .edge.rm{stroke-dasharray:2 4}
+.edge.ng{stroke-dasharray:6 5} .edge.rm{stroke-dasharray:2 4} .flow{fill:none;stroke:#fff;stroke-width:2;stroke-dasharray:6 11;animation:flow 1s linear infinite;pointer-events:none} @keyframes flow{to{stroke-dashoffset:-17}}
 @keyframes blink{50%{opacity:0}} .cur{animation:blink 1s step-end infinite}
 @keyframes type{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}} .typing{animation:type .5s steps(2) infinite}
 @keyframes alert{50%{opacity:.35}} .perm{animation:alert .8s ease-in-out infinite}
@@ -601,12 +603,17 @@ if(ROOMS.length){hubVisible=false;
 if(hubVisible)pos[HUB]=[CX,CY];
 var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="'+PAL.tileA+'"/><rect width="20" height="20" fill="'+PAL.tileB+'"/><rect x="20" y="20" width="20" height="20" fill="'+PAL.tileB+'"/>'+(PAL.grid?'<path d="M0,0.5 H40 M0.5,0 V40" stroke="'+PAL.grid+'" stroke-width="1" fill="none"/>':'')+'</pattern><pattern id="carpet" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="16" height="16" fill="'+PAL.carpetA+'"/><rect x="2" y="2" width="4" height="4" fill="'+PAL.carpetB+'"/><rect x="10" y="10" width="4" height="4" fill="'+PAL.carpetB+'"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>'+walls+floors;
 var ts0=D.edges.length?Date.parse(D.edges[0].ts):0, ts1=D.edges.length?Date.parse(D.edges[D.edges.length-1].ts):1;
+var NEW_MS=15*60000, fresh=[], flows='';  // 🔔 直近 15 分の矢印は流れる破線＝同じ席ペアは同じ曲線に重なるので動きで新着を見せる（S23）
 D.edges.forEach(function(e,i){var A=pos[e.frm]||doorOf(e.frm),B=pos[e.to]||doorOf(e.to);if(!A||!B||(!pos[e.frm]&&!pos[e.to]))return;var x1=A[0],y1=A[1]+20,x2=B[0],y2=B[1]+20;
  var mx=(x1+x2)/2,my=(y1+y2)/2,dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ox=-dy/L*28,oy=dx/L*28;
+ if(pos[e.to]){var cx=mx+ox,cy=my+oy,vx=x2-cx,vy=y2-cy,vl=Math.hypot(vx,vy)||1,hw=e.to===HUB?95:60,hh=e.to===HUB?26:20,tt=Math.min(Math.abs(vx)>1e-6?hw*vl/Math.abs(vx):1e9,Math.abs(vy)>1e-6?hh*vl/Math.abs(vy):1e9)+5;if(tt<vl){x2=Math.round(x2-vx/vl*tt);y2=Math.round(y2-vy/vl*tt);}}  // 矢じりは机の手前で止める（机の下に隠れないように・S23）
+ var age=Date.now()-Date.parse(e.ts), isNew=!!(e.ok&&!e.removed&&age<NEW_MS), d='M'+x1+','+y1+' Q'+(mx+ox)+','+(my+oy)+' '+x2+','+y2;
+ if(isNew){fresh.push([i,NEW_MS-age]);flows+='<path id="f'+i+'" class="flow" d="'+d+'"/>';}  // 同じ曲線に古い実線が重なっていても白い破線なら見える
  var col=e.to===HUB?'var(--gold)':e.frm===HUB?'var(--cyan)':'var(--mag)'; if(!e.ok)col='var(--red)';
  var rec=(Date.parse(e.ts)-ts0)/((ts1-ts0)||1), op=(0.25+0.75*rec).toFixed(2);
- svg+='<path id="p'+i+'" class="edge'+(e.ok?'':' ng')+(e.removed?' rm':'')+'" data-i="'+i+'" d="M'+x1+','+y1+' Q'+(mx+ox)+','+(my+oy)+' '+x2+','+y2+'" stroke="'+col+'" opacity="'+op+'" marker-end="url(#ah)"><title>'+esc(e.t+' '+e.frm+' → '+e.to+'\n'+e.summary+(e.preview&&e.preview!==e.summary?'\n'+e.preview:''))+'</title></path>';
+ svg+='<path id="p'+i+'" class="edge'+(e.ok?'':' ng')+(e.removed?' rm':'')+(isNew?' new':'')+'" data-i="'+i+'" d="'+d+'" stroke="'+col+'" opacity="'+op+'" marker-end="url(#ah)"><title>'+esc(e.t+' '+e.frm+' → '+e.to+'\n'+e.summary+(e.preview&&e.preview!==e.summary?'\n'+e.preview:''))+'</title></path>';
  svg+='<g id="env'+i+'" opacity="0"><rect x="-8" y="-6" width="16" height="12" fill="#fff" stroke="#333"/><polyline points="-8,-6 0,2 8,-6" fill="none" stroke="#333"/><animateMotion id="am'+i+'" dur="0.9s" begin="indefinite" fill="remove"><mpath href="#p'+i+'"/></animateMotion></g>';});
+svg+=flows;  // 新着の白い破線は全矢印の上・机の下
 D.tracks.forEach(function(t){var p=pos[t.name];if(p)svg+=desk(p[0],p[1],t,false);});
 if(hubVisible)svg+=desk(CX,CY,D.hub,true);
 // 人間＝最後に話しかけた席の横に1人（席には座らない・歩き回る）。前回位置を覚えておき、席が変われば歩いて移動する。
@@ -652,6 +659,7 @@ function renderLog(){log.innerHTML='';var lastDay='';
  ord.textContent=desc?'⇅ 最新が上':'⇅ 最新が下'; log.scrollTop=desc?0:log.scrollHeight;}
 function hl(i){document.querySelectorAll('.hl').forEach(function(x){x.classList.remove('hl');});var p=document.getElementById('p'+i),r=document.querySelector('.row[data-i="'+i+'"]');if(p){p.classList.add('hl');p.parentNode.appendChild(p);}if(r){r.classList.add('hl');r.scrollIntoView({block:'nearest'});}}
 document.querySelectorAll('.edge').forEach(function(p){p.onclick=function(){hl(+p.dataset.i);};});
+fresh.forEach(function(f){setTimeout(function(){var p=document.getElementById('p'+f[0]);if(p)p.classList.remove('new');var q=document.getElementById('f'+f[0]);if(q)q.remove();},f[1]);});  // 15 分たったら破線を止める（再読込なしでも）
 document.getElementById('play').onclick=function(){D.edges.forEach(function(e,i){setTimeout(function(){hl(i);var g=document.getElementById('env'+i),a=document.getElementById('am'+i);if(!g)return;g.setAttribute('opacity','1');a.beginElement();setTimeout(function(){g.setAttribute('opacity','0');},900);},i*950);});};
 ord.onclick=function(){desc=!desc;try{localStorage.setItem('csv-log-desc',desc?'1':'0');}catch(e){}renderLog();};
 renderLog();
@@ -695,7 +703,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
 <style>{CSS}</style></head>
 <body>
 <header><div><h1>🏢 バーチャルオフィス</h1>
-<div class="sub">いま <b id="clock"></b> ／ 生成 {now} ／ 席=トラック・人=稼働セッション・矢印=SendMessage（新しいほど濃い）・席にマウスで詳細</div></div>
+<div class="sub">いま <b id="clock"></b> ／ 生成 {now} ／ 席=トラック・人=稼働セッション・矢印=SendMessage（新しいほど濃い・15分以内は動く）・席にマウスで詳細</div></div>
 {tiles}
 <button class="tgl" id="play" type="button">▶ 流れを再生</button>
 <div class="navs">{nav_html("office")}<button class="tgl" id="tgl" type="button"></button></div>
