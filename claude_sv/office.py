@@ -179,6 +179,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     unread = sum(1 for e in edges if e["ok"] and not e["removed"] and e["read"] is False)
     failed = sum(1 for e in edges if not e["ok"])
     return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(), "sprite_themes": load_sprite_themes(),
+            "sprite_default": (cfg.get("office") or {}).get("sprite_theme", ""),  # 既定テーマ（プルダウン未選択時）
             "islands": build_islands(order, cfg),
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
@@ -248,12 +249,12 @@ var PAL={M:'#b8c0cc',V:'#5ad1e6',B:'#222'};
 var THEMES=D.sprite_themes||{}, SP=D.sprites||{}, tints={}, sprSel='';
 try{sprSel=localStorage.getItem('csv-sprite-theme')||'';}catch(e){}
 try{var sprQ=new URLSearchParams(location.search).get('spr');if(sprQ!==null)sprSel=sprQ;}catch(e){}  // ?spr=ninja で一時指定（スクショ・共有用）
-(function(){var sel=document.getElementById('spr');if(!sel)return;var E=function(v){return String(v).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});};var opts=[['','既定（直下の絵／無ければコード内）']];
+(function(){var sel=document.getElementById('spr');if(!sel)return;var E=function(v){return String(v).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});};var defT=D.sprite_default||'';var opts=[['','既定'+(defT&&THEMES[defT.split('/')[0]]?'＝'+defT:'（直下の絵／無ければコード内）')]];
  Object.keys(THEMES).forEach(function(t){opts.push([t,t]);Object.keys(THEMES[t]).filter(function(k){return /^human-\d+$/.test(k);}).sort().forEach(function(k){opts.push([t+'/'+k,t+'（人間'+k.slice(6)+'）']);});});
  if(sprSel&&!opts.some(function(o){return o[0]===sprSel;}))sprSel='';
  sel.innerHTML=opts.map(function(o){return '<option value="'+E(o[0])+'"'+(o[0]===sprSel?' selected':'')+'>'+E(o[1])+'</option>';}).join('');
  sel.onchange=function(){try{localStorage.setItem('csv-sprite-theme',sel.value);}catch(e){}location.reload();};
- if(sprSel){var parts=sprSel.split('/'),th=THEMES[parts[0]];if(th){SP={};Object.keys(th).forEach(function(k){SP[k]=th[k];});if(parts[1]&&th[parts[1]])SP.human=th[parts[1]];}}})();
+ var eff=sprSel||defT; if(eff){var parts=eff.split('/'),th=THEMES[parts[0]];if(th){SP={};Object.keys(th).forEach(function(k){SP[k]=th[k];});if(parts[1]&&th[parts[1]])SP.human=th[parts[1]];}}})();
 function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" width="36" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"'+(filt?' filter="url(#'+filt+')"':'')+'/>';}
 function sprite(x,y,shirt,model){var key=model&&SP['agent-'+(/opus/.test(model)?'opus':/sonnet/.test(model)?'sonnet':/haiku/.test(model)?'haiku':/fable/.test(model)?'fable':'')];
  if(key)return img(key,x,y,null);
