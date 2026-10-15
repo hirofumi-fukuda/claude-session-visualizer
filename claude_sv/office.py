@@ -8,6 +8,8 @@ S22（10/15）: ビル＝テナント（部屋）＝ワークスペース単位�
 workspace_labels の表示名]} の最初の部屋が本業（ハブと島わけ=teams はここ）・残りは部屋ごとに席を格子で並べる・
 どの部屋にも無い ws は other_tenant（既定「その他」）。?ws=〈部屋名の一部〉／ヘッダのボタンで1部屋だけに絞れる
 （隠した部屋宛の矢印は右端のドアへ出る＝壁の外へ出る線）。
+🧲 ハブ寄せ（S22）: cfg.office.live_near_hub=true で稼働中の席を島の中でハブに近いマスから詰める（休眠席は残りに
+config の順）。ヘッダの 🧲 ボタンで切替（localStorage）。席は状態で動く＝同じトラックが毎回同じマスとは限らない。
 
 更新の仕組みは daily_view と同じ: 中身が変わった時だけ office.html を書き、ページは office_stamp.js を
 数秒おきに読んで差分があればリロードする（スクロール・選択は保たない＝配置図なので不要）。
@@ -268,6 +270,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "sprite_variants": (cfg.get("office") or {}).get("sprite_variants") or {},  # トラック名→種類名の固定割当（任意）
             "sprite_track_themes": (cfg.get("office") or {}).get("sprite_track_themes") or {},  # トラック名→テーマ名（席ごとの別テーマ・例: 業務ハブだけ ninja）
             "islands": islands, "rooms": rooms,
+            "live_near_hub": bool((cfg.get("office") or {}).get("live_near_hub", False)),  # 🧲 稼働席をハブ側に詰める既定（S22）
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
             "window_hours": (cfg.get("office") or {}).get("window_hours", 48)}
@@ -380,6 +383,10 @@ var pos={}, floors='', walls='', door={}, trackRoom={}, hubVisible=true;
 var ROOMS=D.rooms||[];
 // ---------- ビル＝テナント（部屋・S22）。?ws=〈部屋名の一部〉が最優先・無ければ localStorage（ヘッダのボタンで保存）・既定=全館 ----------
 var wsSel=''; try{wsSel=localStorage.getItem('csv-office-ws')||'';}catch(e){}
+// 🧲 ハブ寄せ（S22）: 稼働中の席を島の中でハブに近いマスから詰める。既定=cfg.office.live_near_hub・ヘッダのボタンで切替（localStorage）
+var MAGNET=!!D.live_near_hub; try{var mg=localStorage.getItem('csv-office-magnet');if(mg!==null)MAGNET=(mg==='1');}catch(e){}
+var TL={}; D.tracks.forEach(function(t){TL[t.name]=t;});
+function liveRank(n){var t=TL[n];return (t&&(t.live||(t.occupied_by&&t.occupied_by.length)))?0:1;}
 try{var wsQ=new URLSearchParams(location.search).get('ws');if(wsQ!==null)wsSel=wsQ;}catch(e){}
 function roomKey(s){return String(s||'').replace(/\s+/g,'').toLowerCase();}
 function roomMatch(r,q){return !q||roomKey(r.name).indexOf(roomKey(q))>=0;}
@@ -388,9 +395,11 @@ var hidden=ROOMS.filter(function(r){return shown.indexOf(r)<0;});
 function roomTracks(r){var ts=r.main?[HUB]:(r.tracks||[]).slice();if(r.main)(r.islands||[]).forEach(function(i){ts=ts.concat(i.tracks);});return ts;}
 ROOMS.forEach(function(r){roomTracks(r).forEach(function(t){trackRoom[t]=r.name;});});
 function doorOf(name){var rn=trackRoom[name];return (rn&&door[rn])||null;}
-(function(){var el=document.getElementById('wsf');if(!el||!ROOMS.length)return;var h='';
- [['','🏢 全館']].concat(ROOMS.map(function(r){return [r.name,r.name];})).forEach(function(o){var on=o[0]===''?!wsSel:(shown.length===1&&shown[0].name===o[0]);h+='<button type="button" class="tgl wsb'+(on?' on':'')+'" data-ws="'+esc(o[0])+'">'+esc(o[1])+'</button>';});
- el.innerHTML=h; el.querySelectorAll('.wsb').forEach(function(b){b.onclick=function(){var v=b.dataset.ws;try{localStorage.setItem('csv-office-ws',v);}catch(e){}var u=new URL(location.href);if(v)u.searchParams.set('ws',v);else u.searchParams.delete('ws');location.href=u.toString();};});})();
+(function(){var el=document.getElementById('wsf');if(!el)return;var h='';
+ if(ROOMS.length)[['','🏢 全館']].concat(ROOMS.map(function(r){return [r.name,r.name];})).forEach(function(o){var on=o[0]===''?!wsSel:(shown.length===1&&shown[0].name===o[0]);h+='<button type="button" class="tgl wsb'+(on?' on':'')+'" data-ws="'+esc(o[0])+'">'+esc(o[1])+'</button>';});
+ h+='<button type="button" id="magnet" class="tgl wsb'+(MAGNET?' on':'')+'" title="稼働中の席を島の中でハブ側のマスから詰める（クリックで切替）">🧲 ハブ寄せ</button>';
+ el.innerHTML=h; el.querySelectorAll('.wsb[data-ws]').forEach(function(b){b.onclick=function(){var v=b.dataset.ws;try{localStorage.setItem('csv-office-ws',v);}catch(e){}var u=new URL(location.href);if(v)u.searchParams.set('ws',v);else u.searchParams.delete('ws');location.href=u.toString();};});
+ var mb=document.getElementById('magnet');if(mb)mb.onclick=function(){try{localStorage.setItem('csv-office-magnet',MAGNET?'0':'1');}catch(e){}location.reload();};})();
 var byName={}; D.tracks.forEach(function(t){byName[t.name]=t;}); byName[HUB]=D.hub;
 function roomCount(r){var ts=roomTracks(r),live=0;ts.forEach(function(n){var t=byName[n];if(t)live+=(t.occupied_by||[]).length;});return ts.length+'席・'+live+'人';}
 var PX=166,PY=135,PAD=22,TITLE=26,G=48,M=24,RP=18,RT=36,RG=44;
@@ -406,11 +415,14 @@ function layoutIslands(islands,OX,OY){
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var w=Math.max.apply(null,L.map(function(x){return x.w;})),h=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
   colW[c[0]]=Math.max(colW[c[0]],w);rowH[c[1]]=Math.max(rowH[c[1]],h);});
  var colX=[OX,OX+colW[0]+(colW[0]?G:0)], rowY=[OY,OY+rowH[0]+(rowH[0]?G:0)]; colX[2]=colX[1]+colW[1]+G; rowY[2]=rowY[1]+rowH[1]+G;
+ var hx=colX[1]+colW[1]/2, hy=rowY[1]+rowH[1]/2+30;  // ハブの中心（🧲 の距離の基準）
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var tot=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
   var y=c[1]===0?rowY[0]+rowH[0]-tot:c[1]===2?rowY[2]:rowY[1]+(rowH[1]-tot)/2;
   L.forEach(function(isl){var x=c[0]===0?colX[0]+colW[0]-isl.w:c[0]===2?colX[2]:colX[1]+(colW[1]-isl.w)/2;var col=ISL_COL[islands.indexOf(isl)%ISL_COL.length];
    floors+='<rect x="'+x+'" y="'+y+'" width="'+isl.w+'" height="'+isl.h+'" rx="12" fill="'+col+'" fill-opacity="0.10" stroke="'+col+'" stroke-opacity="0.45" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+col+'">'+esc(isl.name)+'</text><text x="'+(x+isl.w-10)+'" y="'+(y+18)+'" text-anchor="end" font-size="11" fill="'+col+'" fill-opacity="0.8">'+isl.tracks.length+'席</text>';
-   isl.tracks.forEach(function(name,k){var cc=k%isl.cols,rr=Math.floor(k/isl.cols);pos[name]=[Math.round(x+PAD+60+cc*PX),Math.round(y+PAD+TITLE+62+rr*PY)];});
+   var cellsOf=[];for(var k=0;k<isl.tracks.length;k++){var cc=k%isl.cols,rr=Math.floor(k/isl.cols);cellsOf.push([Math.round(x+PAD+60+cc*PX),Math.round(y+PAD+TITLE+62+rr*PY)]);}
+   var names=isl.tracks.slice();if(MAGNET){cellsOf.sort(function(a,b){return Math.hypot(a[0]-hx,a[1]-hy)-Math.hypot(b[0]-hx,b[1]-hy);});names.sort(function(a,b){return liveRank(a)-liveRank(b);});}
+   names.forEach(function(name,k){pos[name]=cellsOf[k];});
    y+=isl.h+G;});});
  return {w:(colW[2]?colX[2]+colW[2]:colX[1]+colW[1])-OX, h:(rowH[2]?rowY[2]+rowH[2]:rowY[1]+rowH[1])-OY, cx:colX[1]+colW[1]/2, cy:rowY[1]+rowH[1]/2+30};}
 // 本業以外の部屋: 島なし・席を格子に並べるだけ
