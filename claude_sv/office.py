@@ -96,8 +96,13 @@ def load_sprite_themes(sprite_dir: Path = SPRITE_DIR) -> dict:
     for d in sorted(sprite_dir.iterdir()):
         if not d.is_dir() or d.name.startswith((".", "_")) or d.name == "samples":
             continue
-        sp = load_sprites(d)
-        for f in sorted(d.glob("human-*.png")) + sorted(d.glob("human-*.svg")):
+        # テーマ内は human*.png / agent*.png を全部拾う（sheet.png 等は除外）。命名＝README「種類・モデル・ポーズ」
+        sp = {}
+        for f in sorted(d.iterdir()):
+            if f.suffix not in (".png", ".svg") or not f.stem.startswith(("human", "agent")):
+                continue
+            if f.suffix == ".svg" and f.stem in sp:
+                continue  # png 優先
             mime = "image/png" if f.suffix == ".png" else "image/svg+xml"
             try:
                 sp[f.stem] = f"data:{mime};base64," + base64.b64encode(f.read_bytes()).decode()
@@ -180,6 +185,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     failed = sum(1 for e in edges if not e["ok"])
     return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(), "sprite_themes": load_sprite_themes(),
             "sprite_default": (cfg.get("office") or {}).get("sprite_theme", ""),  # 既定テーマ（プルダウン未選択時）
+            "sprite_variants": (cfg.get("office") or {}).get("sprite_variants") or {},  # トラック名→種類名の固定割当（任意）
             "islands": build_islands(order, cfg),
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
@@ -256,9 +262,18 @@ try{var sprQ=new URLSearchParams(location.search).get('spr');if(sprQ!==null)sprS
  sel.onchange=function(){try{localStorage.setItem('csv-sprite-theme',sel.value);}catch(e){}location.reload();};
  var eff=sprSel||defT; if(eff){var parts=eff.split('/'),th=THEMES[parts[0]];if(th){SP={};Object.keys(th).forEach(function(k){SP[k]=th[k];});if(parts[1]&&th[parts[1]])SP.human=th[parts[1]];}}})();
 function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" width="36" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"'+(filt?' filter="url(#'+filt+')"':'')+'/>';}
-function sprite(x,y,shirt,model){var key=model&&SP['agent-'+(/opus/.test(model)?'opus':/sonnet/.test(model)?'sonnet':/haiku/.test(model)?'haiku':/fable/.test(model)?'fable':'')];
- if(key)return img(key,x,y,null);
- if(SP.agent){var id='tint'+shirt.replace('#','');tints[id]=shirt;return img(SP.agent,x,y,id);}
+// テーマ内の「種類」＝ agent-<種類>[-<モデル>][-<ポーズ>].png の <種類>（モデル名・ポーズ名以外のトークン）。トラック名のハッシュで固定割当（config office.sprite_variants で上書き可）
+var MODELS={opus:1,sonnet:1,haiku:1,fable:1,unknown:1}, POSES={typing:1,idle:1,wait:1};
+var VARS=(function(){var vs={};Object.keys(SP).forEach(function(k){var t=k.split('-');if(t[0]!=='agent')return;t.slice(1).forEach(function(w){if(!MODELS[w]&&!POSES[w])vs[w]=1;});});return Object.keys(vs).sort();})();
+var VOVR=D.sprite_variants||{};
+function variantFor(track){if(!VARS.length)return '';if(VOVR[track]&&VARS.indexOf(VOVR[track])>=0)return VOVR[track];var h=5381;for(var i=0;i<track.length;i++)h=((h*33)^track.charCodeAt(i))>>>0;return VARS[h%VARS.length];}
+function modelKey(model){return /opus/.test(model||'')?'opus':/sonnet/.test(model||'')?'sonnet':/haiku/.test(model||'')?'haiku':/fable/.test(model||'')?'fable':'unknown';}
+function sprite(x,y,shirt,model,status,track){var mk=modelKey(model),pose=status==='busy'?'typing':status==='perm'?'wait':'idle',v=variantFor(track||'');
+ var direct=[],gray=[];
+ if(v){direct.push('agent-'+v+'-'+mk+'-'+pose,'agent-'+v+'-'+mk);gray.push('agent-'+v+'-'+pose,'agent-'+v);}
+ direct.push('agent-'+mk+'-'+pose,'agent-'+mk);gray.push('agent-'+pose,'agent');
+ for(var i=0;i<direct.length;i++)if(SP[direct[i]])return img(SP[direct[i]],x,y,null);
+ for(var j=0;j<gray.length;j++)if(SP[gray[j]]){var id='tint'+shirt.replace('#','');tints[id]=shirt;return img(SP[gray[j]],x,y,id);}
  var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=(c==='T'||c==='A')?shirt:PAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
 var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
 var unreadBy={}; D.edges.forEach(function(e){if(e.ok&&!e.removed&&e.read===false)unreadBy[e.to]=(unreadBy[e.to]||0)+1;});
@@ -267,7 +282,7 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
  var g='<g class="desk">';
  var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):'空席（稼働セッションなし）')+'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' ');
  g+='<title>'+esc(tip)+'</title>';
- if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model)+'</g>';});}
+ if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});}
  else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="#3a3e58"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="#2a2d44"/>';}
  g+='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="#8b5a2b"/><rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="8" fill="#b57a3e"/>';
  var nm=big?2:1;for(var i=0;i<nm;i++){var mx=x-(nm-1)*22+i*44-16;g+='<rect x="'+mx+'" y="'+(y+10)+'" width="32" height="22" fill="#111"/><rect x="'+(mx+2)+'" y="'+(y+12)+'" width="28" height="18" fill="'+SCR[st]+'"/>';if(st==='busy')g+='<rect class="cur" x="'+(mx+6)+'" y="'+(y+22)+'" width="4" height="4" fill="#fff"/>';}
