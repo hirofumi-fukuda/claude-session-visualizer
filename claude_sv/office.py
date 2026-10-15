@@ -7,6 +7,7 @@
 更新の仕組みは daily_view と同じ: 中身が変わった時だけ office.html を書き、ページは office_stamp.js を
 数秒おきに読んで差分があればリロードする（スクロール・選択は保たない＝配置図なので不要）。
 """
+import base64
 import hashlib
 import html as html_mod
 import json
@@ -25,6 +26,25 @@ def _fmt_local(ts_iso: str) -> str:
         return datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).astimezone().strftime("%m/%d %H:%M")
     except (AttributeError, ValueError):
         return "?"
+
+
+SPRITE_DIR = Path(__file__).resolve().parent.parent / "assets" / "sprites"
+SPRITE_NAMES = ("human", "agent", "agent-opus", "agent-sonnet", "agent-haiku", "agent-fable")
+
+
+def load_sprites(sprite_dir: Path = SPRITE_DIR) -> dict:
+    """assets/sprites/<name>.png|svg を data URI にして返す（無ければ空＝コード内ピクセル絵）。仕様=同フォルダ README。"""
+    out = {}
+    for name in SPRITE_NAMES:
+        for ext, mime in (("png", "image/png"), ("svg", "image/svg+xml")):
+            f = sprite_dir / f"{name}.{ext}"
+            if f.exists():
+                try:
+                    out[name] = f"data:{mime};base64," + base64.b64encode(f.read_bytes()).decode()
+                except OSError:
+                    pass
+                break
+    return out
 
 
 def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
@@ -97,7 +117,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
         })
     unread = sum(1 for e in edges if e["ok"] and not e["removed"] and e["read"] is False)
     failed = sum(1 for e in edges if not e["ok"])
-    return {"hub": hub, "tracks": order, "edges": edges, "human": human,
+    return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(),
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
             "window_hours": (cfg.get("office") or {}).get("window_hours", 48)}
@@ -160,7 +180,12 @@ var MODEL_COL=function(m){return !m?'#c24b4b':/opus/.test(m)?'#8a5cf6':/sonnet/.
 // エージェント＝ロボット（アンテナ・金属の頭・光る目）。シャツ色＝モデル。人間（下の HS）とは頭の形で見分ける
 var SPR=["....AA......","....AA......","..MMMMMMMM..",".MMMMMMMMMM.",".MVVMMMMVVM.",".MMMMMMMMMM.","..MMMMMMMM..","....MM......","..TTTTTTTT..",".TTTTTTTTTT.",".M.TTTTTT.M.",".M.TTTTTT.M.","...TTTTTT...","...MM..MM...","...MM..MM...","...BB..BB..."];
 var PAL={M:'#b8c0cc',V:'#5ad1e6',B:'#222'};
-function sprite(x,y,shirt){var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=(c==='T'||c==='A')?shirt:PAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
+var SP=D.sprites||{}, tints={};
+function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" width="36" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"'+(filt?' filter="url(#'+filt+')"':'')+'/>';}
+function sprite(x,y,shirt,model){var key=model&&SP['agent-'+(/opus/.test(model)?'opus':/sonnet/.test(model)?'sonnet':/haiku/.test(model)?'haiku':/fable/.test(model)?'fable':'')];
+ if(key)return img(key,x,y,null);
+ if(SP.agent){var id='tint'+shirt.replace('#','');tints[id]=shirt;return img(SP.agent,x,y,id);}
+ var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=(c==='T'||c==='A')?shirt:PAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
 var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
 var unreadBy={}; D.edges.forEach(function(e){if(e.ok&&!e.removed&&e.read===false)unreadBy[e.to]=(unreadBy[e.to]||0)+1;});
 function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
@@ -168,7 +193,7 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
  var g='<g class="desk">';
  var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):'空席（稼働セッションなし）')+'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' ');
  g+='<title>'+esc(tip)+'</title>';
- if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model))+'</g>';});}
+ if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model)+'</g>';});}
  else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="#3a3e58"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="#2a2d44"/>';}
  g+='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="#8b5a2b"/><rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="8" fill="#b57a3e"/>';
  var nm=big?2:1;for(var i=0;i<nm;i++){var mx=x-(nm-1)*22+i*44-16;g+='<rect x="'+mx+'" y="'+(y+10)+'" width="32" height="22" fill="#111"/><rect x="'+(mx+2)+'" y="'+(y+12)+'" width="28" height="18" fill="'+SCR[st]+'"/>';if(st==='busy')g+='<rect class="cur" x="'+(mx+6)+'" y="'+(y+22)+'" width="4" height="4" fill="#fff"/>';}
@@ -193,7 +218,7 @@ svg+=desk(CX,CY,D.hub,true);
 // 人間＝最後に話しかけた席の横に1人（席には座らない・歩き回る）。前回位置を覚えておき、席が変われば歩いて移動する。
 var HS=["....HHHH....","...HHHHHH...","...HSSSSH...","...SSSSSS...","...SESSES...","...SSSSSS...","....SSSS....","..GGGGGGGG..",".GGGGGGGGGG.",".G.GGGGGG.G.",".S.GGGGGG.S.","...GGGGGG...","...KKKKKK...","...KK..KK...","...KK..KK...","...BB..BB..."];
 var HP={H:'#111',S:'#f2c9a0',E:'#222',G:'#2e9e6b',K:'#444',B:'#222'};
-function hsprite(x,y){var s='',sc=3;HS.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+HP[c]+'"/>';});});return s;}
+function hsprite(x,y){if(SP.human)return img(SP.human,x,y,null);var s='',sc=3;HS.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+HP[c]+'"/>';});});return s;}
 function hpos(track){var p=pos[track];if(!p)return null;var w=track===HUB?190:120;return [p[0]+w/2+10,p[1]-50];}
 if(D.human&&pos[D.human.track]){var hp=hpos(D.human.track),prev=null;try{prev=JSON.parse(localStorage.getItem('csv-human-at')||'null');}catch(e){}
  var from=(prev&&prev.track!==D.human.track)?hpos(prev.track):null;
@@ -203,6 +228,7 @@ if(D.human&&pos[D.human.track]){var hp=hpos(D.human.track),prev=null;try{prev=JS
   '<rect x="'+(hp[0]-6)+'" y="'+(hp[1]-22)+'" width="'+(D.human.name.length*11+ago.length*7+30)+'" height="17" rx="3" fill="#fff" stroke="#333"/><text x="'+(hp[0]-2)+'" y="'+(hp[1]-9)+'" font-size="11" fill="#222">👤 '+esc(D.human.name)+' '+esc(ago)+'</text>'+
   (from?'<animateTransform attributeName="transform" type="translate" from="'+(from[0]-hp[0])+' '+(from[1]-hp[1])+'" to="0 0" dur="1.4s" fill="freeze" calcMode="spline" keySplines="0.4 0 0.2 1"/>':'')+'</g>';
  try{localStorage.setItem('csv-human-at',JSON.stringify({track:D.human.track}));}catch(e){}}
+Object.keys(tints).forEach(function(id){svg+='<filter id="'+id+'" x="0" y="0" width="1" height="1"><feFlood flood-color="'+tints[id]+'" result="c"/><feComposite in="c" in2="SourceAlpha" operator="in" result="m"/><feBlend in="m" in2="SourceGraphic" mode="multiply"/></filter>';});
 svg+='</svg>';
 document.getElementById('scene').innerHTML=svg;
 var log=document.getElementById('log'), lastDay='';
