@@ -32,7 +32,7 @@
     "dir": "~/path/to/daily",
     "open": ["最重要", "Today's Focus", "本日の予定 > TOP", "返信待ち"]
   },
-  "_office_comment": "バーチャルオフィス（S21・reports/office.html）。human=人間の表示名（最後に話しかけた席の横に立つ）。window_hours=やり取りを拾う時間幅。teams=島わけ（島名→トラック名の配列・config の順に ハブ右/左/上/下/右上/左上/右下/左下 へ）。表にないトラックは other_island（既定「その他」）。show_idle_tracks=teams に載っていて時間幅内にセッションが無いトラックも空席（半透明）で出す（既定 true）。island_slots=島の置き場を指定（r/l/t/b/tr/tl/br/bl）。sprite_theme=既定の絵のテーマ（assets/sprites/<テーマ>/・\"office/human-3\" のように人間候補も指定可）",
+  "_office_comment": "バーチャルオフィス（S21・reports/office.html）。human=人間の表示名（最後に話しかけた席の横に立つ）。window_hours=やり取りを拾う時間幅。teams=島わけ（島名→トラック名の配列・config の順に ハブ右/左/上/下/右上/左上/右下/左下 へ）。表にないトラックは other_island（既定「その他」）。show_idle_tracks=teams に載っていて時間幅内にセッションが無いトラックも空席（半透明）で出す（既定 true）。island_slots=島の置き場を指定（r/l/t/b/tr/tl/br/bl）。sprite_theme=既定の絵のテーマ（assets/sprites/<テーマ>/・\"office/human-3\" のように人間候補も指定可）。sprite_track_themes=席ごとに別テーマ（{\"トラック名\": \"テーマ\"}・例: 業務ハブだけ ninja。そのテーマに無い絵は画面のテーマには落ちず、テーマ内の粗い名前へ落ちる）",
   "office": {
     "human": "人間",
     "window_hours": 48,
@@ -44,7 +44,8 @@
     "island_slots": { "💼 副業": "bl" },
     "other_island": "その他",
     "show_idle_tracks": true,
-    "sprite_theme": "animal"
+    "sprite_theme": "animal",
+    "sprite_track_themes": { "業務ハブ": "ninja" }
   },
   "_project_dirs_comment": "track_record_gen 専用: セッション履歴（🔢 セッション履歴）セクションを持つプロジェクト管理ファイルが入ったディレクトリ。path（必須）と label（表示用ラベル）を指定。OneDriveのprojects/フォルダ等を指定する。",
   "project_dirs": [

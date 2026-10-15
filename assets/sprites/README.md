@@ -21,3 +21,6 @@
 - `<モデル>` … `opus` / `sonnet` / `haiku` / `fable` / `unknown`（無ければグレー版に赤 #c24b4b を乗算）
 - `<ポーズ>` … `typing`（作業中）/ `idle`（待機）/ `wait`（許可待ち）
 - 人間は `human.png`（候補 `human-2.png`…）のまま
+
+## 席ごとに別テーマ
+`config.local.json` `office.sprite_track_themes`（{"トラック名": "テーマ"}）で、特定の席だけ別フォルダの絵にできる（例: `{"業務ハブ": "ninja"}` ＝ハブは忍者・他は画面のテーマ）。種類・ポーズの落ち方はそのテーマ内で同じ（無ければ `agent-<モデル>`→`agent`）。

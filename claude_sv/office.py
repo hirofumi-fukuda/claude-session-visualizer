@@ -200,6 +200,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(), "sprite_themes": load_sprite_themes(),
             "sprite_default": (cfg.get("office") or {}).get("sprite_theme", ""),  # 既定テーマ（プルダウン未選択時）
             "sprite_variants": (cfg.get("office") or {}).get("sprite_variants") or {},  # トラック名→種類名の固定割当（任意）
+            "sprite_track_themes": (cfg.get("office") or {}).get("sprite_track_themes") or {},  # トラック名→テーマ名（席ごとの別テーマ・例: 業務ハブだけ ninja）
             "islands": build_islands(order, cfg),
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
@@ -278,16 +279,18 @@ try{var sprQ=new URLSearchParams(location.search).get('spr');if(sprQ!==null)sprS
 function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" width="36" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"'+(filt?' filter="url(#'+filt+')"':'')+'/>';}
 // テーマ内の「種類」＝ agent-<種類>[-<モデル>][-<ポーズ>].png の <種類>（モデル名・ポーズ名以外のトークン）。トラック名のハッシュで固定割当（config office.sprite_variants で上書き可）
 var MODELS={opus:1,sonnet:1,haiku:1,fable:1,unknown:1}, POSES={typing:1,idle:1,wait:1};
-var VARS=(function(){var vs={};Object.keys(SP).forEach(function(k){var t=k.split('-');if(t[0]!=='agent')return;t.slice(1).forEach(function(w){if(!MODELS[w]&&!POSES[w])vs[w]=1;});});return Object.keys(vs).sort();})();
-var VOVR=D.sprite_variants||{};
-function variantFor(track){if(!VARS.length)return '';if(VOVR[track]&&VARS.indexOf(VOVR[track])>=0)return VOVR[track];var h=5381;for(var i=0;i<track.length;i++)h=((h*33)^track.charCodeAt(i))>>>0;return VARS[h%VARS.length];}
+function varsOf(M){if(M.__vars)return M.__vars;var vs={};Object.keys(M).forEach(function(k){var t=k.split('-');if(t[0]!=='agent')return;t.slice(1).forEach(function(w){if(!MODELS[w]&&!POSES[w])vs[w]=1;});});return (M.__vars=Object.keys(vs).sort());}
+var VOVR=D.sprite_variants||{}, TOVR=D.sprite_track_themes||{};
+function variantFor(track,M){var VARS=varsOf(M||SP);if(!VARS.length)return '';if(VOVR[track]&&VARS.indexOf(VOVR[track])>=0)return VOVR[track];var h=5381;for(var i=0;i<track.length;i++)h=((h*33)^track.charCodeAt(i))>>>0;return VARS[h%VARS.length];}
+// 席ごとの別テーマ（config office.sprite_track_themes {"トラック名": "テーマ"}）。テーマが無ければ画面のテーマに落ちる
+function mapFor(track){var th=TOVR[track];if(th){var tm=THEMES[String(th).split('/')[0]];if(tm)return tm;}return SP;}
 function modelKey(model){return /opus/.test(model||'')?'opus':/sonnet/.test(model||'')?'sonnet':/haiku/.test(model||'')?'haiku':/fable/.test(model||'')?'fable':'unknown';}
-function sprite(x,y,shirt,model,status,track){var mk=modelKey(model),pose=status==='busy'?'typing':status==='perm'?'wait':'idle',v=variantFor(track||'');
+function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKey(model),pose=status==='busy'?'typing':status==='perm'?'wait':'idle',v=variantFor(track||'',M);
  var direct=[],gray=[];
  if(v){direct.push('agent-'+v+'-'+mk+'-'+pose,'agent-'+v+'-'+mk);gray.push('agent-'+v+'-'+pose,'agent-'+v);}
  direct.push('agent-'+mk+'-'+pose,'agent-'+mk);gray.push('agent-'+pose,'agent');
- for(var i=0;i<direct.length;i++)if(SP[direct[i]])return img(SP[direct[i]],x,y,null);
- for(var j=0;j<gray.length;j++)if(SP[gray[j]]){var id='tint'+shirt.replace('#','');tints[id]=shirt;return img(SP[gray[j]],x,y,id);}
+ for(var i=0;i<direct.length;i++)if(M[direct[i]])return img(M[direct[i]],x,y,null);
+ for(var j=0;j<gray.length;j++)if(M[gray[j]]){var id='tint'+shirt.replace('#','');tints[id]=shirt;return img(M[gray[j]],x,y,id);}
  var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=(c==='T'||c==='A')?shirt:PAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
 var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
 var unreadBy={}; D.edges.forEach(function(e){if(e.ok&&!e.removed&&e.read===false)unreadBy[e.to]=(unreadBy[e.to]||0)+1;});
