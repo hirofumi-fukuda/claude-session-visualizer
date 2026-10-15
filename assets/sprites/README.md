@@ -9,3 +9,8 @@
   - `human.png` … 人間（最後に話しかけた席の横に立つ1人）
   - `agent.png` … エージェント共通（グレー1枚＝モデル色を色相で乗せる）
   - または `agent-opus.png` / `agent-sonnet.png` / `agent-haiku.png` / `agent-fable.png`（モデル別に描く場合・共通より優先）
+
+## テーマ（サブフォルダ）
+- `assets/sprites/<テーマ>/` に上と同じファイル名で置くと、office.html ヘッダ右の 🎨 プルダウンで切り替えられる（選択は localStorage・`?spr=<テーマ>` で URL 指定も可）
+- 人間の候補が複数あるなら `human-2.png` `human-3.png` … → 「<テーマ>（人間2）」として別の選択肢になる
+- 直下の固定名は「既定」。`samples/` は作業用（絵の正本 `themes/*.py` と生成 `gen.py`）で読み込み対象外
