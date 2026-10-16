@@ -24,7 +24,7 @@ from pathlib import Path
 
 from .parser import _clean_user_text, _iter_text_items
 
-CACHE_VERSION = 2  # 2: 👤 人間ターン（humans）も記録（S23・1 からは user_names だけ引き継いで jsonl を読み直す）
+CACHE_VERSION = 3  # 2: 👤 人間ターン（humans）も記録／3: /rename の記録（custom-title・agent-name）も学習（S23・旧版からは user_names だけ引き継いで jsonl を読み直す）
 MATCH_SEC = 60          # 送信→受信箱投入の時刻差の許容（実測は 1〜3 秒）
 PEEK_LINES = 400        # 採番合言葉は先頭にある前提（live_board._peek と同じ）
 _HEX17 = re.compile(r"^[0-9a-f]{17}$")   # in-process サブエージェントの agentId（横断ではない）
@@ -126,6 +126,7 @@ def _scan_file(path: Path, state: dict) -> dict:
         hot = ('"SendMessage"' in line or "cross-session-message" in line
                or '"kind":"peer"' in line or '"kind": "peer"' in line
                or (pending and "tool_result" in line and any(k in line for k in pending))
+               or '"custom-title"' in line or '"agent-name"' in line
                or _maybe_human(line))
         if not hot:
             continue
@@ -151,6 +152,11 @@ def _scan_file(path: Path, state: dict) -> dict:
                       "body": _norm_body(inp.get("message")), "ok": None, "result": ""}
                 sends.append(ev)
                 pending[it.get("id") or f"noid-{len(sends)}"] = len(sends) - 1
+        elif t in ("custom-title", "agent-name"):
+            # /rename の記録。呼び出し直しで稼働台帳の名前が derived に戻っても、ここから席名を復元する（S23 ⑪）
+            name = (rec.get("agentName") if t == "agent-name" else rec.get("customTitle")) or ""
+            if name.strip():
+                state["rename"] = name.strip()
         elif t == "user":
             msg = rec.get("message") or {}
             origin = rec.get("origin") or {}
@@ -220,7 +226,7 @@ def _load_cache(path: Path) -> dict:
     try:
         with open(path, encoding="utf-8") as f:
             c = json.load(f)
-        if c.get("version") == 1:  # 1 → 2: 学んだ /rename 名は残し、jsonl は読み直す（humans を埋めるため）
+        if c.get("version") in (1, 2):  # 旧版: 学んだ /rename 名は残し、jsonl は読み直す（humans／rename を埋めるため）
             return {"version": CACHE_VERSION, "files": {}, "pipe_map": {}, "names": {},
                     "user_names": c.get("user_names") or {}}
         if c.get("version") == CACHE_VERSION:
@@ -229,6 +235,12 @@ def _load_cache(path: Path) -> dict:
     except (OSError, json.JSONDecodeError):
         pass
     return {"version": CACHE_VERSION, "files": {}, "pipe_map": {}, "names": {}, "user_names": {}}
+
+
+def learned_user_names(cache_path: Path) -> dict:
+    """cache が覚えている sid → /rename 名（稼働台帳 nameSource=user と jsonl の custom-title／agent-name から）。
+    履歴から呼び出し直したセッションは sessions/<pid>.json が derived で作り直されるので、席名はこちらで戻す（S23 ⑪）。"""
+    return dict(_load_cache(cache_path).get("user_names") or {})
 
 
 def _save_cache(path: Path, cache: dict):
@@ -328,6 +340,9 @@ def collect(claude_dir: Path, cache_path: Path, window_hours: float = 48,
     # 窓から外れたファイルは落とす（cache を肥大させない。戻ってきたら全読みし直すだけ）
     for key in [k for k in files if k not in seen]:
         files.pop(key)
+    for key, st in files.items():  # jsonl に残る /rename 名を学習（稼働台帳より新しい＝後勝ち・S23 ⑪）
+        if st.get("rename") and not Path(key).stem.startswith("agent-"):
+            cache["user_names"][Path(key).stem] = st["rename"]
     _save_cache(cache_path, cache)
 
     sends, recvs = [], []

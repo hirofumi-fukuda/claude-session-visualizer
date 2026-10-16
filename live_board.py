@@ -38,7 +38,7 @@ from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.modelbadge import MDL_CSS, model_badge
 from claude_sv.daily_view import write_daily
-from claude_sv.messages import human_text, collect as collect_messages, label_sessions, load_registry, recent_html
+from claude_sv.messages import human_text, collect as collect_messages, label_sessions, learned_user_names, load_registry, recent_html
 from claude_sv.office import away_cutoff, write_office
 from claude_sv.nav import nav_html
 from claude_sv.parser import _clean_user_text, _iter_text_items
@@ -584,6 +584,8 @@ def build_rows():
     states = _load_states(claude_dir)
     # /rename 名は claude agents --json に nameSource が無いので稼働台帳 sessions/*.json から（S23）
     registry = load_registry(claude_dir)
+    # 履歴から呼び出し直した席は台帳が derived に戻る → cache が覚えた /rename 名（jsonl の custom-title 由来）で補う（S23 ⑪）
+    learned = learned_user_names(REPO_ROOT / "cache" / "messages_cache.json")
     pins = _load_pins(cfg)
     pin_sids = {p["sid"] for p in pins}
     fresh_sec = cfg.get("fresh_working_sec", 30)
@@ -628,6 +630,8 @@ def build_rows():
         reg = registry.get(sid) or {}
         if reg.get("nameSource") == "user" and reg.get("name"):
             summary["user_name"] = reg["name"]  # /rename 名＝案件判定の最優先（mapping ⓪・S23）
+        elif learned.get(sid):
+            summary["user_name"] = learned[sid]  # 呼び出し直し（derived）でも前の /rename 名を席名に（S23 ⑪）
         mapper.map_session(summary)
 
         # 状態判定は resolve_state に集約（hook状態=ターン境界を主軸／jsonl mtimeはフォールバック）。
