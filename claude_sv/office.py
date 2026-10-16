@@ -322,8 +322,28 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             if lh and (human is None or lh["ts"] > human["ts"]):
                 human = {"track": t["name"], "sid": x["sid"], "s": x["s"], "ts": lh["ts"],
                          "t": datetime.fromtimestamp(lh["ts"]).strftime("%H:%M"), "text": lh["text"]}
+    hname = (cfg.get("office") or {}).get("human", "人間")
     if human:
-        human["name"] = (cfg.get("office") or {}).get("human", "人間")
+        human["name"] = hname
+    # 👤 再生にふくちゃん（S23）: 今日（away_cutoff 以降）の人間ターンを席の移動列に。同じ席が続く分は 1 つに畳み（n＝回数）、
+    # break_after_min 以上の空きは休憩室経由（lounge: true）。JS 側で 📨 の流れと時刻順に混ぜて ▶ 再生する
+    lounge = _lounge(cfg)
+    brk = (lounge["break_after_min"] if lounge else 0) * 60
+    moves, prev_ts = [], None
+    for h in sorted(res.get("humans") or [], key=lambda h: h["ts"]):
+        tr = seat_or_none(h["sid"]) if h["ts"] >= cut else None
+        if not tr:
+            continue
+        hts = int(h["ts"])
+        if brk and prev_ts is not None and hts - prev_ts >= brk:
+            moves.append({"lounge": True, "ts": prev_ts + brk,
+                          "t": datetime.fromtimestamp(prev_ts + brk).strftime("%H:%M")})
+        if moves and not moves[-1].get("lounge") and moves[-1]["track"] == tr:
+            moves[-1]["n"] += 1
+        else:
+            moves.append({"ts": hts, "t": datetime.fromtimestamp(hts).strftime("%H:%M"), "track": tr,
+                          "s": (labels.get(h["sid"]) or {}).get("s"), "text": " ".join((h["text"] or "").split()), "n": 1})
+        prev_ts = hts
 
     edges = []
     for e in res.get("edges") or []:
@@ -353,7 +373,9 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             ts = [t["name"] for t in order if t["tenant"] == n]
             if ts or n != tc["other"]:
                 rooms.append({"name": n, "main": False, "tracks": ts})
-    return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(), "sprite_themes": load_sprite_themes(),
+    return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(),
+            "human_moves": moves, "human_name": hname, "replay_from": cut,  # 👤 今日の席移動と再生の始点（▶ 再生用・S23）
+            "sprite_themes": load_sprite_themes(),
             "sprite_default": (cfg.get("office") or {}).get("sprite_theme", ""),  # 既定テーマ（プルダウン未選択時）
             "sprite_variants": (cfg.get("office") or {}).get("sprite_variants") or {},  # トラック名→種類名の固定割当（任意）
             "sprite_track_themes": (cfg.get("office") or {}).get("sprite_track_themes") or {},  # トラック名→テーマ名（席ごとの別テーマ・例: 業務ハブだけ ninja）
@@ -424,7 +446,9 @@ btn.onclick=function(){root.dataset.theme=root.dataset.theme==='light'?'dark':'l
 var clk=document.getElementById('clock'), WD='日月火水木金土', skyFn=null;
 function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());if(skyFn)skyFn(d);}
 tick(); setInterval(tick,1000);
-window.__officeStamp=function(s){if(s&&s!==STAMP)location.reload();};
+// 再読込は ▶ 再生中なら保留して再生の終わりに回す（10 秒ごとの stamp・イベント境界・休憩しきい値の全部・S23）
+function softReload(){if(window.csvPlaying){window.csvReloadAfter=true;return;}location.reload();}
+window.__officeStamp=function(s){if(s&&s!==STAMP)softReload();};
 setInterval(function(){var sc=document.createElement('script');sc.src='office_stamp.js?t='+Date.now();sc.onload=sc.onerror=function(){sc.remove();};document.head.appendChild(sc);},POLL_MS);
 
 // ---------- 配置図 ----------
@@ -551,7 +575,7 @@ function whiteboard(bx,by,bw,bhMax){var c=D.counts,d=new Date(),date=(d.getMonth
  var y=y0+10+LH;lines.forEach(function(L){if(y>by+Hh-8)return;s+='<text'+(L.id?' id="'+L.id+'"':'')+' x="'+(bx+14)+'" y="'+y+'"'+WBF+' font-size="'+fs+'" fill="'+L.col+'"'+(L.strike?' text-decoration="line-through"':'')+'>'+(L.tip?'<title>'+esc(L.tip)+'</title>':'')+esc(fit(L.t,maxw,fs))+'</text>';y+=LH;});
  s+='</a>';WB={maxw:maxw,fs:fs};
  var ev0=evLine();if(ev0){setInterval(function(){var el=document.getElementById('wbev'),e=evLine();if(el&&e)el.textContent=fit(e.text,WB.maxw,WB.fs);},30000);  // 「あと n分」は30秒ごとに書き直す
-  if(ev0.until!=null){var left=(ev0.until-(d.getHours()*60+d.getMinutes()))*60000-d.getSeconds()*1000;if(left>0)setTimeout(function(){location.reload();},Math.min(left+1500,2e9));}}  // 次のイベント境界で描き直し
+  if(ev0.until!=null){var left=(ev0.until-(d.getHours()*60+d.getMinutes()))*60000-d.getSeconds()*1000;if(left>0)setTimeout(softReload,Math.min(left+1500,2e9));}}  // 次のイベント境界で描き直し
  return s;}
 function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;function fits(ox,iw){return ox+iw<=right;}
  s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" fill="url(#carpet)" stroke="'+PAL.txt(col)+'" stroke-opacity="0.5" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(name)+'</text>';
@@ -665,7 +689,7 @@ if(hp){var prev=null;try{prev=JSON.parse(localStorage.getItem('csv-human-at')||'
   '<rect x="'+(hp[0]-6)+'" y="'+(hp[1]-22)+'" width="'+(hname.length*11+ago.length*7+30)+'" height="17" rx="3" fill="#fff" stroke="#333"/><text x="'+(hp[0]-2)+'" y="'+(hp[1]-9)+'" font-size="11" fill="#222">'+(onBreak?'☕ ':'👤 ')+esc(hname)+' '+esc(ago)+'</text>'+
   (from?'<animateTransform attributeName="transform" type="translate" from="'+(from[0]-hp[0])+' '+(from[1]-hp[1])+'" to="0 0" dur="1.4s" fill="freeze" calcMode="spline" keySplines="0.4 0 0.2 1"/>':'')+'</g>';
  try{localStorage.setItem('csv-human-at',JSON.stringify({track:D.human.track,brk:onBreak}));}catch(e){}
- if(!onBreak&&LOUNGE){var left=BREAK_MIN*60000-(Date.now()-D.human.ts*1000);if(left>0)setTimeout(function(){location.reload();},Math.min(left+800,2e9));}}
+ if(!onBreak&&LOUNGE){var left=BREAK_MIN*60000-(Date.now()-D.human.ts*1000);if(left>0)setTimeout(softReload,Math.min(left+800,2e9));}}
 Object.keys(tints).forEach(function(id){svg+='<filter id="'+id+'" x="0" y="0" width="1" height="1"><feFlood flood-color="'+tints[id]+'" result="c"/><feComposite in="c" in2="SourceAlpha" operator="in" result="m"/><feBlend in="m" in2="SourceGraphic" mode="multiply"/></filter>';});
 svg+='</svg>';
 document.getElementById('scene').innerHTML=svg;
@@ -690,7 +714,23 @@ function renderLog(){log.innerHTML='';var lastDay='';
 function hl(i){document.querySelectorAll('.hl').forEach(function(x){x.classList.remove('hl');});var p=document.getElementById('p'+i),r=document.querySelector('.row[data-i="'+i+'"]');if(p){p.classList.add('hl');p.parentNode.appendChild(p);}if(r){r.classList.add('hl');r.scrollIntoView({block:'nearest'});}}
 document.querySelectorAll('.edge').forEach(function(p){p.onclick=function(){hl(+p.dataset.i);};});
 fresh.forEach(function(f){setTimeout(function(){var p=document.getElementById('p'+f[0]);if(p)p.classList.remove('new');var q=document.getElementById('f'+f[0]);if(q)q.remove();},f[1]);});  // 15 分たったら破線を止める（再読込なしでも）
-document.getElementById('play').onclick=function(){D.edges.forEach(function(e,i){setTimeout(function(){hl(i);var g=document.getElementById('env'+i),a=document.getElementById('am'+i);if(!g)return;g.setAttribute('opacity','1');a.beginElement();setTimeout(function(){g.setAttribute('opacity','0');},900);},i*950);});};
+// 👤 再生にふくちゃん（S23）: ▶ で 📨 の流れと今日の人間の席移動（D.human_moves・同じ席が続く分は畳み済み・空きは ☕ 経由）を時刻順に混ぜて再生。
+// 再生中は在席の 👤 を隠し、終わったら戻す。項目が多い時は 1 歩を縮める（50 件超で最短 0.5 秒）
+var HN=D.human_name||'人間', MV=(D.human_moves||[]).map(function(m){return {kind:'mv',ts:m.ts*1000,m:m};});
+var RF=(D.replay_from||0)*1000;  // 再生は今日の分だけ（away_cutoff＝今日 0:00 以降。📨 の一覧は 48h のまま）
+var RTL=D.edges.map(function(e,i){return {kind:'msg',ts:Date.parse(e.ts),i:i};}).concat(MV).filter(function(it){return it.ts>=RF;}).sort(function(a,b){return a.ts-b.ts;}), playing=false;
+function tw(s){var w=0;for(var i=0;i<s.length;i++)w+=s.charCodeAt(i)>255?11:6.5;return Math.round(w);}
+function rhuman(p){var g=document.createElementNS('http://www.w3.org/2000/svg','g');g.id='rhuman';g.innerHTML='<title id="rhtt"></title>'+hsprite(0,0)+'<rect id="rhb" x="-6" y="-22" width="80" height="17" rx="3" fill="#fff" stroke="#333"/><text id="rht" x="-2" y="-9" font-size="11" fill="#222"></text>';
+ g.style.transform='translate('+p[0]+'px,'+p[1]+'px)';document.querySelector('#scene svg').appendChild(g);g.getBoundingClientRect();g.style.transition='transform .7s cubic-bezier(.4,0,.2,1)';return g;}
+function moveH(m){var g=document.getElementById('rhuman');if(!g)return;var p=m.lounge?(LOUNGE?LOUNGE.spot:null):hpos(m.track);if(!p)return;
+ g.style.transform='translate('+p[0]+'px,'+p[1]+'px)';var lab=m.lounge?'☕ '+HN+' 休憩 '+m.t:'👤 '+HN+' → '+m.track+(m.s?' S'+m.s:'')+' '+m.t;
+ document.getElementById('rht').textContent=lab;document.getElementById('rhb').setAttribute('width',tw(lab)+10);
+ document.getElementById('rhtt').textContent=m.lounge?HN+'：'+BREAK_MIN+'分以上話しかけていない→休憩室（'+m.t+'）':HN+' → '+m.track+(m.s?' S'+m.s:'')+' '+m.t+(m.n>1?'（続けて '+m.n+' 回）':'')+'「'+(m.text||'')+'」';}
+document.getElementById('play').onclick=function(){if(playing||!RTL.length)return;playing=true;window.csvPlaying=true;var STEP=RTL.length>50?Math.max(500,Math.round(47500/RTL.length)):950;
+ document.querySelectorAll('#scene .human').forEach(function(x){x.style.visibility='hidden';});
+ if(MV.length){var p0=(LOUNGE&&LOUNGE.spot)||hpos(MV[0].m.track);if(p0)rhuman(p0);}
+ RTL.forEach(function(it,k){setTimeout(function(){if(it.kind==='mv'){moveH(it.m);return;}hl(it.i);var g=document.getElementById('env'+it.i),a=document.getElementById('am'+it.i);if(!g)return;g.setAttribute('opacity','1');a.beginElement();setTimeout(function(){g.setAttribute('opacity','0');},900);},k*STEP);});
+ setTimeout(function(){var g=document.getElementById('rhuman');if(g)g.remove();document.querySelectorAll('#scene .human').forEach(function(x){x.style.visibility='';});playing=false;window.csvPlaying=false;if(window.csvReloadAfter)location.reload();},RTL.length*STEP+900);};
 ord.onclick=function(){desc=!desc;try{localStorage.setItem('csv-log-desc',desc?'1':'0');}catch(e){}renderLog();};
 renderLog();
 })();
@@ -722,6 +762,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<i class="sw" style="background:#f472b6"></i>Fable</span>'
               '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）</span>'
               '<span>｜ 💤 離席中＝プロセスは無いが今日動いた席（主は休憩室のソファ・席は点線枠）</span>'
+              '<span>｜ ▶ 再生＝今日の 📨 の流れ＋👤 の席移動（空きは休憩室経由・再生中は再読込を保留）</span>'
               '<span>｜ 📱 Remote Control オン（外出先から指示できる席）</span>'
               '<span>｜ 🎨 <select id="spr" title="絵のテーマ（assets/sprites/<テーマ>/）"></select></span>'
               '<span id="wsf" title="部屋（ワークスペース）で絞る・?ws=〈部屋名の一部〉でも指定可"></span></span>')
@@ -737,7 +778,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
 <header><div><h1>🏢 バーチャルオフィス</h1>
 <div class="sub">いま <b id="clock"></b> ／ 生成 {now} ／ 席=トラック・人=稼働セッション・矢印=SendMessage（新しいほど濃い・15分以内は動く）・席にマウスで詳細</div></div>
 {tiles}
-<button class="tgl" id="play" type="button">▶ 流れを再生</button>
+<button class="tgl" id="play" type="button" title="今日の 📨 の流れと 👤 の席移動を時刻順に再生（再生中は自動更新を保留）">▶ 流れを再生</button>
 <div class="navs">{nav_html("office")}<button class="tgl" id="tgl" type="button"></button></div>
 <div style="flex-basis:100%">{legend}</div>
 </header>

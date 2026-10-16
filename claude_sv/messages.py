@@ -24,7 +24,7 @@ from pathlib import Path
 
 from .parser import _clean_user_text, _iter_text_items
 
-CACHE_VERSION = 1
+CACHE_VERSION = 2  # 2: 👤 人間ターン（humans）も記録（S23・1 からは user_names だけ引き継いで jsonl を読み直す）
 MATCH_SEC = 60          # 送信→受信箱投入の時刻差の許容（実測は 1〜3 秒）
 PEEK_LINES = 400        # 採番合言葉は先頭にある前提（live_board._peek と同じ）
 _HEX17 = re.compile(r"^[0-9a-f]{17}$")   # in-process サブエージェントの agentId（横断ではない）
@@ -52,6 +52,51 @@ def _epoch(ts_iso):
 
 # ---------------------------------------------------------------- 1ファイルの差分読み
 
+_NOT_HUMAN_PREFIXES = ("<cross-session-message", "[Subagent hand-back]",
+                       "This session is being continued from a previous conversation")
+_ASK_ANSWER_PREFIX = "Your questions have been answered:"
+
+
+def _ask_answer_text(content):
+    """user レコードの tool_result から AskUserQuestion の回答本文（"質問"="回答", ...）を取り出す。無ければ ''。"""
+    if not isinstance(content, list):
+        return ""
+    for item in content:
+        if not (isinstance(item, dict) and item.get("type") == "tool_result"):
+            continue
+        body = item.get("content")
+        if isinstance(body, list):
+            body = " ".join(x.get("text", "") for x in body if isinstance(x, dict))
+        if not isinstance(body, str) or not body.startswith(_ASK_ANSWER_PREFIX):
+            continue
+        body = body[len(_ASK_ANSWER_PREFIX):].strip()
+        body = re.sub(r"\.?\s*You can now continue with these answers in mind\.?$", "", body).strip()
+        return "🔘 " + body
+    return ""
+
+
+def human_text(rec: dict) -> str:
+    """user レコードが「人間が打った発話」ならその本文、そうでなければ ''（S21 live_board._scan_last_human から集約・S23）。
+
+    他セッション便（isMeta）・サブエージェントの戻り・コンパクション要約（system が user 役で挿入）・tool_result だけの行・
+    スラッシュコマンド（command-name タグ＝_clean_user_text で空）は人間の発話に数えない。AskUserQuestion のボタン回答は数える。
+    """
+    if rec.get("type") != "user" or rec.get("isMeta") or rec.get("isSidechain"):
+        return ""
+    content = (rec.get("message") or {}).get("content")
+    for raw in _iter_text_items(content):
+        text = _clean_user_text(raw)
+        if text and not text.startswith(_NOT_HUMAN_PREFIXES):
+            return text
+    return _ask_answer_text(content)
+
+
+def _maybe_human(line: str) -> bool:
+    """json.loads する前の粗いふるい（人間ターンの候補行）。tool_result だけの行は AskUserQuestion の回答以外は捨てる。"""
+    return ('"type":"user"' in line and '"isMeta":true' not in line
+            and ('"tool_result"' not in line or _ASK_ANSWER_PREFIX in line))
+
+
 def _scan_file(path: Path, state: dict) -> dict:
     """jsonl を前回オフセットから読み足し、state（sends/recvs/pending/offset）を更新して返す。
 
@@ -60,7 +105,7 @@ def _scan_file(path: Path, state: dict) -> dict:
     size = path.stat().st_size
     off = state.get("offset", 0)
     if size < off:  # 作り直された（想定外）→ 全読み
-        state = {"offset": 0, "sends": [], "recvs": [], "pending": {}}
+        state = {"offset": 0, "sends": [], "recvs": [], "pending": {}, "humans": []}
         off = 0
     if size == off:
         return state
@@ -73,13 +118,15 @@ def _scan_file(path: Path, state: dict) -> dict:
     text = chunk[:end + 1].decode("utf-8", errors="replace")
     state["offset"] = off + end + 1
     sends, recvs, pending = state["sends"], state["recvs"], state["pending"]
+    humans = state.setdefault("humans", [])  # 👤 人間が打った発話（時刻＋先頭 60 字・▶ 再生の席移動用・S23）
     sid = path.stem
     for line in text.splitlines():
         if not line:
             continue
         hot = ('"SendMessage"' in line or "cross-session-message" in line
                or '"kind":"peer"' in line or '"kind": "peer"' in line
-               or (pending and "tool_result" in line and any(k in line for k in pending)))
+               or (pending and "tool_result" in line and any(k in line for k in pending))
+               or _maybe_human(line))
         if not hot:
             continue
         try:
@@ -107,6 +154,9 @@ def _scan_file(path: Path, state: dict) -> dict:
         elif t == "user":
             msg = rec.get("message") or {}
             origin = rec.get("origin") or {}
+            ht = " ".join(human_text(rec).split())  # 改行・連続空白は潰す
+            if ht:
+                humans.append({"ts": ts, "text": ht[:60]})
             if origin.get("kind") == "peer":  # 受け手の Claude が読んだ瞬間（idle 時の配達）
                 if "cc-msg" in (origin.get("from") or ""):  # サブエージェントの hand-back は除く
                     recvs.append({"sid": sid, "ts": ts, "from": origin.get("from") or "",
@@ -170,6 +220,9 @@ def _load_cache(path: Path) -> dict:
     try:
         with open(path, encoding="utf-8") as f:
             c = json.load(f)
+        if c.get("version") == 1:  # 1 → 2: 学んだ /rename 名は残し、jsonl は読み直す（humans を埋めるため）
+            return {"version": CACHE_VERSION, "files": {}, "pipe_map": {}, "names": {},
+                    "user_names": c.get("user_names") or {}}
         if c.get("version") == CACHE_VERSION:
             c.setdefault("user_names", {})  # S23 後付け（sid → /rename 名）
             return c
@@ -237,8 +290,9 @@ def collect(claude_dir: Path, cache_path: Path, window_hours: float = 48,
     """直近 window_hours に更新された全セッションからメッセージ痕跡を集めて突合し、edge 一覧を返す。
 
     戻り値: {"edges": [...], "sids": {関係した sid}, "registry": {...}, "span": [first_ts, last_ts],
-             "recent": {sid: jsonl の mtime（窓内・agent- 除く）}, "user_names": {sid: /rename 名（cache 学習分）}}
-    recent は 💤 離席中（プロセスは無いが当日動いた席・S23）の判定材料。
+             "recent": {sid: jsonl の mtime（窓内・agent- 除く）}, "user_names": {sid: /rename 名（cache 学習分）},
+             "humans": [{sid, ts(epoch), text≤60}]（人間が打った発話・時刻順）}
+    recent は 💤 離席中（プロセスは無いが当日動いた席・S23）の判定材料。humans は ▶ 再生の 👤 席移動（S23）。
     edge = {ts, frm, frm_label(名前のみ), to, to_label, summary, preview, body, ok,
             read: True/False/None, removed, matched}
     """
@@ -266,7 +320,7 @@ def collect(claude_dir: Path, cache_path: Path, window_hours: float = 48,
             seen.add(key)
             if not jsonl.stem.startswith("agent-"):
                 recent[jsonl.stem] = st.st_mtime
-            state = files.get(key) or {"offset": 0, "sends": [], "recvs": [], "pending": {}}
+            state = files.get(key) or {"offset": 0, "sends": [], "recvs": [], "pending": {}, "humans": []}
             try:
                 files[key] = _scan_file(jsonl, state)
             except OSError:
@@ -284,6 +338,10 @@ def collect(claude_dir: Path, cache_path: Path, window_hours: float = 48,
     recvs = [r for r in recvs if _epoch(r["ts"]) >= cutoff]
     sends.sort(key=lambda s: s["ts"])
     recvs.sort(key=lambda r: r["ts"])
+    # 👤 人間ターン（S23）: 窓内の全セッション分を時刻順に（office が今日の分だけ席の移動列にする）
+    humans = [{"sid": Path(key).stem, "ts": _epoch(h["ts"]), "text": h["text"]}
+              for key, st in files.items() for h in st.get("humans") or []]
+    humans = sorted((h for h in humans if h["ts"] >= cutoff), key=lambda h: h["ts"])
 
     # 受信側を「受信箱投入 → 既読 → 破棄」の段階でまとめる（本文＋受け手 sid 単位・順番で対応）
     inbox = {}
@@ -343,7 +401,7 @@ def collect(claude_dir: Path, cache_path: Path, window_hours: float = 48,
     sids = {e["frm"] for e in edges if e["frm"]} | {e["to"] for e in edges if e["to"]}
     span = [edges[0]["ts"], edges[-1]["ts"]] if edges else None
     return {"edges": edges, "sids": sids, "registry": registry, "span": span,
-            "recent": recent, "user_names": dict(cache.get("user_names") or {})}
+            "recent": recent, "user_names": dict(cache.get("user_names") or {}), "humans": humans}
 
 
 def _first_line(body: str, limit: int = 120) -> str:
