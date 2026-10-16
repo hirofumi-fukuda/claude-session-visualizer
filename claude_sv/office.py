@@ -506,6 +506,9 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 @keyframes zz{0%{opacity:.3;transform:translateY(0)}50%{opacity:1}100%{opacity:.3;transform:translateY(-6px)}} .zz{animation:zz 2.4s ease-in-out infinite;transform-box:fill-box}
 .empty{padding:30px;color:var(--muted)}
 footer{flex:none;padding:6px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
+#rbar{display:none;flex-basis:100%;flex-wrap:wrap;align-items:center;gap:4px 12px;min-width:0} header.playing #rbar{display:flex} header.playing .legend{display:none}
+#rclk{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--gold);white-space:nowrap;line-height:1.2;min-width:3.2em} #rcap{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+#rcnt{color:var(--muted);font-size:11.5px;white-space:nowrap;font-variant-numeric:tabular-nums} #rtrk{flex-basis:100%;height:3px;background:var(--wash);border-radius:2px;overflow:hidden} #rprog{height:100%;width:0;background:var(--gold);transition:width .3s linear}
 """
 
 # テーマの優先順: ?theme=light|dark（保存しない・スクショ用）＞ 保存値 csv-theme（他ページと共通）＞ light（オフィスだけの既定・S22）
@@ -548,7 +551,8 @@ function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" w
 var MODELS={opus:1,sonnet:1,haiku:1,fable:1,unknown:1}, POSES={typing:1,idle:1,wait:1,rest:1};  // rest＝💤 離席中（絵が無ければ idle 系に落ちる・S23）
 function varsOf(M){if(M.__vars)return M.__vars;var vs={};Object.keys(M).forEach(function(k){var t=k.split('-');if(t[0]!=='agent')return;t.slice(1).forEach(function(w){if(!MODELS[w]&&!POSES[w])vs[w]=1;});});return (M.__vars=Object.keys(vs).sort());}
 var VOVR=D.sprite_variants||{}, TOVR=D.sprite_track_themes||{}, NOVR=D.sprite_tenant_themes||{};
-function variantFor(track,M){var VARS=varsOf(M||SP);if(!VARS.length)return '';if(VOVR[track]&&VARS.indexOf(VOVR[track])>=0)return VOVR[track];var h=5381;for(var i=0;i<track.length;i++)h=((h*33)^track.charCodeAt(i))>>>0;return VARS[h%VARS.length];}
+var RESV={};Object.keys(VOVR).forEach(function(k){RESV[VOVR[k]]=1;});  // 役目の種類（hub・scribe 等）は名指しの席だけ＝ハッシュで他の席に配らない（S23 ⑦）
+function variantFor(track,M){var ALL=varsOf(M||SP);if(!ALL.length)return '';if(VOVR[track]&&ALL.indexOf(VOVR[track])>=0)return VOVR[track];var VARS=ALL.filter(function(v){return !RESV[v];});if(!VARS.length)return '';var h=5381;for(var i=0;i<track.length;i++)h=((h*33)^track.charCodeAt(i))>>>0;return VARS[h%VARS.length];}
 // 席ごとの別テーマ: トラック名（office.sprite_track_themes）＞部屋名（office.sprite_tenant_themes・trackRoom は部屋の配置時に埋まる）＞画面のテーマ。指定のテーマが無ければ次へ落ちる
 function mapFor(track){var th=TOVR[track]||NOVR[trackRoom[track]];if(th){var tm=THEMES[String(th).split('/')[0]];if(tm)return tm;}return SP;}
 function modelKey(model){return /opus/.test(model||'')?'opus':/sonnet/.test(model||'')?'sonnet':/haiku/.test(model||'')?'haiku':/fable/.test(model||'')?'fable':'unknown';}
@@ -619,17 +623,18 @@ function plant(ox,oy,k){k=k||1;var im=prop('plant',ox,oy,36*k,70*k);if(im)return
 // 🧾 ホワイトボード（S23・ハブ提案 10/15）: 休憩室の壁いっぱいに今日の daily の要点＝🔴 TOP 見出し3行（未済→済の順）・⏰ 次の時刻固定イベント・⏸ 返信待ち・端に在席/未読/不達。
 // 中身は D.board（daily_view.load_board）。クリックで 📓 日誌。幅か高さが足りない（島と同居で h=230 等）時は S22 の小さい板（日付・在席/未読・通数）
 var BOARD=D.board||null, WBF=' font-family="Segoe Print,Yu Kyokasho N,UD Digi Kyokasho N-R,cursive"', WB={};
-function tw(s,fs){var w=0;Array.from(s).forEach(function(ch){var c=ch.codePointAt(0);w+=c>0xffff?fs*1.15:c>=0x2e80?fs:c>0xff?fs*0.8:fs*0.62;});return w;}  // 文字幅の見積り（CJK=1em・絵文字=1.15em・英数=0.62em）
-function fit(s,px,fs){if(tw(s,fs)<=px)return s;var o='',a=Array.from(s);for(var i=0;i<a.length;i++){if(tw(o+a[i]+'…',fs)>px)break;o+=a[i];}return o+'…';}
+function twb(s,fs){var w=0;Array.from(s).forEach(function(ch){var c=ch.codePointAt(0);w+=c>0xffff?fs*1.15:c>=0x2e80?fs:c>0xff?fs*0.8:fs*0.62;});return w;}  // 文字幅の見積り（CJK=1em・絵文字=1.15em・英数=0.62em）
+function fit(s,px,fs){if(twb(s,fs)<=px)return s;var o='',a=Array.from(s);for(var i=0;i<a.length;i++){if(twb(o+a[i]+'…',fs)>px)break;o+=a[i];}return o+'…';}
 function hm2m(t){var m=/^(\d{1,2}):(\d{2})$/.exec(t||'');return m?(+m[1])*60+(+m[2]):null;}
 // ⏰ の1行: 「いま 15:00〜17:00 出荷完了処理 ／ 次 17:00 DotB 注文連携（あと1時間20分） → 19:00 定時」。until＝次に描き直す時刻（分）
 function evLine(){if(!BOARD||!BOARD.events||!BOARD.events.length)return null;var d=new Date(),now=d.getHours()*60+d.getMinutes(),cur=null,nxt=[];
  BOARD.events.forEach(function(e){var a=hm2m(e.hm),b=hm2m(e.to);if(a==null)return;if(a>now)nxt.push(e);else if(b!=null&&now<b)cur=e;});
  function lab(e){return e.hm+(e.to?'〜'+e.to:'')+' '+e.label;}
- var s='',until=null;if(cur){s+='いま '+lab(cur)+' ／ ';until=hm2m(cur.to);}
- if(nxt.length){var m=hm2m(nxt[0].hm)-now;s+='次 '+lab(nxt[0])+'（あと'+(m>=60?Math.floor(m/60)+'時間':'')+((m%60||m<60)?(m%60)+'分':'')+'）'+(nxt[1]?' → '+lab(nxt[1]):'');until=until==null?hm2m(nxt[0].hm):Math.min(until,hm2m(nxt[0].hm));}
- else s+=cur?'このあとの時刻固定はなし':'今日の時刻固定イベントは終了';
- return {text:'⏰ '+s,until:until};}
+ var s='',until=null,alts;if(cur){s+='いま '+lab(cur)+' ／ ';until=hm2m(cur.to);}
+ if(nxt.length){var m=hm2m(nxt[0].hm)-now,rem='（あと'+(m>=60?Math.floor(m/60)+'時間':'')+((m%60||m<60)?(m%60)+'分':'')+'）',n2=nxt[1]?' → '+lab(nxt[1]):'';s+='次 '+lab(nxt[0]);alts=['⏰ '+s+rem+n2,'⏰ '+s+rem,'⏰ '+s];s+=rem+n2;until=until==null?hm2m(nxt[0].hm):Math.min(until,hm2m(nxt[0].hm));}
+ else {s+=cur?'このあとの時刻固定はなし':'今日の時刻固定イベントは終了';alts=['⏰ '+s];}
+ return {text:'⏰ '+s,alts:alts,until:until};}
+function pick(alts,px,fs){for(var i=0;i<alts.length;i++)if(twb(alts[i],fs)<=px)return alts[i];return fit(alts[alts.length-1],px,fs);}  // 収まる最初の候補・全滅なら最短を … で切る
 function whiteboard(bx,by,bw,bhMax){var c=D.counts,d=new Date(),date=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'）',s='';
  function board(W,Hh){return R(bx,by,W,Hh,'#e5e7eb',' stroke="#9ca3af" stroke-width="2"')+R(bx+4,by+4,W-8,Hh-14,'#fff')+R(bx,by+Hh,W,5,'#9ca3af')+R(bx+8,by+8,6,6,'#ef4444')+R(bx+W-14,by+8,6,6,'#3b82f6');}
  if(!BOARD||bw<320||bhMax<120){if(bw<220)return '';var F=WBF+' font-size="12"';  // S22 の小さい板
@@ -641,34 +646,33 @@ function whiteboard(bx,by,bw,bhMax){var c=D.counts,d=new Date(),date=(d.getMonth
  else{var top=BOARD.top||[],pend=top.filter(function(t){return !t.done;}),done=top.filter(function(t){return t.done;});
   pend.concat(done).slice(0,3).forEach(function(t){lines.push({t:(t.mark||'・')+' '+t.t,col:t.done?'#9ca3af':'#111',strike:t.done,tip:t.t});});
   if(!top.length)lines.push({t:'（🔴 TOP の見出しなし）',col:'#9ca3af'});
-  var ev=evLine();if(ev)lines.push({t:ev.text,col:'#b45309',id:'wbev'});
+  var ev=evLine();if(ev)lines.push({t:ev.text,alts:ev.alts,col:'#b45309',id:'wbev'});
   var wt=BOARD.waiting;if(wt&&wt.n)lines.push({t:'⏸ 返信待ち '+wt.n+'件'+(wt.urgent?'（🔴'+wt.urgent+'）':'')+'：'+(wt.items||[]).join('・'),col:'#111',tip:'返信待ち（こちらボール外）\n'+(wt.items||[]).join('\n')});}
  var Hh=Math.min(bhMax,44+lines.length*LH+10),y0=by+24;
  s+='<a href="daily.html" target="_blank" rel="noopener" style="cursor:pointer"><title>📓 日誌を開く（daily.html）</title>'+board(bw,Hh);
  s+='<text x="'+(bx+14)+'" y="'+y0+'"'+WBF+' font-size="15" font-weight="700" fill="#1d4ed8">'+date+' 今日</text>';
  s+='<text x="'+(bx+bw-14)+'" y="'+y0+'" text-anchor="end"'+WBF+' font-size="13" fill="#111">在席 '+c.live+'人 ／ 未読 <tspan fill="'+(c.unread?'#dc2626':'#111')+'"'+(c.unread?' font-weight="700"':'')+'>'+c.unread+'</tspan>通 ／ 不達 <tspan fill="'+(c.failed?'#dc2626':'#111')+'"'+(c.failed?' font-weight="700"':'')+'>'+c.failed+'</tspan> ／ 📨 '+c.edges+'通/'+D.window_hours+'h</text>';
  s+=R(bx+12,y0+6,bw-24,2,'#1d4ed8',' fill-opacity=".45"');
- var y=y0+10+LH;lines.forEach(function(L){if(y>by+Hh-8)return;s+='<text'+(L.id?' id="'+L.id+'"':'')+' x="'+(bx+14)+'" y="'+y+'"'+WBF+' font-size="'+fs+'" fill="'+L.col+'"'+(L.strike?' text-decoration="line-through"':'')+'>'+(L.tip?'<title>'+esc(L.tip)+'</title>':'')+esc(fit(L.t,maxw,fs))+'</text>';y+=LH;});
+ var y=y0+10+LH;lines.forEach(function(L){if(y>by+Hh-8)return;s+='<text'+(L.id?' id="'+L.id+'"':'')+' x="'+(bx+14)+'" y="'+y+'"'+WBF+' font-size="'+fs+'" fill="'+L.col+'"'+(L.strike?' text-decoration="line-through"':'')+'>'+(L.tip?'<title>'+esc(L.tip)+'</title>':'')+esc(L.alts?pick(L.alts,maxw,fs):fit(L.t,maxw,fs))+'</text>';y+=LH;});
  s+='</a>';WB={maxw:maxw,fs:fs};
- var ev0=evLine();if(ev0){setInterval(function(){var el=document.getElementById('wbev'),e=evLine();if(el&&e)el.textContent=fit(e.text,WB.maxw,WB.fs);},30000);  // 「あと n分」は30秒ごとに書き直す
+ var ev0=evLine();if(ev0){setInterval(function(){var el=document.getElementById('wbev'),e=evLine();if(el&&e)el.textContent=pick(e.alts,WB.maxw,WB.fs);},30000);  // 「あと n分」は30秒ごとに書き直す
   if(ev0.until!=null){var left=(ev0.until-(d.getHours()*60+d.getMinutes()))*60000-d.getSeconds()*1000;if(left>0)setTimeout(softReload,Math.min(left+1500,2e9));}}  // 次のイベント境界で描き直し
  return s;}
 function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;function fits(ox,iw){return ox+iw<=right;}
  s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" fill="url(#carpet)" stroke="'+PAL.txt(col)+'" stroke-opacity="0.5" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(name)+'</text>';
- // 壁側: 🪟 窓（空は skyFn が時刻で塗る）・🧾 ホワイトボード（S23: 今日の daily の要点・狭ければ S22 の小さい板）
- var wx=x+24,wy=y+34; if(fits(wx,128)){WIN={x:wx+6,y:wy+6,w:108,h:58};
+ // 壁側: 🧾 ホワイトボードが壁いっぱい（S23 ⑤ 案A・窓は床のソファの隣に下ろした）。狭ければ S22 の小さい板
+ // 🪟 窓（空は skyFn が時刻で塗る）: 床のソファの右・敷居は床線の 8px 上
+ var wx=x+158,wy=fy-84; if(fits(wx-4,128)){WIN={x:wx+6,y:wy+6,w:108,h:58};
   s+=R(wx,wy,120,70,'#cbd5e1')+'<rect id="winsky" x="'+(wx+6)+'" y="'+(wy+6)+'" width="108" height="58" fill="#7dd3fc"/><g id="winstars" opacity="0">'+R(wx+20,wy+14,3,3,'#fff')+R(wx+50,wy+22,2,2,'#fff')+R(wx+90,wy+12,3,3,'#fff')+R(wx+70,wy+40,2,2,'#fff')+'</g><circle id="winsun" cx="'+(wx+40)+'" cy="'+(wy+26)+'" r="9" fill="#fde047"/>'+R(wx+58,wy+6,4,58,'#cbd5e1')+R(wx+6,wy+33,108,4,'#cbd5e1')+R(wx-4,wy+70,128,6,'#94a3b8');}
- var bx=x+170; if(!fits(bx,220))bx=x+24; s+=whiteboard(bx,y+34,right-bx,h-172);  // 板の高さ＝床側の自販機（104）に当たらない範囲
- // 床側（左→右）: 🛋️ ソファ・テーブル・🪴 観葉植物・☕ コーヒー（右隣が人の立ち位置）・🥤 自販機・🖨️ 印刷機。幅が足りなければ右から落とす
+ var bx=x+24; s+=whiteboard(bx,y+34,right-bx,h-172);  // 板の高さ＝床側の自販機（104）に当たらない範囲
+ // 床側（左→右）: 🛋️ ソファ・🪟 窓・☕ コーヒー（右隣が人の立ち位置）・🥤 自販機・🖨️ 印刷機。幅が足りなければ右から落とす（テーブル・鉢植えは ⑤ で落とした＝板の幅優先）
  var ox=x+24,im; if(fits(ox,120)){im=prop('sofa',ox,fy-56,120,56);s+=im||(R(ox,fy-52,120,24,'#3b5bdb',' rx="6"')+R(ox,fy-28,120,20,'#4c6ef5')+R(ox,fy-42,14,34,'#364fc7')+R(ox+106,fy-42,14,34,'#364fc7')+R(ox+59,fy-28,2,20,'#364fc7')+R(ox+10,fy-8,8,8,'#222')+R(ox+102,fy-8,8,8,'#222'));SOFA=[[ox+4,fy-56],[ox+42,fy-56],[ox+80,fy-56]];}  // 🛋️ 離席者の座る位置（最大3人・S23）
- ox=x+156; if(fits(ox,56)){im=prop('table',ox,fy-50,56,50);s+=im||(R(ox,fy-36,56,10,'#8b5a2b')+R(ox,fy-26,56,4,'#6b4423')+R(ox+6,fy-22,6,22,'#5a3a1a')+R(ox+44,fy-22,6,22,'#5a3a1a')+R(ox+14,fy-46,10,10,'#fff')+R(ox+15,fy-45,8,2,'#5a3a1a')+R(ox+32,fy-46,10,10,'#fff')+R(ox+33,fy-45,8,2,'#5a3a1a')+R(ox+42,fy-43,3,4,'#fff'));}
- ox=x+222; if(fits(ox,36))s+=plant(ox,fy-70,1);
- ox=x+270; if(fits(ox,90)){im=prop('coffee',ox,fy-80,90,80);s+=im||(R(ox,fy-26,90,26,'#6b4423')+R(ox,fy-30,90,6,'#8b5a2b')+R(ox+20,fy-74,44,44,'#2d2d2d',' rx="3"')+R(ox+20,fy-78,44,6,'#444')+R(ox+24,fy-68,36,10,'#111')+R(ox+28,fy-65,4,4,'#39d353',' class="cur"')+R(ox+38,fy-52,8,6,'#555')+R(ox+36,fy-42,12,10,'#fff'));
+ ox=x+292; if(fits(ox,90)){im=prop('coffee',ox,fy-80,90,80);s+=im||(R(ox,fy-26,90,26,'#6b4423')+R(ox,fy-30,90,6,'#8b5a2b')+R(ox+20,fy-74,44,44,'#2d2d2d',' rx="3"')+R(ox+20,fy-78,44,6,'#444')+R(ox+24,fy-68,36,10,'#111')+R(ox+28,fy-65,4,4,'#39d353',' class="cur"')+R(ox+38,fy-52,8,6,'#555')+R(ox+36,fy-42,12,10,'#fff'));
   s+=R(ox+38,fy-48,3,5,'#ddd',' class="steam"')+R(ox+44,fy-48,3,5,'#ddd',' class="steam s2"'); LOUNGE={spot:[ox+96,fy-48],name:name};}
- ox=x+410; if(fits(ox,60)){im=prop('vending',ox,fy-104,60,104);if(im)s+=im;else{s+=R(ox,fy-104,60,100,'#dc2626',' rx="3"')+R(ox,fy-104,60,8,'#991b1b')+R(ox+6,fy-94,36,50,'#1e293b');
+ ox=x+432; if(fits(ox,60)){im=prop('vending',ox,fy-104,60,104);if(im)s+=im;else{s+=R(ox,fy-104,60,100,'#dc2626',' rx="3"')+R(ox,fy-104,60,8,'#991b1b')+R(ox+6,fy-94,36,50,'#1e293b');
   [[0,'#f59e0b','#3b82f6','#22c55e'],[16,'#22c55e','#f59e0b','#e66fd1'],[32,'#3b82f6','#ef4444','#f59e0b']].forEach(function(r){for(var i=0;i<3;i++)s+=R(ox+10+i*12,fy-88+r[0],8,12,r[i+1]);});
   s+=R(ox+46,fy-92,10,40,'#111')+R(ox+48,fy-88,6,4,'#5ad1e6',' class="vend"')+R(ox+6,fy-34,36,14,'#111')+R(ox+4,fy-4,8,4,'#222')+R(ox+48,fy-4,8,4,'#222');}}
- ox=x+480; if(fits(ox,176)){var busy=[D.hub].concat(D.tracks).some(function(t){return (t.occupied_by||[]).some(function(q){return q.live&&q.live.status==='busy';});});
+ ox=x+502; if(fits(ox,176)){var busy=[D.hub].concat(D.tracks).some(function(t){return (t.occupied_by||[]).some(function(q){return q.live&&q.live.status==='busy';});});
   im=prop('printer',ox,fy-100,176,100);s+=im||(R(ox+6,fy-16,128,14,'#4b5563')+R(ox+10,fy-2,10,4,'#222')+R(ox+120,fy-2,10,4,'#222')+R(ox,fy-76,140,60,'#9ca3af',' rx="4"')+R(ox,fy-80,140,6,'#d1d5db')+R(ox+10,fy-92,60,14,'#6b7280')+R(ox+12,fy-96,56,4,'#fff')+R(ox+100,fy-94,34,22,'#111',' rx="2"')+R(ox+103,fy-91,28,16,busy?'#39d353':'#4aa3ff')+R(ox+140,fy-46,36,8,'#6b7280')+R(ox+10,fy-60,120,4,'#6b7280'));
   if(busy)s+=R(ox+146,fy-54,24,6,'#fff',' class="paper"');  // 作業中の席があれば用紙が出続ける
   s+='<text x="'+(ox+70)+'" y="'+(fy+14)+'" text-anchor="middle" font-size="10" fill="'+PAL.propTxt+'" fill-opacity=".8">🖨️ 印刷機'+(busy?'（稼働中）':'')+'</text>';}
@@ -802,11 +806,17 @@ function moveH(m){var g=document.getElementById('rhuman');if(!g)return;var p=m.l
  g.style.transform='translate('+p[0]+'px,'+p[1]+'px)';var lab=m.lounge?'☕ '+HN+' 休憩 '+m.t:'👤 '+HN+' → '+m.track+(m.s?' S'+m.s:'')+' '+m.t;
  document.getElementById('rht').textContent=lab;document.getElementById('rhb').setAttribute('width',tw(lab)+10);
  document.getElementById('rhtt').textContent=m.lounge?HN+'：'+BREAK_MIN+'分以上話しかけていない→休憩室（'+m.t+'）':HN+' → '+m.track+(m.s?' S'+m.s:'')+' '+m.t+(m.n>1?'（続けて '+m.n+' 回）':'')+'「'+(m.text||'')+'」';}
+// 🕒 再生中のダイジェスト（S23 ⑬）: ヘッダの凡例の場所に「時刻＋何があったか＋k/N＋進捗」。終わったら 2.5 秒見せて凡例に戻す
+var HDR=document.querySelector('header'),RB={clk:document.getElementById('rclk'),cap:document.getElementById('rcap'),cnt:document.getElementById('rcnt'),prog:document.getElementById('rprog')};
+function digest(it,k){var t,cap;if(it.kind==='mv'){var m=it.m;t=m.t;cap=m.lounge?'☕ '+HN+' → 休憩室（'+BREAK_MIN+'分以上話しかけていない）':'👤 '+HN+' → '+m.track+(m.s?' S'+m.s:'')+(m.n>1?'（続けて '+m.n+' 回）':'')+(m.text?' 「'+m.text+'」':'');}
+ else{var e=D.edges[it.i];t=(e.t||'').slice(-5);cap='📨 '+e.frm+(e.frm_s?' S'+e.frm_s:'')+' → '+e.to+(e.to_s?' S'+e.to_s:'')+(e.ok?'':' ❌ 不達')+(e.summary?' ・ '+e.summary:'');}
+ RB.clk.textContent=t||'';RB.cap.textContent=cap;RB.cap.title=cap;RB.cnt.textContent=(k+1)+' / '+RTL.length;RB.prog.style.width=((k+1)*100/RTL.length)+'%';}
 document.getElementById('play').onclick=function(){if(playing||!RTL.length)return;playing=true;window.csvPlaying=true;var STEP=RTL.length>50?Math.max(500,Math.round(47500/RTL.length)):950;
+ HDR.classList.add('playing');RB.clk.textContent='▶';RB.cap.textContent='今日の流れを再生（'+RTL.length+' 件・1 歩 '+(STEP/1000)+' 秒）';RB.cnt.textContent='';RB.prog.style.width='0%';
  document.querySelectorAll('#scene .human').forEach(function(x){x.style.visibility='hidden';});
  if(MV.length){var p0=(LOUNGE&&LOUNGE.spot)||hpos(MV[0].m.track);if(p0)rhuman(p0);}
- RTL.forEach(function(it,k){setTimeout(function(){if(it.kind==='mv'){moveH(it.m);return;}hl(it.i);var g=document.getElementById('env'+it.i),a=document.getElementById('am'+it.i);if(!g)return;g.setAttribute('opacity','1');a.beginElement();setTimeout(function(){g.setAttribute('opacity','0');},900);},k*STEP);});
- setTimeout(function(){var g=document.getElementById('rhuman');if(g)g.remove();document.querySelectorAll('#scene .human').forEach(function(x){x.style.visibility='';});playing=false;window.csvPlaying=false;if(window.csvReloadAfter)location.reload();},RTL.length*STEP+900);};
+ RTL.forEach(function(it,k){setTimeout(function(){digest(it,k);if(it.kind==='mv'){moveH(it.m);return;}hl(it.i);var g=document.getElementById('env'+it.i),a=document.getElementById('am'+it.i);if(!g)return;g.setAttribute('opacity','1');a.beginElement();setTimeout(function(){g.setAttribute('opacity','0');},900);},k*STEP);});
+ setTimeout(function(){var g=document.getElementById('rhuman');if(g)g.remove();document.querySelectorAll('#scene .human').forEach(function(x){x.style.visibility='';});playing=false;window.csvPlaying=false;RB.clk.textContent='⏹';RB.cap.textContent='再生おわり（'+RTL.length+' 件）';setTimeout(function(){HDR.classList.remove('playing');},2500);if(window.csvReloadAfter)location.reload();},RTL.length*STEP+900);};
 ord.onclick=function(){desc=!desc;try{localStorage.setItem('csv-log-desc',desc?'1':'0');}catch(e){}renderLog();};
 renderLog();
 })();
@@ -859,6 +869,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
 <button class="tgl" id="play" type="button" title="今日の 📨 の流れと 👤 の席移動を時刻順に再生（再生中は自動更新を保留）">▶ 流れを再生</button>
 <div class="navs">{nav_html("office")}<button class="tgl" id="tgl" type="button"></button></div>
 <div style="flex-basis:100%">{legend}</div>
+<div id="rbar" title="▶ 再生中のダイジェスト＝その時刻に何があったか"><b id="rclk"></b><span id="rcap"></span><span id="rcnt"></span><div id="rtrk"><div id="rprog"></div></div></div>
 </header>
 <main><div id="scene"></div><aside><h2>📨 やり取り（クリックで矢印を強調）<button class="tgl" id="ord" type="button"></button></h2><div id="log"></div></aside></main>
 <footer>live_board.py --html --watch が同じループで書き換え中（変化があった時だけ・数秒〜10秒で反映）。ローカル閲覧専用＝案件名が入るので公開しない。</footer>
