@@ -292,7 +292,7 @@ def _canonical_key(led, mapper) -> str:
     """live_board と同じ alias テーブル（_resolve_project・title_hints は使わない）で正規化。
 
     フル案件名は完全一致でそのまま保持し、memory台帳の stem・別名だけ canonical 名に寄せる
-    （kanademono-dev → KANADEMONO開発 / KANADEMONO-ウェルカムDM → ウェルカムDM 等）。
+    （kanademono-dev → KANADEMONO〔旧 KANADEMONO開発〕 / KANADEMONO-ウェルカムDM → ウェルカムDM 等）。
     live_board の r["project"]（map_session の canonical）と同じテーブルに着地するので、
     slug() が一致してトラック名リンクが個別ページに繋がる。
     title_hints を使うと「GEMiNX本体開発→GEMiNX」と粒度が粗くなり衝突するので使わない。
@@ -808,7 +808,7 @@ def build(open_browser: bool = True) -> Path:
                 ledgers.append(led)
 
     # live_board と同じ正規化でトラック名を canonical に揃える（リンク繋ぎ＋表示統一）。
-    # memory台帳の stem（kanademono-dev 等）を KANADEMONO開発 等の正規名に寄せる。
+    # memory台帳の stem（kanademono-dev 等）を KANADEMONO 等の正規名に寄せる（10/16 改名・旧名は alias）。
     for l in ledgers:
         l.project = _canonical_key(l, mapper)
 
