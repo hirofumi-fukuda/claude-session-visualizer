@@ -171,10 +171,11 @@ def _load_cache(path: Path) -> dict:
         with open(path, encoding="utf-8") as f:
             c = json.load(f)
         if c.get("version") == CACHE_VERSION:
+            c.setdefault("user_names", {})  # S23 後付け（sid → /rename 名）
             return c
     except (OSError, json.JSONDecodeError):
         pass
-    return {"version": CACHE_VERSION, "files": {}, "pipe_map": {}, "names": {}}
+    return {"version": CACHE_VERSION, "files": {}, "pipe_map": {}, "names": {}, "user_names": {}}
 
 
 def _save_cache(path: Path, cache: dict):
@@ -214,6 +215,8 @@ def _learn_registry(cache: dict, registry: dict):
             lst = cache["names"].setdefault(name, [])
             if not any(x["sid"] == sid for x in lst):
                 lst.append({"sid": sid, "started": (rec.get("startedAt") or 0) / 1000.0})
+            if rec.get("nameSource") == "user":
+                cache["user_names"][sid] = name  # /rename 名＝プロセスが死んだ後も席名に使う（💤 離席中・S23）
 
 
 def _sid_by_pipe(cache: dict, frm: str):
@@ -233,7 +236,9 @@ def collect(claude_dir: Path, cache_path: Path, window_hours: float = 48,
             registry: dict | None = None) -> dict:
     """直近 window_hours に更新された全セッションからメッセージ痕跡を集めて突合し、edge 一覧を返す。
 
-    戻り値: {"edges": [...], "sids": {関係した sid}, "registry": {...}, "span": [first_ts, last_ts]}
+    戻り値: {"edges": [...], "sids": {関係した sid}, "registry": {...}, "span": [first_ts, last_ts],
+             "recent": {sid: jsonl の mtime（窓内・agent- 除く）}, "user_names": {sid: /rename 名（cache 学習分）}}
+    recent は 💤 離席中（プロセスは無いが当日動いた席・S23）の判定材料。
     edge = {ts, frm, frm_label(名前のみ), to, to_label, summary, preview, body, ok,
             read: True/False/None, removed, matched}
     """
@@ -245,6 +250,7 @@ def collect(claude_dir: Path, cache_path: Path, window_hours: float = 48,
     cutoff = now - window_hours * 3600
     files = cache["files"]
     seen = set()
+    recent = {}
     projects_dir = claude_dir / "projects"
     for ws_dir in projects_dir.iterdir() if projects_dir.is_dir() else []:
         if not ws_dir.is_dir():
@@ -258,6 +264,8 @@ def collect(claude_dir: Path, cache_path: Path, window_hours: float = 48,
                 continue
             key = str(jsonl)
             seen.add(key)
+            if not jsonl.stem.startswith("agent-"):
+                recent[jsonl.stem] = st.st_mtime
             state = files.get(key) or {"offset": 0, "sends": [], "recvs": [], "pending": {}}
             try:
                 files[key] = _scan_file(jsonl, state)
@@ -334,7 +342,8 @@ def collect(claude_dir: Path, cache_path: Path, window_hours: float = 48,
     edges.sort(key=lambda e: e["ts"])
     sids = {e["frm"] for e in edges if e["frm"]} | {e["to"] for e in edges if e["to"]}
     span = [edges[0]["ts"], edges[-1]["ts"]] if edges else None
-    return {"edges": edges, "sids": sids, "registry": registry, "span": span}
+    return {"edges": edges, "sids": sids, "registry": registry, "span": span,
+            "recent": recent, "user_names": dict(cache.get("user_names") or {})}
 
 
 def _first_line(body: str, limit: int = 120) -> str:
@@ -391,6 +400,10 @@ def peek_summary(transcript: Path, workspace: str) -> dict:
                 t = rec.get("type")
                 if t == "ai-title":
                     summary["ai_title"] = rec.get("aiTitle") or summary["ai_title"]
+                elif t == "assistant" and not summary.get("model"):
+                    m = (rec.get("message") or {}).get("model") or ""
+                    if m and m != "<synthetic>":  # 冒頭のモデル（離席席のシャツ色用・/model 切替は追わない・S23）
+                        summary["model"] = re.sub(r"-20\d{6}$", "", re.sub(r"^claude-", "", m))
                 elif t == "user" and not rec.get("isMeta") and not rec.get("isSidechain"):
                     for raw in _iter_text_items((rec.get("message") or {}).get("content")):
                         text = _clean_user_text(raw)
@@ -407,11 +420,16 @@ def peek_summary(transcript: Path, workspace: str) -> dict:
     return summary
 
 
+_PEEK_CACHE: dict = {}  # sid → (mtime, 冒頭ピーク)。死んだセッションの jsonl は変わらないので読み直さない（S23・毎 tick 20 本の頭読み回避）
+
+
 def label_sessions(sids, claude_dir: Path, mapper, ws_labels: dict | None = None,
-                   known: dict | None = None) -> dict:
-    """sid → {"project", "s", "ws", "ws_key", "title"}。known（live_board の rows 等）があれば優先して使う。
-    ws=表示名（workspace_labels）・ws_key=encoded ws dir（office のテナント判定用・S22）。"""
+                   known: dict | None = None, user_names: dict | None = None) -> dict:
+    """sid → {"project", "s", "ws", "ws_key", "title", "name", "model"}。known（live_board の rows 等）があれば優先して使う。
+    ws=表示名（workspace_labels）・ws_key=encoded ws dir（office のテナント判定用・S22）。
+    user_names=sid → /rename 名（cache 学習分）。mapping ⓪ の最優先判定を死んだセッションにも効かせる（💤 離席中・S23）。"""
     ws_labels = ws_labels or {}
+    user_names = user_names or {}
     out = {}
     for sid in sids:
         if known and sid in known:
@@ -422,11 +440,23 @@ def label_sessions(sids, claude_dir: Path, mapper, ws_labels: dict | None = None
             out[sid] = {"project": None, "s": None, "ws": "", "ws_key": "", "title": ""}
             continue
         ws = tr.parent.name
-        summ = peek_summary(tr, ws)
-        mapper.map_session(summ)
+        try:
+            mtime = tr.stat().st_mtime
+        except OSError:
+            mtime = 0
+        hit = _PEEK_CACHE.get(sid)
+        if hit and hit[0] == mtime:
+            summ = dict(hit[1])
+        else:
+            summ = peek_summary(tr, ws)
+            _PEEK_CACHE[sid] = (mtime, dict(summ))
+        if user_names.get(sid):
+            summ["user_name"] = user_names[sid]
+        mapper.map_session(summ)  # 設定（別名）は毎 tick 読み直されるので判定はキャッシュしない
         out[sid] = {"project": summ.get("project"), "s": summ.get("session_no"),
                     "ws": ws_labels.get(ws, ws), "ws_key": ws,
-                    "title": (summ.get("first_user_text") or "")[:80]}
+                    "title": (summ.get("first_user_text") or "")[:80],
+                    "name": user_names.get(sid) or "", "model": summ.get("model") or ""}
     return out
 
 

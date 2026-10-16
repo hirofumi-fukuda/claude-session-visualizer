@@ -39,7 +39,7 @@ from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.modelbadge import MDL_CSS, model_badge
 from claude_sv.daily_view import write_daily
 from claude_sv.messages import collect as collect_messages, label_sessions, load_registry, recent_html
-from claude_sv.office import write_office
+from claude_sv.office import away_cutoff, write_office
 from claude_sv.nav import nav_html
 from claude_sv.parser import _clean_user_text, _iter_text_items
 
@@ -1314,10 +1314,17 @@ def _messages(cfg, rows):
         res = collect_messages(claude_dir, REPO_ROOT / "cache" / "messages_cache.json", hours)
         known = {r["sid"]: {"project": r.get("project"), "s": r.get("session_no"),
                             "ws": r.get("ws", ""), "ws_key": r.get("ws_key", ""),
-                            "cwd": r.get("cwd", ""), "title": r.get("title", "")}
+                            "cwd": r.get("cwd", ""), "title": r.get("title", ""),
+                            "model": r.get("model", "")}
                  for r in rows if r.get("sid")}
-        labels = label_sessions(res["sids"], claude_dir, ProjectMapper(cfg),
-                                cfg.get("workspace_labels"), known)
+        # 💤 離席中（S23）: プロセスは無いが当日（office.away_since）に jsonl が動いたセッションも席に載せる
+        cut = away_cutoff(cfg)
+        extra = {sid for sid, m in (res.get("recent") or {}).items() if m >= cut and sid not in known}
+        labels = label_sessions(res["sids"] | extra, claude_dir, ProjectMapper(cfg),
+                                cfg.get("workspace_labels"), known, res.get("user_names"))
+        for sid in extra - res["sids"]:
+            if not (labels.get(sid) or {}).get("project"):
+                labels.pop(sid, None)  # 案件に当たらない離席セッションは席にしない（未分類のノイズ防止）
         return recent_html(res["edges"], labels, cfg, limit=12, esc=html_mod.escape), res, labels
     except Exception as e:  # noqa: BLE001
         print(f"messages error: {e!r}")

@@ -118,6 +118,17 @@ def _hub_side(order, cfg: dict) -> list:
     return out
 
 
+def away_cutoff(cfg: dict) -> float:
+    """💤 離席中の下限（epoch）。稼働プロセスは無いがこの時刻以降に jsonl が動いた席を「離席中」とみなす
+    （S23・ふくちゃん「当日中はずっと」）。office.away_since: "today"（既定）＝今日 0:00 ローカル／数値＝その時間ぶん前。
+    日付が変わると前日分は自動で消える（mtime 由来なので stamp は安定＝無駄な再読込なし）。"""
+    v = (cfg.get("office") or {}).get("away_since", "today")
+    now = datetime.now()
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return now.timestamp() - float(v) * 3600
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+
 def _lounge(cfg: dict):
     """cfg.office.lounge（dict か true）→ {name, slot, break_after_min}。無ければ None＝休憩室なし（S22）。"""
     lg = (cfg.get("office") or {}).get("lounge")
@@ -261,6 +272,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     def seat_or_none(sid):
         return seat(sid) if (sid in labels or sid in live) else None
 
+    recent, cut = res.get("recent") or {}, away_cutoff(cfg)  # 💤 離席中の材料（S23）
     tracks: dict = {}
     for sid in set(labels) | set(live):
         p = seat(sid)
@@ -271,12 +283,20 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
         t["sessions"].sort(key=lambda x: (x["live"] is None, -(x["s"] or 0)))
         t["occupied_by"] = [x for x in t["sessions"] if x["live"]]
         t["live"] = bool(t["occupied_by"])
+        # 💤 離席中（S23）: 稼働プロセスは無いが当日（away_cutoff 以降）に jsonl が動いたセッション・新しい順。ハブも含む（pop の前）
+        t["away"] = [] if t["live"] else sorted(
+            [{"sid": x["sid"], "s": x["s"], "ts": int(recent[x["sid"]]),
+              "t": datetime.fromtimestamp(recent[x["sid"]]).strftime("%H:%M"),
+              "name": (labels.get(x["sid"]) or {}).get("name") or "",
+              "model": (labels.get(x["sid"]) or {}).get("model") or ""}
+             for x in t["sessions"] if recent.get(x["sid"], 0) >= cut],
+            key=lambda a: -a["ts"])
         t["cur"] = t["sessions"][0] if t["sessions"] else None
         # 席の部屋＝いちばん新しい（稼働優先）セッションの部屋。同じ案件を別 ws で開いても席は1つ
         t["tenant"] = tenant_of(t["cur"]["sid"]) if (tc and t["cur"]) else (tc["main"] if tc else None)
     hub = tracks.pop(hub_disp, {"name": hub_disp, "sessions": [], "occupied_by": [],
-                                "live": False, "cur": None})
-    order = sorted(tracks.values(), key=lambda t: (not t["live"], t["name"]))
+                                "live": False, "away": [], "cur": None})
+    order = sorted(tracks.values(), key=lambda t: (not t["live"], not t["away"], t["name"]))  # 稼働 → 💤 離席中 → 空席
 
     # 止まっているトラックも空席で出す（10/15 ふくちゃん）: cfg.office.teams に載っている名前のうち
     # 時間幅内にセッションが無いものを sessions=[] の席として足す（島わけで席が固定され、空席＝止まって
@@ -289,7 +309,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
                 if _norm(m) in have:
                     continue
                 have.add(_norm(m))
-                order.append({"name": m, "sessions": [], "occupied_by": [], "live": False,
+                order.append({"name": m, "sessions": [], "occupied_by": [], "live": False, "away": [],
                               "cur": None, "dormant": True, "tenant": tc["main"] if tc else None})
 
     # 人間の位置＝稼働セッションのうち「人間の最終発話」が最新の1件の席の横（S21・ハブ案）。
@@ -343,7 +363,8 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "lounge": _lounge(cfg), "props": load_props(),  # ☕ 休憩室（S22・無ければ None）と小物の絵（assets/props/）
             "board": _board(cfg),  # 🧾 ホワイトボードの要点（S23・daily から）
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
-                       "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"])},
+                       "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"]),
+                       "away": sum(1 for t in [hub] + order if not t["live"] and t.get("away"))},  # 💤 離席中の席数（S23）
             "window_hours": (cfg.get("office") or {}).get("window_hours", 48)}
 
 
@@ -385,6 +406,7 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 @keyframes steam{0%{opacity:.8;transform:translateY(0)}100%{opacity:0;transform:translateY(-12px)}} .steam{animation:steam 1.8s ease-out infinite;transform-box:fill-box} .steam.s2{animation-delay:.7s}
 @keyframes paper{0%{transform:translateX(-26px);opacity:0}25%{opacity:1}100%{transform:translateX(14px);opacity:0}} .paper{animation:paper 2.2s linear infinite;transform-box:fill-box}
 @keyframes wink{0%,100%{opacity:1}50%{opacity:.25}} .vend{animation:wink 2.4s ease-in-out infinite}
+@keyframes zz{0%{opacity:.3;transform:translateY(0)}50%{opacity:1}100%{opacity:.3;transform:translateY(-6px)}} .zz{animation:zz 2.4s ease-in-out infinite;transform-box:fill-box}
 .empty{padding:30px;color:var(--muted)}
 footer{flex:none;padding:6px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
 """
@@ -424,14 +446,14 @@ try{var sprQ=new URLSearchParams(location.search).get('spr');if(sprQ!==null)sprS
  var eff=sprSel||defT; if(eff){var parts=eff.split('/'),th=THEMES[parts[0]];if(th){SP={};Object.keys(th).forEach(function(k){SP[k]=th[k];});if(parts[1]&&th[parts[1]])SP.human=th[parts[1]];}}})();
 function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" width="36" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"'+(filt?' filter="url(#'+filt+')"':'')+'/>';}
 // テーマ内の「種類」＝ agent-<種類>[-<モデル>][-<ポーズ>].png の <種類>（モデル名・ポーズ名以外のトークン）。トラック名のハッシュで固定割当（config office.sprite_variants で上書き可）
-var MODELS={opus:1,sonnet:1,haiku:1,fable:1,unknown:1}, POSES={typing:1,idle:1,wait:1};
+var MODELS={opus:1,sonnet:1,haiku:1,fable:1,unknown:1}, POSES={typing:1,idle:1,wait:1,rest:1};  // rest＝💤 離席中（絵が無ければ idle 系に落ちる・S23）
 function varsOf(M){if(M.__vars)return M.__vars;var vs={};Object.keys(M).forEach(function(k){var t=k.split('-');if(t[0]!=='agent')return;t.slice(1).forEach(function(w){if(!MODELS[w]&&!POSES[w])vs[w]=1;});});return (M.__vars=Object.keys(vs).sort());}
 var VOVR=D.sprite_variants||{}, TOVR=D.sprite_track_themes||{}, NOVR=D.sprite_tenant_themes||{};
 function variantFor(track,M){var VARS=varsOf(M||SP);if(!VARS.length)return '';if(VOVR[track]&&VARS.indexOf(VOVR[track])>=0)return VOVR[track];var h=5381;for(var i=0;i<track.length;i++)h=((h*33)^track.charCodeAt(i))>>>0;return VARS[h%VARS.length];}
 // 席ごとの別テーマ: トラック名（office.sprite_track_themes）＞部屋名（office.sprite_tenant_themes・trackRoom は部屋の配置時に埋まる）＞画面のテーマ。指定のテーマが無ければ次へ落ちる
 function mapFor(track){var th=TOVR[track]||NOVR[trackRoom[track]];if(th){var tm=THEMES[String(th).split('/')[0]];if(tm)return tm;}return SP;}
 function modelKey(model){return /opus/.test(model||'')?'opus':/sonnet/.test(model||'')?'sonnet':/haiku/.test(model||'')?'haiku':/fable/.test(model||'')?'fable':'unknown';}
-function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKey(model),pose=status==='busy'?'typing':status==='perm'?'wait':'idle',v=variantFor(track||'',M);
+function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKey(model),pose=status==='busy'?'typing':status==='perm'?'wait':status==='away'?'rest':'idle',v=variantFor(track||'',M);
  var direct=[],gray=[];
  if(v){direct.push('agent-'+v+'-'+mk+'-'+pose,'agent-'+v+'-'+mk);gray.push('agent-'+v+'-'+pose,'agent-'+v);}
  direct.push('agent-'+mk+'-'+pose,'agent-'+mk);gray.push('agent-'+pose,'agent');
@@ -445,13 +467,15 @@ var LIGHT=document.documentElement.dataset.theme==='light';
 function shade(c,f){var n=parseInt(c.slice(1),16);function k(v){return Math.max(0,Math.min(255,Math.round(v*f)));}return '#'+((1<<24)|(k(n>>16&255)<<16)|(k(n>>8&255)<<8)|k(n&255)).toString(16).slice(1);}
 var PAL=LIGHT?{tileA:'#e6e2d9',tileB:'#ebe7df',grid:'#d8d3c8',carpetA:'#dccfb5',carpetB:'#d0c2a5',wall:'#fbfaf6',wallOp:1,wallStroke:'#8f887b',wallStrokeOp:0.9,wallW:6,roomTxt:'#1f2937',roomSub:'#4b5563',emptyTxt:'#6b7280',chair:'#5b6478',chair2:'#404859',plate:'#fffdf8',plateStroke:'#bfb8a8',islOp:0.18,sideOp:0.12,propTxt:'#374151',doorTxt:'#374151',doorStroke:'#6b7280',txt:function(c){return shade(c,0.66);}}
 :{tileA:'#2a2d3f',tileB:'#2f3348',grid:null,carpetA:'#3d3330',carpetB:'#4a3f3a',wall:'#000',wallOp:0.16,wallStroke:'#cbd5e1',wallStrokeOp:0.5,wallW:4,roomTxt:'#e2e8f0',roomSub:'#cbd5e1',emptyTxt:'#94a3b8',chair:'#3a3e58',chair2:'#2a2d44',plate:'#f3efe0',plateStroke:null,islOp:0.10,sideOp:0.05,propTxt:'#cbd5e1',doorTxt:'#cbd5e1',doorStroke:'#cbd5e1',txt:function(c){return c;}};
-function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
+function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,away=(!live&&t.away&&t.away.length)?t.away:null,onSofa=!!(away&&awayAt[t.name]>=0);
  var st='empty'; if(live){st=t.occupied_by.some(function(s){return s.live.status==='perm';})?'perm':t.occupied_by.some(function(s){return s.live.status==='busy';})?'busy':'idle';}
  var g='<g class="desk"'+(t.dormant?' opacity="'+(LIGHT?0.68:0.5)+'"':'')+'>';  // 休眠席は薄く（ライトは背景が明るいぶん濃いめ）
- var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.rc?' 📱RC':'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
+ var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.rc?' 📱RC':'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):away?'💤 離席中（プロセスなし・最後の動き '+away[0].t+(onSofa?'・休憩室のソファ':'')+'）\n'+away.map(function(a){return '   '+(a.name||'')+' '+(a.model||'')+(a.s?' S'+a.s:'')+' 最後 '+a.t;}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
  g+='<title>'+esc(tip)+'</title>';
+ if(away)g+='<rect x="'+(x-w/2-6)+'" y="'+(y-70)+'" width="'+(w+12)+'" height="'+(h+98)+'" rx="8" fill="#64748b" fill-opacity="0.08" stroke="#64748b" stroke-dasharray="6 4" stroke-width="2"/><text class="zz" x="'+(x+w/2-4)+'" y="'+(y-52)+'" text-anchor="end" font-size="14">💤</text>';  // 💤 離席中＝席は点線枠で確保（S23）
  if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});
   if(t.occupied_by.some(function(s){return s.live.rc;}))g+='<text x="'+(x+w/2-2)+'" y="'+(y-6)+'" text-anchor="end" font-size="15">📱</text>';}  // 📱 Remote Control オンの席（S22）
+ else if(away&&!onSofa){g+='<g opacity="0.45">'+sprite(x-w/2+14,y-62,MODEL_COL(away[0].model),away[0].model,'away',t.name)+'</g>';}  // ソファから溢れた離席者は席に半透明で残す
  else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="'+PAL.chair+'"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="'+PAL.chair2+'"/>';}
  g+='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="#8b5a2b"/><rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="8" fill="#b57a3e"/>';
  var nm=big?2:1;for(var i=0;i<nm;i++){var mx=x-(nm-1)*22+i*44-16;g+='<rect x="'+mx+'" y="'+(y+10)+'" width="32" height="22" fill="#111"/><rect x="'+(mx+2)+'" y="'+(y+12)+'" width="28" height="18" fill="'+SCR[st]+'"/>';if(st==='busy')g+='<rect class="cur" x="'+(mx+6)+'" y="'+(y+22)+'" width="4" height="4" fill="#fff"/>';}
@@ -461,7 +485,7 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live;
  var un=unreadBy[t.name]||0;
  if(un)g+='<rect x="'+(x+w/2-30)+'" y="'+(y-14)+'" width="30" height="14" fill="#f5c542"/><text x="'+(x+w/2-15)+'" y="'+(y-3)+'" text-anchor="middle" font-size="11" fill="#222">📨'+un+'</text>';
  return g+'</g>';}
-var pos={}, floors='', walls='', door={}, trackRoom={}, hubVisible=true, LOUNGE=null, WIN=null;
+var pos={}, floors='', walls='', door={}, trackRoom={}, hubVisible=true, LOUNGE=null, WIN=null, SOFA=null, awayAt={};  // SOFA＝💤 離席者の座る位置（drawLounge で埋まる）・awayAt＝席名→ソファ番号（-1＝溢れ）
 var ROOMS=D.rooms||[];
 // ---------- ビル＝テナント（部屋・S22）。?ws=〈部屋名の一部〉が最優先・無ければ localStorage（ヘッダのボタンで保存）・既定=全館 ----------
 var wsSel=''; try{wsSel=localStorage.getItem('csv-office-ws')||'';}catch(e){}
@@ -536,7 +560,7 @@ function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;
   s+=R(wx,wy,120,70,'#cbd5e1')+'<rect id="winsky" x="'+(wx+6)+'" y="'+(wy+6)+'" width="108" height="58" fill="#7dd3fc"/><g id="winstars" opacity="0">'+R(wx+20,wy+14,3,3,'#fff')+R(wx+50,wy+22,2,2,'#fff')+R(wx+90,wy+12,3,3,'#fff')+R(wx+70,wy+40,2,2,'#fff')+'</g><circle id="winsun" cx="'+(wx+40)+'" cy="'+(wy+26)+'" r="9" fill="#fde047"/>'+R(wx+58,wy+6,4,58,'#cbd5e1')+R(wx+6,wy+33,108,4,'#cbd5e1')+R(wx-4,wy+70,128,6,'#94a3b8');}
  var bx=x+170; if(!fits(bx,220))bx=x+24; s+=whiteboard(bx,y+34,right-bx,h-172);  // 板の高さ＝床側の自販機（104）に当たらない範囲
  // 床側（左→右）: 🛋️ ソファ・テーブル・🪴 観葉植物・☕ コーヒー（右隣が人の立ち位置）・🥤 自販機・🖨️ 印刷機。幅が足りなければ右から落とす
- var ox=x+24,im; if(fits(ox,120)){im=prop('sofa',ox,fy-56,120,56);s+=im||(R(ox,fy-52,120,24,'#3b5bdb',' rx="6"')+R(ox,fy-28,120,20,'#4c6ef5')+R(ox,fy-42,14,34,'#364fc7')+R(ox+106,fy-42,14,34,'#364fc7')+R(ox+59,fy-28,2,20,'#364fc7')+R(ox+10,fy-8,8,8,'#222')+R(ox+102,fy-8,8,8,'#222'));}
+ var ox=x+24,im; if(fits(ox,120)){im=prop('sofa',ox,fy-56,120,56);s+=im||(R(ox,fy-52,120,24,'#3b5bdb',' rx="6"')+R(ox,fy-28,120,20,'#4c6ef5')+R(ox,fy-42,14,34,'#364fc7')+R(ox+106,fy-42,14,34,'#364fc7')+R(ox+59,fy-28,2,20,'#364fc7')+R(ox+10,fy-8,8,8,'#222')+R(ox+102,fy-8,8,8,'#222'));SOFA=[[ox+4,fy-56],[ox+42,fy-56],[ox+80,fy-56]];}  // 🛋️ 離席者の座る位置（最大3人・S23）
  ox=x+156; if(fits(ox,56)){im=prop('table',ox,fy-50,56,50);s+=im||(R(ox,fy-36,56,10,'#8b5a2b')+R(ox,fy-26,56,4,'#6b4423')+R(ox+6,fy-22,6,22,'#5a3a1a')+R(ox+44,fy-22,6,22,'#5a3a1a')+R(ox+14,fy-46,10,10,'#fff')+R(ox+15,fy-45,8,2,'#5a3a1a')+R(ox+32,fy-46,10,10,'#fff')+R(ox+33,fy-45,8,2,'#5a3a1a')+R(ox+42,fy-43,3,4,'#fff'));}
  ox=x+222; if(fits(ox,36))s+=plant(ox,fy-70,1);
  ox=x+270; if(fits(ox,90)){im=prop('coffee',ox,fy-80,90,80);s+=im||(R(ox,fy-26,90,26,'#6b4423')+R(ox,fy-30,90,6,'#8b5a2b')+R(ox+20,fy-74,44,44,'#2d2d2d',' rx="3"')+R(ox+20,fy-78,44,6,'#444')+R(ox+24,fy-68,36,10,'#111')+R(ox+28,fy-65,4,4,'#39d353',' class="cur"')+R(ox+38,fy-52,8,6,'#555')+R(ox+36,fy-42,12,10,'#fff'));
@@ -614,8 +638,14 @@ D.edges.forEach(function(e,i){var A=pos[e.frm]||doorOf(e.frm),B=pos[e.to]||doorO
  svg+='<path id="p'+i+'" class="edge'+(e.ok?'':' ng')+(e.removed?' rm':'')+(isNew?' new':'')+'" data-i="'+i+'" d="'+d+'" stroke="'+col+'" opacity="'+op+'" marker-end="url(#ah)"><title>'+esc(e.t+' '+e.frm+' → '+e.to+'\n'+e.summary+(e.preview&&e.preview!==e.summary?'\n'+e.preview:''))+'</title></path>';
  svg+='<g id="env'+i+'" opacity="0"><rect x="-8" y="-6" width="16" height="12" fill="#fff" stroke="#333"/><polyline points="-8,-6 0,2 8,-6" fill="none" stroke="#333"/><animateMotion id="am'+i+'" dur="0.9s" begin="indefinite" fill="remove"><mpath href="#p'+i+'"/></animateMotion></g>';});
 svg+=flows;  // 新着の白い破線は全矢印の上・机の下
+// 💤 離席中（S23）: プロセスは無いが今日動いた席の主は休憩室のソファへ（新しい順に最大3人・溢れた分は席に半透明）。席には点線枠と 💤
+var AWAY=[D.hub].concat(D.tracks).filter(function(t){return !t.live&&t.away&&t.away.length&&pos[t.name];}).sort(function(a,b){return b.away[0].ts-a.away[0].ts;});
+AWAY.forEach(function(t,i){awayAt[t.name]=(SOFA&&i<SOFA.length)?i:-1;});
 D.tracks.forEach(function(t){var p=pos[t.name];if(p)svg+=desk(p[0],p[1],t,false);});
 if(hubVisible)svg+=desk(CX,CY,D.hub,true);
+if(SOFA&&AWAY.length){var onS=AWAY.filter(function(t){return awayAt[t.name]>=0;});
+ onS.forEach(function(t){var p=SOFA[awayAt[t.name]],a=t.away[0];svg+='<g><title>'+esc('💤 '+t.name+(a.s?' S'+a.s:'')+' 離席中（最後の動き '+a.t+'）\n'+(a.name?a.name+' ':'')+(a.model||'')+'\n席＝'+t.name+'（点線枠）')+'</title>'+sprite(p[0],p[1],MODEL_COL(a.model),a.model,'away',t.name)+'<text class="zz" x="'+(p[0]+28)+'" y="'+(p[1]+4)+'" font-size="12">💤</text></g>';});
+ if(onS.length)svg+='<text x="'+SOFA[0][0]+'" y="'+(SOFA[0][1]+66)+'" font-size="10" fill="'+PAL.propTxt+'" fill-opacity=".85">'+esc(fit('💤 '+onS.map(function(t){return t.name+(t.away[0].s?' S'+t.away[0].s:'')+' '+t.away[0].t;}).join(' ／ '),380,10))+'</text>';}
 // 人間＝最後に話しかけた席の横に1人（席には座らない・歩き回る）。前回位置を覚えておき、席が変われば歩いて移動する。
 var HS=["....HHHH....","...HHHHHH...","...HSSSSH...","...SSSSSS...","...SESSES...","...SSSSSS...","....SSSS....","..GGGGGGGG..",".GGGGGGGGGG.",".G.GGGGGG.G.",".S.GGGGGG.S.","...GGGGGG...","...KKKKKK...","...KK..KK...","...KK..KK...","...BB..BB..."];
 var HP={H:'#111',S:'#f2c9a0',E:'#222',G:'#2e9e6b',K:'#444',B:'#222'};
@@ -674,6 +704,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
     c = D["counts"]
     now = datetime.now().strftime("%m/%d %H:%M:%S")
     tiles = (f'<div class="tiles"><span class="tile"><b>{c["live"]}</b>人 在席</span>'
+             f'<span class="tile"><b>{c.get("away", 0)}</b>席 離席中</span>'
              f'<span class="tile"><b>{c["edges"]}</b>通 /{D["window_hours"]}h</span>'
              f'<span class="tile{" warn" if c["unread"] else ""}"><b>{c["unread"]}</b>未読</span>'
              f'<span class="tile{" bad" if c["failed"] else ""}"><b>{c["failed"]}</b>不達</span></div>')
@@ -690,6 +721,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<i class="sw" style="background:#d4a017"></i>Haiku '
               '<i class="sw" style="background:#f472b6"></i>Fable</span>'
               '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）</span>'
+              '<span>｜ 💤 離席中＝プロセスは無いが今日動いた席（主は休憩室のソファ・席は点線枠）</span>'
               '<span>｜ 📱 Remote Control オン（外出先から指示できる席）</span>'
               '<span>｜ 🎨 <select id="spr" title="絵のテーマ（assets/sprites/<テーマ>/）"></select></span>'
               '<span id="wsf" title="部屋（ワークスペース）で絞る・?ws=〈部屋名の一部〉でも指定可"></span></span>')
