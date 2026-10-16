@@ -31,6 +31,11 @@ office.html の絵（キャラ・休憩室の小物）を作る時の決めご�
 - モデル色＝`MODEL_COLORS`（Opus `#8a5cf6`・Sonnet `#3b82f6`・Haiku `#d4a017`・Fable `#f472b6`・不明 `#c24b4b`）。`claude_sv/office.py` の `MODEL_COL` と同じ値を保つ
 - グリッドの `1` `2` `3` は予約＝モデル色の本体・影（黒を 30% 混ぜる）・ハイライト（白を 38% 混ぜる）。人間の絵には使わない
 - テーマは `themes/<名前>.py` の 1 ファイル。必須＝`PAL`・`HUMAN`・`AGENTS`。種類×モデル×ポーズまで描くなら `SPECIES`・`BODY`・`ACCESSORIES`・`POSES`・`ANCHORS` も足す。手本＝`themes/animal.py`
+- `ASSIGN`（任意）＝書き出し名→描いたモデルの付け替え（`{"opus": "haiku", …}`＝agent-opus.png に haiku の絵を opus の色で。値 `'*'`＝`FALLBACK` のグレー版）。ninja は c3eea27 の差し替えの並びをこれで再現している。グリッドを入れ替えて直さない
+- `KINDS`（任意）＝席の役目の目印。`ASSIGN` 後の各絵に層を重ねて `agent-<種類>-<モデル>.png`・`agent-<種類>.png` を書き出す（一覧＝`out/<テーマ>/sheet-kinds.png`・インストールはしない）。席への割り当て＝config の `office.sprite_variants`。手本＝`themes/ninja.py`（hub＝幟・scribe＝巻物・10/16）
+  - 種類名にモデル名・ポーズ名（`opus`〜`fable`・`unknown`・`typing`・`idle`・`wait`）は使えない（gen.py が止める）
+  - 人間は席の左に立つので、目印は右か横長に置く。グレー版（乗算前）でも目印はパレットの色のまま描く＝乗算でキャラ色に染まらない
+  - ⚠️ 種類のファイルがあるテーマでは、`sprite_variants` に無い席もトラック名のハッシュで種類を引く（ninja だと全席が幟か巻物になる）。直すなら office.py 側でハッシュの候補から `sprite_variants` の値を外す（10/16 申し送り）
 
 ## 小物の位置合わせ
 コード（`claude_sv/office.py` の drawLounge）が小物の上に重ねる絵があるので、グリッドをずらすと合わなくなる。座標は `props/samples/gen.py` の冒頭に書いてある（コーヒーの湯気→カップ、印刷機の用紙→排紙トレイ）。

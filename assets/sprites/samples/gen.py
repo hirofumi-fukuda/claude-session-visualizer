@@ -20,6 +20,10 @@
   sheet-species.png           種類 × モデルの一覧（--install では置かない）
 POSES もあれば、上の 3 つをポーズごとにも書き出す（idle＝ポーズなしの絵なので作らない）:
   agent-<種類>-<モデル>-<ポーズ>.png ／ agent-<種類>-unknown-<ポーズ>.png ／ agent-<種類>-<ポーズ>.png ／ sheet-species-<ポーズ>.png
+テーマに ASSIGN があれば（例: ninja）、agent-<モデル>.png / agent.png に置く絵を入れ替える（{書き出し名: 絵}・'*'＝FALLBACK／agent.png）。
+テーマに KINDS があれば（例: ninja）、席の役目の目印（旗・巻物など）を上の絵に重ねた種類も書き出す:
+  agent-<種類>-<モデル>.png ／ agent-<種類>.png   agent-<モデル>.png ／ agent.png と同じ絵＋目印
+  sheet-kinds.png             種類 × モデルの一覧（--install では置かない）
 PNG は 36×48（1マス＝3px）。表示サイズと同じなので image-rendering が効かない環境でもにじまない。
 PNG には外側 1px の薄い白フチ（RIM）を焼き込む。黒髪・黒い服が office の暗い床に溶けないように。
 """
@@ -187,6 +191,47 @@ def theme_parts(mod):
     return pal, humans, agents, fallback
 
 
+def agent_sources(mod, agents, fallback):
+    """書き出し名（モデル名と '*'＝agent.png）→ (label, grid, color)。color＝塗るモデル色の名前か None（グレー版）。
+    ASSIGN（任意）で入れ替え。無ければ agent-<モデル>.png＝そのモデルの絵、agent.png＝FALLBACK のグレー版。"""
+    src = {m: (agents[m][0], agents[m][1], m) for m in MODELS}
+    src["*"] = (fallback[0], fallback[1], None)
+    assign = getattr(mod, "ASSIGN", {})
+    return {k: src[assign.get(k, k)] for k in MODELS + ["*"]}
+
+
+def kind_parts(mod, pal, src):
+    """KINDS（任意）→ {種類: (label, {書き出し名: (grid, color, 目印だけの grid)})}。
+    1枚＝agent_sources の絵＋種類の目印（(x, y, 層) を順に重ねる）。グレー版の絵でも目印は色のまま（体に溶けないように）。"""
+    out = {}
+    for kind, (label, stamps) in getattr(mod, "KINDS", {}).items():
+        if kind in MODELS + ["unknown", "typing", "idle", "wait"]:
+            raise SystemExit(f"{mod.NAME}: KINDS の {kind!r} はモデル名・ポーズ名（office.py が種類と見なさない）")
+        marks = ["." * W] * H
+        for x, y, layer in stamps:
+            marks = overlay(marks, layer, x, y)
+        grids = {}
+        for k, (_, grid, color) in src.items():
+            grid = overlay(grid, marks)
+            check_grid(grid, pal, f"{mod.NAME} KINDS[{kind}] {label} + {k}")
+            grids[k] = (grid, color, marks)
+        out[kind] = (label, grids)
+    return out
+
+
+def _draw(grid, pal, color, scale, marks=None):
+    """agent_sources / kind_parts の (grid, color[, marks]) を描く。color None＝グレー版（marks は色のまま上に重ねる）。"""
+    img = render(grid, pal, model=color, gray=color is None, scale=scale)
+    if marks and color is None:
+        img.alpha_composite(render(marks, pal, scale=scale))
+    return img
+
+
+def _agent_file(k, kind=None):
+    """書き出し名 → ファイル名（agent.png / agent-opus.png / agent-hub.png / agent-hub-opus.png）"""
+    return "agent" + (f"-{kind}" if kind else "") + ("" if k == "*" else f"-{k}") + ".png"
+
+
 def overlay(grid, layer, x=0, y=0):
     """grid に layer を (x, y) から重ねる。'.' は透明、枠からはみ出す分は切る。"""
     out = [list(row) for row in grid]
@@ -237,9 +282,13 @@ def write_theme(mod):
         old.unlink()
     for i, (label, grid) in enumerate(humans):
         add_rim(render(grid, pal, scale=SCALE)).save(d / ("human.png" if i == 0 else f"human-{i + 1}.png"))
-    for m, (label, grid) in agents.items():
-        add_rim(render(grid, pal, model=m, scale=SCALE)).save(d / f"agent-{m}.png")
-    add_rim(render(fallback[1], pal, gray=True, scale=SCALE)).save(d / "agent.png")
+    src = agent_sources(mod, agents, fallback)
+    for k, (label, grid, color) in src.items():
+        add_rim(_draw(grid, pal, color, SCALE)).save(d / _agent_file(k))
+    # KINDS: agent-<種類>-<モデル>.png ＋ agent-<種類>.png（上と同じ絵＋目印）
+    for kind, (label, grids) in kind_parts(mod, pal, src).items():
+        for k, (grid, color, marks) in grids.items():
+            add_rim(_draw(grid, pal, color, SCALE, marks)).save(d / _agent_file(k, kind))
     if hasattr(mod, "SPECIES"):
         # agent-<種類>-<モデル>.png ＋ モデル不明（赤で乗算した見え方を焼き込み）＋ グレー agent-<種類>.png（未知のモデル用）。ポーズは末尾に -<ポーズ>
         for sp, (label, p, by_pose) in species_parts(mod, pal).items():
@@ -358,19 +407,21 @@ def make_sheet(theme_rows, path: Path):
             d.text((x, cy + CARD_H + 4), ("人間" if i == 0 else f"人間{i + 1}"), font=f_small, fill=INK2)
             _label(d, x, cy + CARD_H + 18, label, f_small, INK, CARD_W + col_gap - 4)
             x += CARD_W + col_gap
+        src = agent_sources(mod, agents, fallback)
         for m in MODELS:
-            label, grid = agents[m]
-            _card(sheet, x, cy, render(grid, pal, model=m, scale=ZOOM), accent=MODEL_COLORS[m])
+            label, grid, color = src[m]
+            _card(sheet, x, cy, _draw(grid, pal, color, ZOOM), accent=MODEL_COLORS[m])
             d.text((x, cy + CARD_H + 4), MODEL_LABEL[m], font=f_small, fill=_hex(MODEL_COLORS[m]))
             _label(d, x, cy + CARD_H + 18, label, f_small, INK, CARD_W + col_gap - 4)
             x += CARD_W + col_gap
-        g = tint_multiply(render(fallback[1], pal, gray=True, scale=ZOOM), UNKNOWN_COLOR)
+        label, grid, color = src["*"]
+        g = tint_multiply(_draw(grid, pal, color, ZOOM), UNKNOWN_COLOR)
         _card(sheet, x, cy, g, accent=UNKNOWN_COLOR)
         d.text((x, cy + CARD_H + 4), "共通(不明)", font=f_small, fill=INK2)
-        _label(d, x, cy + CARD_H + 18, fallback[0], f_small, INK, CARD_W + col_gap - 4)
+        _label(d, x, cy + CARD_H + 18, label, f_small, INK, CARD_W + col_gap - 4)
         # 実寸シーン
         sx = left + n_cols_max * (CARD_W + col_gap) + 20
-        smalls = [add_rim(render(agents[m][1], pal, model=m, scale=SCALE)) for m in MODELS]
+        smalls = [add_rim(_draw(src[m][1], pal, src[m][2], SCALE)) for m in MODELS]
         scene = _desk_scene(smalls, add_rim(render(humans[0][1], pal, scale=SCALE)))
         sheet.alpha_composite(scene, (sx, cy))  # NOTE 行（y+20）と縦に重ならない位置
         y += row_h
@@ -426,6 +477,38 @@ def make_species_sheet(mod, pal, humans, path: Path, pose=None):
     sheet.save(path)
 
 
+def make_kinds_sheet(mod, pal, src, path: Path):
+    """KINDS の種類 × モデルの一覧（6 倍）＋ 同じ並びの実寸。1 行目＝目印なし（見比べ用）。"""
+    rows = [("（なし）", "agent-<モデル>.png", {k: (g, c, None) for k, (_, g, c) in src.items()})]
+    rows += [(kind, label, grids) for kind, (label, grids) in kind_parts(mod, pal, src).items()]
+    f_title, f_lab, f_small = _font(20, True), _font(13), _font(11)
+    gap, left, label_w, top = 10, 18, 110, 104
+    keys = MODELS + ["*"]
+    row_h = CARD_H + gap
+    grid_x = left + label_w
+    real_x = grid_x + len(keys) * (CARD_W + gap) + 20
+    real_w = len(keys) * 44 + 12
+    sheet = Image.new("RGBA", (real_x + real_w + 20, top + len(rows) * row_h + 10), SHEET_BG + (255,))
+    d = ImageDraw.Draw(sheet)
+    d.text((left, 16), f"{mod.NAME}  種類（KINDS）× モデル　6 倍／右は実寸 36×48", font=f_title, fill=INK)
+    d.text((left, 44), "1枚＝agent-<モデル>.png と同じ絵＋目印（agent-<種類>-<モデル>.png）。席への割り当て＝office.sprite_variants", font=f_small, fill=INK2)
+    for i, k in enumerate(keys):
+        x = grid_x + i * (CARD_W + gap)
+        d.text((x, top - 34), MODEL_LABEL.get(k, "共通"), font=f_lab, fill=_hex(MODEL_COLORS[k]) if k in MODEL_COLORS else INK2)
+        if k == "*":
+            d.text((x, top - 17), "乗算前", font=f_small, fill=INK2)
+    sheet.alpha_composite(_floor(real_w, len(rows) * row_h - gap), (real_x, top))
+    for r, (name, label, grids) in enumerate(rows):
+        y = top + r * row_h
+        d.text((left, y + 36), name, font=f_lab, fill=INK)
+        _label(d, left, y + 56, label, f_small, INK2, label_w - 6)
+        for i, k in enumerate(keys):
+            grid, color, marks = grids[k]
+            _card(sheet, grid_x + i * (CARD_W + gap), y, _draw(grid, pal, color, ZOOM, marks), accent=MODEL_COLORS.get(k, UNKNOWN_COLOR))
+            sheet.alpha_composite(add_rim(_draw(grid, pal, color, SCALE, marks)), (real_x + 8 + i * 44, y + (CARD_H - 48) // 2))
+    sheet.save(path)
+
+
 def _out(theme: str) -> Path:
     src = OUT_DIR / theme
     if not src.is_dir():
@@ -475,11 +558,13 @@ def main():
     if not themes:
         raise SystemExit(f"テーマ {a.theme!r} が themes/ に無い")
     rows = [(mod,) + write_theme(mod) for mod in themes]
-    for mod, pal, humans, *_ in rows:
+    for mod, pal, humans, agents, fallback in rows:
         if hasattr(mod, "SPECIES"):
             make_species_sheet(mod, pal, humans, OUT_DIR / mod.NAME / "sheet-species.png")
             for pose in getattr(mod, "POSES", {}):
                 make_species_sheet(mod, pal, humans, OUT_DIR / mod.NAME / f"sheet-species-{pose}.png", pose)
+        if hasattr(mod, "KINDS"):
+            make_kinds_sheet(mod, pal, agent_sources(mod, agents, fallback), OUT_DIR / mod.NAME / "sheet-kinds.png")
     if a.theme:
         make_sheet(rows, OUT_DIR / a.theme / "sheet.png")
         print(f"wrote out/{a.theme}/ and out/{a.theme}/sheet.png")
