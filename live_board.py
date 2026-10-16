@@ -39,7 +39,7 @@ from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.modelbadge import MDL_CSS, model_badge
 from claude_sv.daily_view import write_daily
 from claude_sv.messages import human_text, collect as collect_messages, label_sessions, learned_user_names, load_registry, recent_html
-from claude_sv.office import away_cutoff, write_office
+from claude_sv.office import away_cutoff, leave_sids, write_office
 from claude_sv.nav import nav_html
 from claude_sv.parser import _clean_user_text, _iter_text_items
 
@@ -1289,6 +1289,7 @@ def _messages(cfg, rows):
         # 💤 離席中（S23）: プロセスは無いが当日（office.away_since）に jsonl が動いたセッションも席に載せる
         cut = away_cutoff(cfg)
         extra = {sid for sid, m in (res.get("recent") or {}).items() if m >= cut and sid not in known}
+        extra |= {sid for sid in leave_sids(res.get("humans")) if sid not in known}  # 🏠 退社で締めた席も載せる（前日分も復帰日まで・S23 ⑩）
         labels = label_sessions(res["sids"] | extra, claude_dir, ProjectMapper(cfg),
                                 cfg.get("workspace_labels"), known, res.get("user_names"))
         for sid in extra - res["sids"]:

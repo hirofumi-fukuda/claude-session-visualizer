@@ -32,7 +32,7 @@ import hashlib
 import html as html_mod
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .daily_view import load_board
@@ -127,6 +127,64 @@ def away_cutoff(cfg: dict) -> float:
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         return now.timestamp() - float(v) * 3600
     return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+
+# 🏠 退社（S23 ⑩）: 人間の発話の文頭「退社」。単独か、後ろが空白・句読点・「します」等だけ拾う（「退社表示…」のような熟語は拾わない）
+LEAVE_RE = re.compile(r"^退社(?:$|(?=[\s。．！!、,，・（(「]|します|する|です|だ|ね|よ|〜))")
+_RET_DATE_RE = re.compile(r"次\s*(\d{1,2})[/／](\d{1,2})")  # 復帰日の明示「次 10/20」
+_RET_WD_RE = re.compile(r"次\s*([月火水木金土日])曜?")  # 「次 月曜」
+_WD = "月火水木金土日"
+
+
+def leave_of(text: str, ts: float, now: float | None = None):
+    """🏠 退社（S23 ⑩）: 発話 text（人間ターン・時刻 ts）が退社の締めなら {ts, t, until, until_t, day} を返す。
+    復帰日＝「次 10/20」「次 月曜」があればそれ・無ければ次の平日（土日を飛ばす・祝日は見ない）。until（復帰日 0:00）を
+    過ぎていれば None＝自動で解ける。ふくちゃんの例「PTA対応は今日の作業完了・月曜まで作業なし→離席中とは別に退社」。"""
+    text = (text or "").strip()
+    if not LEAVE_RE.match(text):
+        return None
+    d0 = datetime.fromtimestamp(ts)
+    day0 = d0.replace(hour=0, minute=0, second=0, microsecond=0)
+    ret = None
+    m = _RET_DATE_RE.search(text)
+    if m:
+        try:
+            ret = day0.replace(month=int(m.group(1)), day=int(m.group(2)))
+            if ret <= day0:
+                ret = ret.replace(year=ret.year + 1)
+        except ValueError:
+            ret = None
+    if ret is None:
+        m2 = _RET_WD_RE.search(text)
+        want = _WD.index(m2.group(1)) if m2 else None
+        ret = day0 + timedelta(days=1)
+        while (ret.weekday() != want) if want is not None else (ret.weekday() >= 5):
+            ret += timedelta(days=1)
+    until = ret.timestamp()
+    if (datetime.now().timestamp() if now is None else now) >= until:
+        return None
+    return {"ts": int(ts), "t": d0.strftime("%H:%M"), "day": d0.strftime("%m/%d"),
+            "until": until, "until_t": ret.strftime("%m/%d")}
+
+
+def last_human_turns(humans) -> dict:
+    """sid → 最後の人間ターン（messages.collect の humans から・S23 ⑩）。"""
+    last: dict = {}
+    for h in humans or []:
+        sid = h.get("sid")
+        if sid and (sid not in last or h["ts"] >= last[sid]["ts"]):
+            last[sid] = h
+    return last
+
+
+def leave_sids(humans, now: float | None = None) -> dict:
+    """sid → 🏠 退社情報。各セッションの最後の人間ターンだけを見る（あとで何か打てば自動で解ける・S23 ⑩）。"""
+    out = {}
+    for sid, h in last_human_turns(humans).items():
+        lv = leave_of(h.get("text"), h["ts"], now)
+        if lv:
+            out[sid] = dict(lv, sid=sid, text=(h.get("text") or "")[:60])
+    return out
 
 
 def _lounge(cfg: dict):
@@ -273,6 +331,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
         return seat(sid) if (sid in labels or sid in live) else None
 
     recent, cut = res.get("recent") or {}, away_cutoff(cfg)  # 💤 離席中の材料（S23）
+    last_turn, leaves = last_human_turns(res.get("humans")), leave_sids(res.get("humans"))  # 🏠 退社の材料（S23 ⑩）
     tracks: dict = {}
     for sid in set(labels) | set(live):
         p = seat(sid)
@@ -291,12 +350,23 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
               "model": (labels.get(x["sid"]) or {}).get("model") or ""}
              for x in t["sessions"] if recent.get(x["sid"], 0) >= cut],
             key=lambda a: -a["ts"])
+        # 🏠 退社（S23 ⑩）: この席で「最後に人間が打った」のが最新のセッションが文頭「退社」で締められ、復帰日前なら退社。
+        # 作業中・許可待ちの稼働があれば在席が勝つ（締めの台帳同期が終わるまで）。待機だけの稼働は帰った扱いで席から下げる
+        # （窓を閉じ忘れても席は退社）。離席中よりも退社が勝つ
+        newest = max((x["sid"] for x in t["sessions"] if x["sid"] in last_turn),
+                     key=lambda s: last_turn[s]["ts"], default=None)
+        lv = leaves.get(newest) if newest else None
+        if lv and not any((x["live"] or {}).get("status") in ("busy", "perm") for x in t["occupied_by"]):
+            lb, lvl = labels.get(newest) or {}, live.get(newest) or {}
+            t["leave"] = dict(lv, s=lb.get("s"), name=lvl.get("name") or lb.get("name") or "",
+                              model=lvl.get("model") or lb.get("model") or "")
+            t["away"], t["occupied_by"], t["live"] = [], [], False
         t["cur"] = t["sessions"][0] if t["sessions"] else None
         # 席の部屋＝いちばん新しい（稼働優先）セッションの部屋。同じ案件を別 ws で開いても席は1つ
         t["tenant"] = tenant_of(t["cur"]["sid"]) if (tc and t["cur"]) else (tc["main"] if tc else None)
     hub = tracks.pop(hub_disp, {"name": hub_disp, "sessions": [], "occupied_by": [],
                                 "live": False, "away": [], "cur": None})
-    order = sorted(tracks.values(), key=lambda t: (not t["live"], not t["away"], t["name"]))  # 稼働 → 💤 離席中 → 空席
+    order = sorted(tracks.values(), key=lambda t: (not t["live"], not t["away"], not t.get("leave"), t["name"]))  # 稼働 → 💤 離席中 → 🏠 退社 → 空席
 
     # 止まっているトラックも空席で出す（10/15 ふくちゃん）: cfg.office.teams に載っている名前のうち
     # 時間幅内にセッションが無いものを sessions=[] の席として足す（島わけで席が固定され、空席＝止まって
@@ -317,11 +387,15 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     # いないのに busy な席＝勝手に進んでいるエージェントが浮き上がる。表示名は cfg.office.human。
     human = None
     for t in [hub] + order:
-        for x in t["occupied_by"]:
+        for x in t["sessions"]:  # occupied_by でなく sessions＝🏠 退社で席から下げた待機セッションも材料に（S23 ⑩）
             lh = (x["live"] or {}).get("last_human")
             if lh and (human is None or lh["ts"] > human["ts"]):
                 human = {"track": t["name"], "sid": x["sid"], "s": x["s"], "ts": lh["ts"],
                          "t": datetime.fromtimestamp(lh["ts"]).strftime("%H:%M"), "text": lh["text"]}
+    # 🏠 人間の最後の発話が「退社」なら 👤 も帰宅扱い＝置かない（休憩室に居続けるのは変。次に何か打てば戻る・S23 ⑩）
+    newest_leave = max((lv["ts"] for lv in leaves.values()), default=None)
+    if human and newest_leave is not None and newest_leave >= int(human["ts"]):
+        human = None
     hname = (cfg.get("office") or {}).get("human", "人間")
     if human:
         human["name"] = hname
@@ -386,7 +460,8 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "board": _board(cfg),  # 🧾 ホワイトボードの要点（S23・daily から）
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"]),
-                       "away": sum(1 for t in [hub] + order if not t["live"] and t.get("away"))},  # 💤 離席中の席数（S23）
+                       "away": sum(1 for t in [hub] + order if not t["live"] and t.get("away")),  # 💤 離席中の席数（S23）
+                       "leave": sum(1 for t in [hub] + order if t.get("leave"))},  # 🏠 退社の席数（S23 ⑩）
             "window_hours": (cfg.get("office") or {}).get("window_hours", 48)}
 
 
@@ -491,12 +566,13 @@ var LIGHT=document.documentElement.dataset.theme==='light';
 function shade(c,f){var n=parseInt(c.slice(1),16);function k(v){return Math.max(0,Math.min(255,Math.round(v*f)));}return '#'+((1<<24)|(k(n>>16&255)<<16)|(k(n>>8&255)<<8)|k(n&255)).toString(16).slice(1);}
 var PAL=LIGHT?{tileA:'#e6e2d9',tileB:'#ebe7df',grid:'#d8d3c8',carpetA:'#dccfb5',carpetB:'#d0c2a5',wall:'#fbfaf6',wallOp:1,wallStroke:'#8f887b',wallStrokeOp:0.9,wallW:6,roomTxt:'#1f2937',roomSub:'#4b5563',emptyTxt:'#6b7280',chair:'#5b6478',chair2:'#404859',plate:'#fffdf8',plateStroke:'#bfb8a8',islOp:0.18,sideOp:0.12,propTxt:'#374151',doorTxt:'#374151',doorStroke:'#6b7280',txt:function(c){return shade(c,0.66);}}
 :{tileA:'#2a2d3f',tileB:'#2f3348',grid:null,carpetA:'#3d3330',carpetB:'#4a3f3a',wall:'#000',wallOp:0.16,wallStroke:'#cbd5e1',wallStrokeOp:0.5,wallW:4,roomTxt:'#e2e8f0',roomSub:'#cbd5e1',emptyTxt:'#94a3b8',chair:'#3a3e58',chair2:'#2a2d44',plate:'#f3efe0',plateStroke:null,islOp:0.10,sideOp:0.05,propTxt:'#cbd5e1',doorTxt:'#cbd5e1',doorStroke:'#cbd5e1',txt:function(c){return c;}};
-function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,away=(!live&&t.away&&t.away.length)?t.away:null,onSofa=!!(away&&awayAt[t.name]>=0);
+function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,away=(!live&&t.away&&t.away.length)?t.away:null,onSofa=!!(away&&awayAt[t.name]>=0),leave=(!live&&t.leave)?t.leave:null;  // leave＝🏠 退社（S23 ⑩・Python 側で live/away は落としてある）
  var st='empty'; if(live){st=t.occupied_by.some(function(s){return s.live.status==='perm';})?'perm':t.occupied_by.some(function(s){return s.live.status==='busy';})?'busy':'idle';}
- var g='<g class="desk"'+(t.dormant?' opacity="'+(LIGHT?0.68:0.5)+'"':'')+'>';  // 休眠席は薄く（ライトは背景が明るいぶん濃いめ）
- var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.rc?' 📱RC':'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):away?'💤 離席中（プロセスなし・最後の動き '+away[0].t+(onSofa?'・休憩室のソファ':'')+'）\n'+away.map(function(a){return '   '+(a.name||'')+' '+(a.model||'')+(a.s?' S'+a.s:'')+' 最後 '+a.t;}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
+ var g='<g class="desk"'+(t.dormant?' opacity="'+(LIGHT?0.68:0.5)+'"':leave?' opacity="'+(LIGHT?0.85:0.75)+'"':'')+'>';  // 休眠席は薄く（ライトは背景が明るいぶん濃いめ）・🏠 退社は少し薄く
+ var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.rc?' 📱RC':'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):leave?'🏠 退社（'+leave.t+' に締め・次の出勤 '+leave.until_t+'）\n   '+(leave.name||'')+' '+(leave.model||'')+(leave.s?' S'+leave.s:'')+(leave.text?'\n   「'+leave.text+'」':''):away?'💤 離席中（プロセスなし・最後の動き '+away[0].t+(onSofa?'・休憩室のソファ':'')+'）\n'+away.map(function(a){return '   '+(a.name||'')+' '+(a.model||'')+(a.s?' S'+a.s:'')+' 最後 '+a.t;}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
  g+='<title>'+esc(tip)+'</title>';
  if(away)g+='<rect x="'+(x-w/2-6)+'" y="'+(y-70)+'" width="'+(w+12)+'" height="'+(h+98)+'" rx="8" fill="#64748b" fill-opacity="0.08" stroke="#64748b" stroke-dasharray="6 4" stroke-width="2"/><text class="zz" x="'+(x+w/2-4)+'" y="'+(y-52)+'" text-anchor="end" font-size="14">💤</text>';  // 💤 離席中＝席は点線枠で確保（S23）
+ if(leave)g+='<rect x="'+(x-w/2-6)+'" y="'+(y-70)+'" width="'+(w+12)+'" height="'+(h+98)+'" rx="8" fill="#a8a29e" fill-opacity="0.07" stroke="#a8a29e" stroke-dasharray="2 5" stroke-width="2"/><text x="'+x+'" y="'+(y-54)+'" text-anchor="middle" font-size="11" fill="'+PAL.emptyTxt+'">🏠 '+esc(leave.t)+' 退社</text><text x="'+x+'" y="'+(y-40)+'" text-anchor="middle" font-size="10" fill="'+PAL.emptyTxt+'">次 '+esc(leave.until_t)+'</text>';  // 🏠 退社＝主は不在（椅子だけ）・薄い点線枠と復帰日（S23 ⑩）
  if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});
   if(t.occupied_by.some(function(s){return s.live.rc;}))g+='<text x="'+(x+w/2-2)+'" y="'+(y-6)+'" text-anchor="end" font-size="15">📱</text>';}  // 📱 Remote Control オンの席（S22）
  else if(away&&!onSofa){g+='<g opacity="0.45">'+sprite(x-w/2+14,y-62,MODEL_COL(away[0].model),away[0].model,'away',t.name)+'</g>';}  // ソファから溢れた離席者は席に半透明で残す
@@ -745,6 +821,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
     now = datetime.now().strftime("%m/%d %H:%M:%S")
     tiles = (f'<div class="tiles"><span class="tile"><b>{c["live"]}</b>人 在席</span>'
              f'<span class="tile"><b>{c.get("away", 0)}</b>席 離席中</span>'
+             f'<span class="tile"><b>{c.get("leave", 0)}</b>席 退社</span>'
              f'<span class="tile"><b>{c["edges"]}</b>通 /{D["window_hours"]}h</span>'
              f'<span class="tile{" warn" if c["unread"] else ""}"><b>{c["unread"]}</b>未読</span>'
              f'<span class="tile{" bad" if c["failed"] else ""}"><b>{c["failed"]}</b>不達</span></div>')
@@ -762,6 +839,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<i class="sw" style="background:#f472b6"></i>Fable</span>'
               '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）</span>'
               '<span>｜ 💤 離席中＝プロセスは無いが今日動いた席（主は休憩室のソファ・席は点線枠）</span>'
+              '<span>｜ 🏠 退社＝最後の発話が文頭「退社」の席（復帰日まで主は不在・「退社 次 10/20」で復帰日指定・既定は次の平日。人間の最後の発話が退社なら 👤 も帰宅）</span>'
               '<span>｜ ▶ 再生＝今日の 📨 の流れ＋👤 の席移動（空きは休憩室経由・再生中は再読込を保留）</span>'
               '<span>｜ 📱 Remote Control オン（外出先から指示できる席）</span>'
               '<span>｜ 🎨 <select id="spr" title="絵のテーマ（assets/sprites/<テーマ>/）"></select></span>'
