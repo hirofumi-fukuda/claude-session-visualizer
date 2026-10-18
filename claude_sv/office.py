@@ -428,6 +428,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "frm_s": (labels.get(e["frm"]) or {}).get("s"), "to_s": (labels.get(e["to"]) or {}).get("s"),
             "to_known": tp is not None,
             "summary": e.get("summary") or e.get("preview") or "", "preview": e.get("preview") or "",
+            "body": (e.get("body") or "")[:1500],  # 📨 本文（ログの行クリックで開く・席の吹き出し・S24）
             "ok": e.get("ok", True), "read": e.get("read"), "removed": bool(e.get("removed")),
         })
     unread = sum(1 for e in edges if e["ok"] and not e["removed"] and e["read"] is False)
@@ -482,14 +483,15 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;grid-template-rows:m
 #scene{overflow:hidden;background:var(--scene);min-height:0;height:100%} #scene svg{display:block;width:100%;height:100%;shape-rendering:crispEdges}
 aside{background:var(--surface);border-left:1px solid var(--border);overflow-y:auto;min-height:0;height:100%;padding:10px 12px}
 aside h2{position:sticky;top:-10px;background:var(--surface);padding:6px 0;z-index:1}
-aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px} aside h2 .tgl{margin-left:auto;padding:1px 8px;font-size:11px}
+aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px} aside h2 .tgl{padding:1px 8px;font-size:11px;white-space:nowrap} aside h2 .tgl:first-of-type{margin-left:auto}
 #spr{font:inherit;font-size:11px;background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:1px 4px}
 .day{color:var(--muted);font-size:11px;margin:10px 0 2px;border-bottom:1px solid var(--border)}
 .row{padding:5px 6px;border-left:3px solid transparent;cursor:pointer;line-height:1.35;border-radius:0 6px 6px 0}
 .row:hover,.row.hl{background:var(--wash);border-left-color:var(--gold)}
 .row .t{color:var(--muted);margin-right:6px;font-variant-numeric:tabular-nums}.row .who{color:var(--cyan)}
 .row .un{color:var(--gold);font-weight:600}.row .ng{color:var(--red);font-weight:600}.row .rm{color:var(--muted)}
-.row .sm{color:var(--ink2)}
+.row .sm{color:var(--ink2)} .row .mbd{display:none;white-space:pre-wrap;word-break:break-word;margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--wash);color:var(--ink);font-size:12px;max-height:320px;overflow:auto;cursor:text} .row.open .mbd{display:block}
+.row .mor{color:var(--muted);font-size:11px;margin-left:4px}
 .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11.5px;color:var(--ink2)}
 .sw{display:inline-block;width:10px;height:10px;margin-right:4px;vertical-align:middle;border-radius:2px}
 .tiles{display:flex;gap:8px} .tile{border:1px solid var(--border);border-radius:8px;padding:2px 10px;font-size:12px;color:var(--ink2)}
@@ -770,6 +772,33 @@ if(hp){var prev=null;try{prev=JSON.parse(localStorage.getItem('csv-human-at')||'
   (from?'<animateTransform attributeName="transform" type="translate" from="'+(from[0]-hp[0])+' '+(from[1]-hp[1])+'" to="0 0" dur="1.4s" fill="freeze" calcMode="spline" keySplines="0.4 0 0.2 1"/>':'')+'</g>';
  try{localStorage.setItem('csv-human-at',JSON.stringify({track:D.human.track,brk:onBreak}));}catch(e){}
  if(!onBreak&&LOUNGE){var left=BREAK_MIN*60000-(Date.now()-D.human.ts*1000);if(left>0)setTimeout(softReload,Math.min(left+800,2e9));}}
+// 💬 吹き出し（S24・個人PC G を移植）: 席の最新の出来事 1 つ（👤 人間の指示／📨→ 送った／📨← 届いた／❌→ 不達）を頭上に。15 分まで濃く・2 時間で薄く。
+// ✕＝確認した（SEEN={席名: 閉じた出来事の ts}＝それより新しい出来事でまた出る・このブラウザだけ）。全部の机・人間のあとに描く＝隣の机に隠れない
+var BBM=['fresh','all','off'],BBL={fresh:'💬 2時間以内',all:'💬 全部',off:'💬 なし'},bbMode='fresh',HID=0,SEEN={};
+try{var bb0=localStorage.getItem('csv-office-bubble');if(BBL[bb0])bbMode=bb0;SEEN=JSON.parse(localStorage.getItem('csv-office-seen')||'{}')||{};}catch(e){SEEN={};}
+function seen(n,ts){return SEEN[n]>=ts;}
+function markSeen(n,ts){SEEN[n]=ts;var cut=Date.now()-(D.window_hours||48)*3600000;Object.keys(SEEN).forEach(function(k){if(!(SEEN[k]>cut))delete SEEN[k];});try{localStorage.setItem('csv-office-seen',JSON.stringify(SEEN));}catch(e){}}
+var SAYC={'👤':'#2e9e6b','📨→':'#5ad1e6','📨←':'#f5c542','❌→':'#ff5a5a'};
+function cleanText(s){s=String(s||'').replace(/\s+/g,' ').trim();if(!s)return '';if(s.charAt(0)==='<')return '（ツール操作）';return s;}
+function wrapTo(s,w,f,maxLines){var a=Array.from(s),lines=[],cur='';for(var i=0;i<a.length;i++){if(twb(cur+a[i],f)>w){if(lines.length===maxLines-1){lines.push(fit(cur+a.slice(i).join(''),w,f));return lines;}lines.push(cur);cur=a[i];}else cur+=a[i];}if(cur)lines.push(cur);return lines;}
+function say(x,yTip,kind,text,ageMin,col,dx,key,big){var f=11,maxW=big?236:168,lines=wrapTo(kind+' '+cleanText(text),maxW,f,big?4:2);if(!lines.length)return '';  // dx＝枠だけ横にずらす（しっぽは x のまま）・big＝本文あり（4 行）
+ var w=Math.max.apply(null,lines.map(function(l){return twb(l,f);}))+16,h=lines.length*14+10,x0=Math.round(Math.max(4,Math.min(W-4-w,x-w/2+(dx||0)))),y0=yTip-7-h,op=ageMin<=15?1:ageMin<=120?(1-0.45*(ageMin-15)/105):0.5;
+ var tx=Math.max(x0+10,Math.min(x0+w-10,x)),g='<g class="say" opacity="'+op.toFixed(2)+'"><rect x="'+x0+'" y="'+y0+'" width="'+w+'" height="'+h+'" rx="7" fill="#fff" fill-opacity=".96" stroke="'+col+'" stroke-width="1.5"/>';
+ g+='<polygon points="'+(tx-5)+','+(y0+h)+' '+(tx+5)+','+(y0+h)+' '+tx+','+yTip+'" fill="#fff" stroke="'+col+'" stroke-width="1.5"/><rect x="'+(tx-5)+'" y="'+(y0+h-2)+'" width="10" height="3" fill="#fff"/>';
+ lines.forEach(function(l,i){g+='<text x="'+(x0+8)+'" y="'+(y0+17+14*i)+'" font-size="'+f+'" fill="#222">'+esc(l)+'</text>';});
+ if(key)g+='<g class="bx" data-n="'+esc(key.n)+'" data-ts="'+key.ts+'" style="cursor:pointer"><title>確認した＝この吹き出しを閉じる（新しい出来事が来たらまた出る・📨 欄の 💬 を Shift+クリックで全部戻す）</title><circle cx="'+(x0+w)+'" cy="'+y0+'" r="7" fill="#fff" stroke="'+col+'" stroke-width="1.2"/><text x="'+(x0+w)+'" y="'+(y0+3.5)+'" text-anchor="middle" font-size="10" font-weight="700" fill="'+col+'">×</text></g>';
+ return g+'</g>';}
+function sayFor(t,s,single){var best=null;function put(kind,text,ts,big){if(!text||!(ts>0))return;if(!best||ts>best.ts)best={kind:kind,text:text,ts:ts,big:!!big};}
+ var lh=s.live&&s.live.last_human;if(lh&&lh.text)put('👤',lh.text,lh.ts*1000);
+ D.edges.forEach(function(e){if(e.removed)return;var ts=Date.parse(e.ts),tx=e.body||e.summary,bg=!!e.body;if(e.frm===t.name&&(single||e.frm_s==null||e.frm_s===s.s))put(e.ok?'📨→':'❌→',e.to+(e.ok?'「':' 不達「')+tx+'」',ts,bg);else if(e.to===t.name&&e.ok&&(single||e.to_s==null||e.to_s===s.s))put('📨←',e.frm+'「'+tx+'」',ts,bg);});
+ return best;}
+if(bbMode!=='off'){var near=!!(D.human&&!onBreak);
+ [D.hub].concat(D.tracks).forEach(function(t){var p=t.name===HUB?(hubVisible?[CX,CY]:null):pos[t.name];if(!p||!t.live||!(t.occupied_by||[]).length)return;
+  var big=t.name===HUB,w=big?190:120,bb=null,bi=0,single=t.occupied_by.length===1;t.occupied_by.slice(0,big?3:2).forEach(function(s,i){var b=sayFor(t,s,single);if(b&&(!bb||b.ts>bb.ts)){bb=b;bi=i;}});if(!bb)return;
+  var agem=(Date.now()-bb.ts)/60000,mine=bb.kind==='👤'&&near&&D.human.track===t.name&&(D.human.s==null||D.human.s===t.occupied_by[bi].s);  // 人間が隣で同じ言葉を言う時は席側に出さない
+  if(mine||!(bbMode==='all'||agem<=120))return;if(seen(t.name,bb.ts)){HID++;return;}
+  svg+=say(p[0]-w/2+32+bi*44,p[1]-64,bb.kind,bb.text,agem,SAYC[bb.kind]||'#888',(near&&D.human.track===t.name)?-40:0,{n:t.name,ts:bb.ts},bb.big);});
+ if(hp&&D.human.text&&(bbMode==='all'||mins<=120)){if(seen('__human',D.human.ts*1000))HID++;else svg+=say(hp[0]+18,hp[1]-24,'👤',D.human.text,mins,'#2e9e6b',30,{n:'__human',ts:D.human.ts*1000});}}
 Object.keys(tints).forEach(function(id){svg+='<filter id="'+id+'" x="0" y="0" width="1" height="1"><feFlood flood-color="'+tints[id]+'" result="c"/><feComposite in="c" in2="SourceAlpha" operator="in" result="m"/><feBlend in="m" in2="SourceGraphic" mode="multiply"/></filter>';});
 svg+='</svg>';
 document.getElementById('scene').innerHTML=svg;
@@ -788,8 +817,8 @@ function renderLog(){log.innerHTML='';var lastDay='';
  idx.forEach(function(i){var e=D.edges[i];if(e.day!==lastDay){lastDay=e.day;var d=document.createElement('div');d.className='day';d.textContent=e.day;log.appendChild(d);}
   var r=document.createElement('div');r.className='row';r.dataset.i=i;
   var st=!e.ok?' <span class="ng">❌不達</span>':e.removed?' <span class="rm">🗑破棄</span>':e.read===false?' <span class="un">📨未読</span>':'';
-  r.innerHTML='<span class="t">'+e.t.slice(6)+'</span><span class="who">'+esc(e.frm+(e.frm_s?' S'+e.frm_s:''))+'</span> → <span class="who">'+esc(e.to+(e.to_s?' S'+e.to_s:''))+'</span>'+st+'<br><span class="sm">'+esc(e.summary)+'</span>';
-  r.title=e.preview; r.onclick=function(){hl(i);}; log.appendChild(r);});
+  r.innerHTML='<span class="t">'+e.t.slice(6)+'</span><span class="who">'+esc(e.frm+(e.frm_s?' S'+e.frm_s:''))+'</span> → <span class="who">'+esc(e.to+(e.to_s?' S'+e.to_s:''))+'</span>'+st+'<br><span class="sm">'+esc(e.summary)+'</span>'+(e.body?'<span class="mor">▸ 本文</span><div class="mbd">'+esc(e.body)+'</div>':'');
+  r.title=e.body?'クリックで本文を開閉':e.preview; r.onclick=function(ev){if(ev.target.closest('.mbd'))return;hl(i);if(e.body){var o=r.classList.toggle('open');r.querySelector('.mor').textContent=o?'▾ 本文':'▸ 本文';}}; log.appendChild(r);});  // 📨 本文を読む（S24・個人PC H）
  ord.textContent=desc?'⇅ 最新が上':'⇅ 最新が下'; log.scrollTop=desc?0:log.scrollHeight;}
 function hl(i){document.querySelectorAll('.hl').forEach(function(x){x.classList.remove('hl');});var p=document.getElementById('p'+i),r=document.querySelector('.row[data-i="'+i+'"]');if(p){p.classList.add('hl');p.parentNode.appendChild(p);}if(r){r.classList.add('hl');r.scrollIntoView({block:'nearest'});}}
 document.querySelectorAll('.edge').forEach(function(p){p.onclick=function(){hl(+p.dataset.i);};});
@@ -819,6 +848,9 @@ document.getElementById('play').onclick=function(){if(playing||!RTL.length)retur
  setTimeout(function(){var g=document.getElementById('rhuman');if(g)g.remove();document.querySelectorAll('#scene .human').forEach(function(x){x.style.visibility='';});playing=false;window.csvPlaying=false;RB.clk.textContent='⏹';RB.cap.textContent='再生おわり（'+RTL.length+' 件）';setTimeout(function(){HDR.classList.remove('playing');},2500);if(window.csvReloadAfter)location.reload();},RTL.length*STEP+900);};
 ord.onclick=function(){desc=!desc;try{localStorage.setItem('csv-log-desc',desc?'1':'0');}catch(e){}renderLog();};
 renderLog();
+(function(){var b=document.getElementById('bb');if(!b)return;function lab(){b.textContent=BBL[bbMode]+(HID?'・✕'+HID:'');}lab();  // 💬 クリック＝2時間以内→全部→なし・Shift+クリック＝✕ で閉じた吹き出しを全部戻す
+ b.onclick=function(ev){if(ev.shiftKey){try{localStorage.removeItem('csv-office-seen');}catch(e){}location.reload();return;}try{localStorage.setItem('csv-office-bubble',BBM[(BBM.indexOf(bbMode)+1)%BBM.length]);}catch(e){}location.reload();};
+ document.querySelectorAll('.bx').forEach(function(x){x.addEventListener('click',function(ev){ev.stopPropagation();markSeen(x.dataset.n,+x.dataset.ts);var sy=x.closest('.say');if(sy)sy.remove();HID++;lab();});});})();
 })();
 """
 
@@ -871,7 +903,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
 <div style="flex-basis:100%">{legend}</div>
 <div id="rbar" title="▶ 再生中のダイジェスト＝その時刻に何があったか"><b id="rclk"></b><span id="rcap"></span><span id="rcnt"></span><div id="rtrk"><div id="rprog"></div></div></div>
 </header>
-<main><div id="scene"></div><aside><h2>📨 やり取り（クリックで矢印を強調）<button class="tgl" id="ord" type="button"></button></h2><div id="log"></div></aside></main>
+<main><div id="scene"></div><aside><h2><span title="行クリックで矢印を強調・本文を開閉">📨 やり取り</span><button class="tgl" id="bb" type="button" title="席の吹き出し（クリックで 2時間以内→全部→なし・Shift+クリックで ✕ で閉じたものを全部戻す）"></button><button class="tgl" id="ord" type="button"></button></h2><div id="log"></div></aside></main>
 <footer>live_board.py --html --watch が同じループで書き換え中（変化があった時だけ・数秒〜10秒で反映）。ローカル閲覧専用＝案件名が入るので公開しない。</footer>
 <script>{js}</script>
 </body></html>"""
