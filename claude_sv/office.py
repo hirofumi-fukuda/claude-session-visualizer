@@ -32,6 +32,7 @@ import hashlib
 import html as html_mod
 import json
 import re
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -52,21 +53,41 @@ def _fmt_local(ts_iso: str) -> str:
 SPRITE_DIR = Path(__file__).resolve().parent.parent / "assets" / "sprites"
 SPRITE_NAMES = ("human", "agent", "agent-opus", "agent-sonnet", "agent-haiku", "agent-fable")
 PROPS_DIR = Path(__file__).resolve().parent.parent / "assets" / "props"
-PROP_NAMES = ("sofa", "table", "plant", "coffee", "vending", "printer")  # 休憩室の小物（S22）。表示箱の大きさは assets/props/README.md
+PROP_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")  # 小物の名前＝ファイル名（英小文字・config の kind に入る）
+PROP_MAX_BYTES = 400_000  # 1 枚の上限（office.html に base64 で埋まる・超えたら読まない）
+
+
+def _png_size(b: bytes):
+    """PNG の IHDR から (幅, 高さ)。PNG でなければ None。"""
+    if len(b) >= 24 and b[:8] == b"\x89PNG\r\n\x1a\n" and b[12:16] == b"IHDR":
+        return int.from_bytes(b[16:20], "big"), int.from_bytes(b[20:24], "big")
+    return None
 
 
 def load_props(props_dir: Path = PROPS_DIR) -> dict:
-    """assets/props/<name>.png|svg（休憩室の小物）を data URI で返す。無い物はコード内の矩形描画。仕様=同フォルダ README。"""
+    """assets/props/ 直下の PNG/SVG を全部 {名前: {src, w, h}} で返す（S24・個人PC A を移植）。
+    名前＝ファイル名（PROP_NAME_RE）。w/h＝PNG の大きさ＝追加の小物の表示箱（SVG は 64）。
+    sofa・coffee・vending・printer・plant は休憩室・島の決まった箱に収める（README の表）。無い物はコード内の矩形描画。"""
     out = {}
-    for name in PROP_NAMES:
-        for ext, mime in (("png", "image/png"), ("svg", "image/svg+xml")):
-            f = props_dir / f"{name}.{ext}"
-            if f.exists():
-                try:
-                    out[name] = f"data:{mime};base64," + base64.b64encode(f.read_bytes()).decode()
-                except OSError:
-                    pass
-                break
+    if not props_dir.is_dir():
+        return out
+    for f in sorted(props_dir.iterdir()):
+        ext = f.suffix.lower()
+        name = f.stem.lower()
+        if ext not in (".png", ".svg") or not f.is_file() or not PROP_NAME_RE.match(name) or name in out:
+            continue
+        try:
+            if f.stat().st_size > PROP_MAX_BYTES:
+                print(f"[office] props/{f.name}: {PROP_MAX_BYTES} bytes 超＝読まない", file=sys.stderr)
+                continue
+            b = f.read_bytes()
+        except OSError:
+            continue
+        wh = _png_size(b) if ext == ".png" else (64, 64)
+        if not wh:
+            continue
+        mime = "image/png" if ext == ".png" else "image/svg+xml"
+        out[name] = {"src": f"data:{mime};base64," + base64.b64encode(b).decode(), "w": wh[0], "h": wh[1]}
     return out
 
 
@@ -457,7 +478,8 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "sprite_tenant_themes": (cfg.get("office") or {}).get("sprite_tenant_themes") or {},  # 部屋名→テーマ名（副業の部屋ごとに別の絵・S22）
             "islands": islands, "rooms": rooms, "hub_side": hub_side,  # 🪑 ハブの右隣の小机（S22）
             "live_near_hub": bool((cfg.get("office") or {}).get("live_near_hub", False)),  # 🧲 稼働席をハブ側に詰める既定（S22）
-            "lounge": _lounge(cfg), "props": load_props(),  # ☕ 休憩室（S22・無ければ None）と小物の絵（assets/props/）
+            "lounge": _lounge(cfg), "props": load_props(),
+            "lounge_props": dict((cfg.get("office") or {}).get("lounge_props") or {}),  # 🪑 休憩室の小物の置き場所（id→{kind,x,y,scale,hide}・休憩室の左上からの px・S24）  # ☕ 休憩室（S22・無ければ None）と小物の絵（assets/props/）
             "board": _board(cfg),  # 🧾 ホワイトボードの要点（S23・daily から）
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"]),
@@ -507,6 +529,8 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 @keyframes wink{0%,100%{opacity:1}50%{opacity:.25}} .vend{animation:wink 2.4s ease-in-out infinite}
 @keyframes zz{0%{opacity:.3;transform:translateY(0)}50%{opacity:1}100%{opacity:.3;transform:translateY(-6px)}} .zz{animation:zz 2.4s ease-in-out infinite;transform-box:fill-box}
 .empty{padding:30px;color:var(--muted)}
+#ptool{position:fixed;left:12px;bottom:34px;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:calc(100% - 24px);background:var(--surface);border:1px solid #f59e0b;border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+#ptool span{color:var(--muted);font-size:11px} #ptool select{font:inherit;font-size:12px;background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:999px;padding:2px 8px}
 footer{flex:none;padding:6px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
 #rbar{display:none;flex-basis:100%;flex-wrap:wrap;align-items:center;gap:4px 12px;min-width:0} header.playing #rbar{display:flex} header.playing .legend{display:none}
 #rclk{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--gold);white-space:nowrap;line-height:1.2;min-width:3.2em} #rcap{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
@@ -527,7 +551,7 @@ var clk=document.getElementById('clock'), WD='日月火水木金土', skyFn=null
 function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());if(skyFn)skyFn(d);}
 tick(); setInterval(tick,1000);
 // 再読込は ▶ 再生中なら保留して再生の終わりに回す（10 秒ごとの stamp・イベント境界・休憩しきい値の全部・S23）
-function softReload(){if(window.csvPlaying){window.csvReloadAfter=true;return;}location.reload();}
+function softReload(){if(LPE){window.csvReloadAfter=true;return;}if(window.csvPlaying){window.csvReloadAfter=true;return;}location.reload();}
 window.__officeStamp=function(s){if(s&&s!==STAMP)softReload();};
 setInterval(function(){var sc=document.createElement('script');sc.src='office_stamp.js?t='+Date.now();sc.onload=sc.onerror=function(){sc.remove();};document.head.appendChild(sc);},POLL_MS);
 
@@ -611,6 +635,7 @@ function doorOf(name){var rn=trackRoom[name];return (rn&&door[rn])||null;}
 (function(){var el=document.getElementById('wsf');if(!el)return;var h='';
  if(ROOMS.length)[['','🏢 全館']].concat(ROOMS.map(function(r){return [r.name,r.name];})).forEach(function(o){var on=o[0]===''?!wsSel:(shown.length===1&&shown[0].name===o[0]);h+='<button type="button" class="tgl wsb'+(on?' on':'')+'" data-ws="'+esc(o[0])+'">'+esc(o[1])+'</button>';});
  h+='<button type="button" id="magnet" class="tgl wsb'+(MAGNET?' on':'')+'" title="稼働中の席を島の中でハブ側のマスから詰める（クリックで切替）">🧲 ハブ寄せ</button>';
+ if(D.lounge)h+='<button type="button" id="propedit" class="tgl wsb'+(LPE?' on':'')+'" title="休憩室の小物をドラッグで動かす（このブラウザだけ・config へは 📋 JSON をコピー）。配置モード中は自動更新を保留">🪑 小物配置</button>';
  el.innerHTML=h; el.querySelectorAll('.wsb[data-ws]').forEach(function(b){b.onclick=function(){var v=b.dataset.ws;try{localStorage.setItem('csv-office-ws',v);}catch(e){}var u=new URL(location.href);if(v)u.searchParams.set('ws',v);else u.searchParams.delete('ws');location.href=u.toString();};});
  var mb=document.getElementById('magnet');if(mb)mb.onclick=function(){try{localStorage.setItem('csv-office-magnet',MAGNET?'0':'1');}catch(e){}location.reload();};})();
 var byName={}; D.tracks.forEach(function(t){byName[t.name]=t;}); byName[HUB]=D.hub;
@@ -619,8 +644,14 @@ var PX=166,PY=135,PAD=22,TITLE=26,G=48,M=24,RP=18,RT=36,RG=44;
 var ISL_COL=['#f5c542','#39d353','#5ad1e6','#e66fd1','#f97316','#a78bfa','#94a3b8','#22c55e'];
 // ---------- ☕ 休憩室と小物（S22）。assets/props/<名前>.png があれば絵・無ければ矩形で仮描き（箱の大きさは README） ----------
 var PR=D.props||{};
+// 🪑 小物の配置（S24・個人PC C を休憩室だけに絞って移植）: config office.lounge_props＝{id: {kind,x,y,scale,hide}}（休憩室の左上からの px）。
+// このブラウザでドラッグした分（localStorage csv-office-props）が config より優先。config へ戻すのは配置モードの「📋 JSON をコピー」→ office に貼る
+var LPC=D.lounge_props||{},LPL={},LPE=false,LGB=null,LPBOX={sofa:[120,56],coffee:[90,80],vending:[60,104],printer:[176,100]};
+try{LPL=JSON.parse(localStorage.getItem('csv-office-props')||'{}')||{};LPE=localStorage.getItem('csv-office-propedit')==='1';}catch(e){LPL={};}
+function lpOf(id){return LPL[id]||LPC[id]||null;}
+function lpWrap(id,px,py,w,h,inner){return '<g class="lp" data-id="'+esc(id)+'" data-x="'+Math.round(px-LGB.x)+'" data-y="'+Math.round(py-LGB.y)+'">'+inner+(LPE?'<rect x="'+px+'" y="'+py+'" width="'+w+'" height="'+h+'" fill="#fff" fill-opacity=".01" stroke="#f59e0b" stroke-dasharray="4 3" stroke-width="1.5" style="cursor:move"/><text x="'+(px+2)+'" y="'+(py-3)+'" font-size="10" fill="#f59e0b">'+esc(id)+'</text>':'')+'</g>';}
 function R(x,y,w,h,f,ex){return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="'+f+'"'+(ex||'')+'/>';}
-function prop(n,x,y,w,h){return PR[n]?'<image href="'+PR[n]+'" x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"/>':null;}
+function prop(n,x,y,w,h){return PR[n]?'<image href="'+PR[n].src+'" x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"/>':null;}
 function plant(ox,oy,k){k=k||1;var im=prop('plant',ox,oy,36*k,70*k);if(im)return im;var s='';[[6,46,24,24,'#c2410c'],[4,44,28,6,'#ea580c'],[16,20,4,28,'#166534'],[2,24,14,10,'#22c55e'],[20,14,16,10,'#16a34a'],[6,8,12,10,'#4ade80'],[18,30,12,8,'#22c55e']].forEach(function(p){s+=R(ox+p[0]*k,oy+p[1]*k,p[2]*k,p[3]*k,p[4]);});return s;}
 // 🧾 ホワイトボード（S23・ハブ提案 10/15）: 休憩室の壁いっぱいに今日の daily の要点＝🔴 TOP 見出し3行（未済→済の順）・⏰ 次の時刻固定イベント・⏸ 返信待ち・端に在席/未読/不達。
 // 中身は D.board（daily_view.load_board）。クリックで 📓 日誌。幅か高さが足りない（島と同居で h=230 等）時は S22 の小さい板（日付・在席/未読・通数）
@@ -668,16 +699,24 @@ function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;
   s+=R(wx,wy,120,70,'#cbd5e1')+'<rect id="winsky" x="'+(wx+6)+'" y="'+(wy+6)+'" width="108" height="58" fill="#7dd3fc"/><g id="winstars" opacity="0">'+R(wx+20,wy+14,3,3,'#fff')+R(wx+50,wy+22,2,2,'#fff')+R(wx+90,wy+12,3,3,'#fff')+R(wx+70,wy+40,2,2,'#fff')+'</g><circle id="winsun" cx="'+(wx+40)+'" cy="'+(wy+26)+'" r="9" fill="#fde047"/>'+R(wx+58,wy+6,4,58,'#cbd5e1')+R(wx+6,wy+33,108,4,'#cbd5e1')+R(wx-4,wy+70,128,6,'#94a3b8');}
  var bx=x+24; s+=whiteboard(bx,y+34,right-bx,h-172);  // 板の高さ＝床側の自販機（104）に当たらない範囲
  // 床側（左→右）: 🛋️ ソファ・🪟 窓・☕ コーヒー（右隣が人の立ち位置）・🥤 自販機・🖨️ 印刷機。幅が足りなければ右から落とす（テーブル・鉢植えは ⑤ で落とした＝板の幅優先）
- var ox=x+24,im; if(fits(ox,120)){im=prop('sofa',ox,fy-56,120,56);s+=im||(R(ox,fy-52,120,24,'#3b5bdb',' rx="6"')+R(ox,fy-28,120,20,'#4c6ef5')+R(ox,fy-42,14,34,'#364fc7')+R(ox+106,fy-42,14,34,'#364fc7')+R(ox+59,fy-28,2,20,'#364fc7')+R(ox+10,fy-8,8,8,'#222')+R(ox+102,fy-8,8,8,'#222'));SOFA=[[ox+4,fy-56],[ox+42,fy-56],[ox+80,fy-56]];}  // 🛋️ 離席者の座る位置（最大3人・S23）
- ox=x+292; if(fits(ox,90)){im=prop('coffee',ox,fy-80,90,80);s+=im||(R(ox,fy-26,90,26,'#6b4423')+R(ox,fy-30,90,6,'#8b5a2b')+R(ox+20,fy-74,44,44,'#2d2d2d',' rx="3"')+R(ox+20,fy-78,44,6,'#444')+R(ox+24,fy-68,36,10,'#111')+R(ox+28,fy-65,4,4,'#39d353',' class="cur"')+R(ox+38,fy-52,8,6,'#555')+R(ox+36,fy-42,12,10,'#fff'));
-  s+=R(ox+38,fy-48,3,5,'#ddd',' class="steam"')+R(ox+44,fy-48,3,5,'#ddd',' class="steam s2"'); LOUNGE={spot:[ox+96,fy-48],name:name};}
- ox=x+432; if(fits(ox,60)){im=prop('vending',ox,fy-104,60,104);if(im)s+=im;else{s+=R(ox,fy-104,60,100,'#dc2626',' rx="3"')+R(ox,fy-104,60,8,'#991b1b')+R(ox+6,fy-94,36,50,'#1e293b');
-  [[0,'#f59e0b','#3b82f6','#22c55e'],[16,'#22c55e','#f59e0b','#e66fd1'],[32,'#3b82f6','#ef4444','#f59e0b']].forEach(function(r){for(var i=0;i<3;i++)s+=R(ox+10+i*12,fy-88+r[0],8,12,r[i+1]);});
-  s+=R(ox+46,fy-92,10,40,'#111')+R(ox+48,fy-88,6,4,'#5ad1e6',' class="vend"')+R(ox+6,fy-34,36,14,'#111')+R(ox+4,fy-4,8,4,'#222')+R(ox+48,fy-4,8,4,'#222');}}
- ox=x+502; if(fits(ox,176)){var busy=[D.hub].concat(D.tracks).some(function(t){return (t.occupied_by||[]).some(function(q){return q.live&&q.live.status==='busy';});});
-  im=prop('printer',ox,fy-100,176,100);s+=im||(R(ox+6,fy-16,128,14,'#4b5563')+R(ox+10,fy-2,10,4,'#222')+R(ox+120,fy-2,10,4,'#222')+R(ox,fy-76,140,60,'#9ca3af',' rx="4"')+R(ox,fy-80,140,6,'#d1d5db')+R(ox+10,fy-92,60,14,'#6b7280')+R(ox+12,fy-96,56,4,'#fff')+R(ox+100,fy-94,34,22,'#111',' rx="2"')+R(ox+103,fy-91,28,16,busy?'#39d353':'#4aa3ff')+R(ox+140,fy-46,36,8,'#6b7280')+R(ox+10,fy-60,120,4,'#6b7280'));
-  if(busy)s+=R(ox+146,fy-54,24,6,'#fff',' class="paper"');  // 作業中の席があれば用紙が出続ける
-  s+='<text x="'+(ox+70)+'" y="'+(fy+14)+'" text-anchor="middle" font-size="10" fill="'+PAL.propTxt+'" fill-opacity=".8">🖨️ 印刷機'+(busy?'（稼働中）':'')+'</text>';}
+ LGB={x:x,y:y,w:w,h:h};
+ function at(id,dx,dy){var o=lpOf(id),bx=LPBOX[id];if(o&&o.hide)return null;if(o&&o.x!=null&&o.y!=null)return [x+(+o.x),y+(+o.y)];return fits(x+dx,bx[0])?[x+dx,y+dy]:null;}  // 標準の小物の左上（config/ローカルの上書き・無ければ既定位置で幅が足りる時だけ）
+ var ox,im,q,g; q=at('sofa',24,h-84);
+ if(q){ox=q[0];fy=q[1]+56;im=prop('sofa',ox,fy-56,120,56);s+=lpWrap('sofa',ox,fy-56,120,56,im||(R(ox,fy-52,120,24,'#3b5bdb',' rx="6"')+R(ox,fy-28,120,20,'#4c6ef5')+R(ox,fy-42,14,34,'#364fc7')+R(ox+106,fy-42,14,34,'#364fc7')+R(ox+59,fy-28,2,20,'#364fc7')+R(ox+10,fy-8,8,8,'#222')+R(ox+102,fy-8,8,8,'#222')));SOFA=[[ox+4,fy-56],[ox+42,fy-56],[ox+80,fy-56]];}  // 🛋️ 離席者の座る位置（最大3人・S23）
+ q=at('coffee',292,h-108); if(q){ox=q[0];fy=q[1]+80;im=prop('coffee',ox,fy-80,90,80);
+  s+=lpWrap('coffee',ox,fy-80,90,80,(im||(R(ox,fy-26,90,26,'#6b4423')+R(ox,fy-30,90,6,'#8b5a2b')+R(ox+20,fy-74,44,44,'#2d2d2d',' rx="3"')+R(ox+20,fy-78,44,6,'#444')+R(ox+24,fy-68,36,10,'#111')+R(ox+28,fy-65,4,4,'#39d353',' class="cur"')+R(ox+38,fy-52,8,6,'#555')+R(ox+36,fy-42,12,10,'#fff')))+R(ox+38,fy-48,3,5,'#ddd',' class="steam"')+R(ox+44,fy-48,3,5,'#ddd',' class="steam s2"')); LOUNGE={spot:[ox+96,fy-48],name:name};}
+ else if((lpOf('coffee')||{}).hide)LOUNGE={spot:[x+388,y+h-76],name:name};  // コーヒーを隠しても ☕ 休憩の立ち位置は残す
+ q=at('vending',432,h-132); if(q){ox=q[0];fy=q[1]+104;im=prop('vending',ox,fy-104,60,104);if(im)g=im;else{g=R(ox,fy-104,60,100,'#dc2626',' rx="3"')+R(ox,fy-104,60,8,'#991b1b')+R(ox+6,fy-94,36,50,'#1e293b');
+  [[0,'#f59e0b','#3b82f6','#22c55e'],[16,'#22c55e','#f59e0b','#e66fd1'],[32,'#3b82f6','#ef4444','#f59e0b']].forEach(function(r){for(var i=0;i<3;i++)g+=R(ox+10+i*12,fy-88+r[0],8,12,r[i+1]);});
+  g+=R(ox+46,fy-92,10,40,'#111')+R(ox+48,fy-88,6,4,'#5ad1e6',' class="vend"')+R(ox+6,fy-34,36,14,'#111')+R(ox+4,fy-4,8,4,'#222')+R(ox+48,fy-4,8,4,'#222');}s+=lpWrap('vending',ox,fy-104,60,104,g);}
+ q=at('printer',502,h-128); if(q){ox=q[0];fy=q[1]+100;var busy=[D.hub].concat(D.tracks).some(function(t){return (t.occupied_by||[]).some(function(q){return q.live&&q.live.status==='busy';});});
+  im=prop('printer',ox,fy-100,176,100);g=im||(R(ox+6,fy-16,128,14,'#4b5563')+R(ox+10,fy-2,10,4,'#222')+R(ox+120,fy-2,10,4,'#222')+R(ox,fy-76,140,60,'#9ca3af',' rx="4"')+R(ox,fy-80,140,6,'#d1d5db')+R(ox+10,fy-92,60,14,'#6b7280')+R(ox+12,fy-96,56,4,'#fff')+R(ox+100,fy-94,34,22,'#111',' rx="2"')+R(ox+103,fy-91,28,16,busy?'#39d353':'#4aa3ff')+R(ox+140,fy-46,36,8,'#6b7280')+R(ox+10,fy-60,120,4,'#6b7280'));
+  if(busy)g+=R(ox+146,fy-54,24,6,'#fff',' class="paper"');  // 作業中の席があれば用紙が出続ける
+  g+='<text x="'+(ox+70)+'" y="'+(fy+14)+'" text-anchor="middle" font-size="10" fill="'+PAL.propTxt+'" fill-opacity=".8">🖨️ 印刷機'+(busy?'（稼働中）':'')+'</text>';s+=lpWrap('printer',ox,fy-100,176,100,g);}
+ // 追加の小物＝config／ローカルにある id のうち標準 4 点以外。絵＝assets/props/<kind>.png（箱＝PNG の大きさ×scale）。絵が無い id は描かない
+ var ids={};Object.keys(LPC).concat(Object.keys(LPL)).forEach(function(id){ids[id]=1;});
+ Object.keys(ids).forEach(function(id){if(LPBOX[id])return;var o=lpOf(id)||{},k=o.kind||id,P=PR[k];if(o.hide||!P)return;var sc=+o.scale||1,iw=Math.round(P.w*sc),ih=Math.round(P.h*sc),px=x+(o.x!=null?+o.x:Math.round(w/2-iw/2)),py=y+(o.y!=null?+o.y:Math.round(h/2-ih/2));
+  s+=lpWrap(id,px,py,iw,ih,'<image href="'+P.src+'" x="'+px+'" y="'+py+'" width="'+iw+'" height="'+ih+'" style="image-rendering:pixelated"/>');});
  return s;}
 // 島レイアウト: 3×3 のセル。中央＝ハブ。島は config の順に r,l,t,b,tr,tl,br,bl のセルへ（slot 指定があれば優先）。
 // 同じセルに複数の島が来たら縦に積む。セルの幅・高さは中の島の最大で決める＝重ならない。原点 (OX,OY) からの相対で組む
@@ -848,6 +887,23 @@ document.getElementById('play').onclick=function(){if(playing||!RTL.length)retur
  setTimeout(function(){var g=document.getElementById('rhuman');if(g)g.remove();document.querySelectorAll('#scene .human').forEach(function(x){x.style.visibility='';});playing=false;window.csvPlaying=false;RB.clk.textContent='⏹';RB.cap.textContent='再生おわり（'+RTL.length+' 件）';setTimeout(function(){HDR.classList.remove('playing');},2500);if(window.csvReloadAfter)location.reload();},RTL.length*STEP+900);};
 ord.onclick=function(){desc=!desc;try{localStorage.setItem('csv-log-desc',desc?'1':'0');}catch(e){}renderLog();};
 renderLog();
+// 🪑 配置モード（S24）: 休憩室の小物をドラッグ＝このブラウザに保存して読み直す・Shift+クリック＝隠す。左下の道具箱＝📋 JSON をコピー／＋ 小物／↺ 戻す
+(function(){var pe=document.getElementById('propedit');if(pe)pe.onclick=function(){try{localStorage.setItem('csv-office-propedit',LPE?'0':'1');}catch(e){}location.reload();};
+ if(!LPE||!LGB)return;
+ function store(){try{localStorage.setItem('csv-office-props',JSON.stringify(LPL));}catch(e){}location.reload();}
+ function jsonText(){var m={};Object.keys(LPC).forEach(function(k){m[k]=LPC[k];});Object.keys(LPL).forEach(function(k){m[k]=LPL[k];});return '"lounge_props": '+JSON.stringify(m,null,2);}
+ var nloc=Object.keys(LPL).length,tb=document.createElement('div');tb.id='ptool';
+ tb.innerHTML='<b>🪑 小物配置</b><button type="button" class="tgl" id="pt-js" title="config.local.json の office に貼る文面">📋 JSON をコピー</button><select id="pt-add" title="assets/props/ の絵から 1 つ足す（休憩室の真ん中に出る）"><option value="">＋ 小物</option>'+Object.keys(PR).map(function(k){return '<option>'+esc(k)+'</option>';}).join('')+'</select>'+(nloc?'<button type="button" class="tgl" id="pt-rs" title="このブラウザで変えた分を捨てて config の配置に戻す">↺ 戻す（'+nloc+'）</button>':'')+'<span>ドラッグ＝移動／Shift+クリック＝隠す／自動更新は保留中</span>';
+ document.body.appendChild(tb);
+ document.getElementById('pt-js').onclick=function(){var t=jsonText();if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){alert('コピーした（config.local.json の office に貼って watcher を再起動）');},function(){prompt('コピーして config.local.json の office に貼る',t);});else prompt('コピーして config.local.json の office に貼る',t);};
+ document.getElementById('pt-add').onchange=function(){var k=this.value;if(!k)return;var id=k,n=2;while(lpOf(id))id=k+'-'+(n++);var P=PR[k];LPL[id]={kind:k,x:Math.round(LGB.w/2-P.w/2),y:Math.round(LGB.h/2-P.h/2)};store();};
+ var rs=document.getElementById('pt-rs');if(rs)rs.onclick=function(){if(!confirm('このブラウザで動かした小物を全部 config の配置に戻す？'))return;LPL={};store();};
+ var svgEl=document.querySelector('#scene svg'),DR=null;
+ document.querySelectorAll('#scene .lp').forEach(function(g){g.addEventListener('pointerdown',function(ev){ev.preventDefault();var m=svgEl.getScreenCTM();DR={g:g,sx:ev.clientX,sy:ev.clientY,k:m?1/m.a:1,moved:false};});});
+ document.addEventListener('pointermove',function(ev){if(!DR)return;var dx=(ev.clientX-DR.sx)*DR.k,dy=(ev.clientY-DR.sy)*DR.k;if(!DR.moved&&Math.abs(dx)+Math.abs(dy)<3)return;DR.moved=true;DR.g.setAttribute('transform','translate('+dx+' '+dy+')');DR.dx=dx;DR.dy=dy;});
+ document.addEventListener('pointerup',function(ev){if(!DR)return;var d=DR,id=d.g.dataset.id,o=Object.assign({},lpOf(id)||{});DR=null;
+  if(d.moved){o.x=Math.round(+d.g.dataset.x+d.dx);o.y=Math.round(+d.g.dataset.y+d.dy);delete o.hide;LPL[id]=o;store();}
+  else if(ev.shiftKey){if(!confirm(id+' を隠す？（↺ 戻す か config で戻せる）'))return;o.hide=true;LPL[id]=o;store();}});})();
 (function(){var b=document.getElementById('bb');if(!b)return;function lab(){b.textContent=BBL[bbMode]+(HID?'・✕'+HID:'');}lab();  // 💬 クリック＝2時間以内→全部→なし・Shift+クリック＝✕ で閉じた吹き出しを全部戻す
  b.onclick=function(ev){if(ev.shiftKey){try{localStorage.removeItem('csv-office-seen');}catch(e){}location.reload();return;}try{localStorage.setItem('csv-office-bubble',BBM[(BBM.indexOf(bbMode)+1)%BBM.length]);}catch(e){}location.reload();};
  document.querySelectorAll('.bx').forEach(function(x){x.addEventListener('click',function(ev){ev.stopPropagation();markSeen(x.dataset.n,+x.dataset.ts);var sy=x.closest('.say');if(sy)sy.remove();HID++;lab();});});})();
