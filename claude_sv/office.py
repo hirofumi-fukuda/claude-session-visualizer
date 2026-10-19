@@ -561,8 +561,9 @@ var clk=document.getElementById('clock'), WD='日月火水木金土', skyFn=null
 function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());if(skyFn)skyFn(d);if(clockFn)clockFn(d);}
 tick(); setInterval(tick,1000);
 // 再読込は ▶ 再生中なら保留して再生の終わりに回す（10 秒ごとの stamp・イベント境界・休憩しきい値の全部・S23）
-// 🗂️ 右欄にマウスがある間（読んでいる）と席カードのキャラ欄を開いている間も保留（右欄から出たら読み直す・S24）
-function softReload(){if(LPE||(CARD&&CARDCH)||document.querySelector('aside:hover')){window.csvReloadAfter=true;return;}if(window.csvPlaying){window.csvReloadAfter=true;return;}location.reload();}
+// 🗂️ 右欄にマウスがある間（読む・キャラを選ぶ）も保留（右欄から出たら読み直す・S24）。キャラ欄が開いているだけでは保留しない＝開いたまま放置すると画面が止まり続けた（S24）
+// 右欄の保留は 2 分まで（マウスを右欄に置いたまま離席しても止まり続けない）
+function softReload(){if(LPE){window.csvReloadAfter=true;return;}if(document.querySelector('aside:hover')){var h=window.csvHoldSince=window.csvHoldSince||Date.now();if(Date.now()-h<120000){window.csvReloadAfter=true;return;}}if(window.csvPlaying){window.csvReloadAfter=true;return;}location.reload();}
 window.__officeStamp=function(s){if(s&&s!==STAMP)softReload();};
 setInterval(function(){var sc=document.createElement('script');sc.src='office_stamp.js?t='+Date.now();sc.onload=sc.onerror=function(){sc.remove();};document.head.appendChild(sc);},POLL_MS);
 
@@ -964,7 +965,7 @@ renderLog();
  function thumb(M,v,mk){var ks=v?['agent-'+v+'-'+mk,'agent-'+v+'-'+mk+'-idle','agent-'+v,'agent-'+v+'-idle']:['agent-'+mk,'agent'];for(var i=0;i<ks.length;i++)if(M[ks[i]])return M[ks[i]];return '';}
  function hm(ms){var d=new Date(ms),p=function(n){return('0'+n).slice(-2);};return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());}
  function charHtml(t){var nloc=Object.keys(CHL).length,curT=String(TOVR[CARD]||'').split('/')[0],M=mapFor(CARD),curV=VOVR[CARD]||'',autoV=variantFor(CARD,M),occ=(t.occupied_by||[])[0],mk=modelKey(occ&&occ.live?occ.live.model:'');
-  var h='<details id="cd-ch"'+(CARDCH?' open':'')+'><summary>🧑‍🎨 キャラ（このブラウザだけ・開いている間は自動更新を保留）</summary><div class="chr">';
+  var h='<details id="cd-ch"'+(CARDCH?' open':'')+'><summary>🧑‍🎨 キャラ（このブラウザだけ）</summary><div class="chr">';
   h+='<select id="cd-th" title="この席のテーマ（既定＝部屋か画面のテーマ）"><option value="">既定のテーマ</option>'+Object.keys(THEMES).map(function(k){return '<option'+(k===curT?' selected':'')+'>'+esc(k)+'</option>';}).join('')+'</select>';
   h+='<button type="button" class="vt'+(curV?'':' on')+'" data-v="" title="名前のハッシュで自動（いまは '+esc(autoV||'なし')+'）"><img src="'+thumb(M,autoV,mk)+'" alt="">自動</button>';
   varsOf(M).forEach(function(v){var src=thumb(M,v,mk);if(!src)return;h+='<button type="button" class="vt'+(v===curV?' on':'')+'" data-v="'+esc(v)+'" title="'+esc(v)+'"><img src="'+src+'" alt="">'+esc(v)+'</button>';});
@@ -994,7 +995,7 @@ renderLog();
   box.querySelectorAll('.vt').forEach(function(b){b.onclick=function(){var o=Object.assign({},CHL[CARD]||{});o.variant=b.dataset.v;CHL[CARD]=o;store();};});}
  document.querySelectorAll('#scene .desk[data-track]').forEach(function(g){g.addEventListener('click',function(ev){ev.stopPropagation();setCard(g.dataset.track===CARD?'':g.dataset.track);});});
  document.addEventListener('keydown',function(ev){if(ev.key==='Escape'&&CARD)setCard('');});
- document.querySelector('aside').addEventListener('mouseleave',function(){if(window.csvReloadAfter&&!LPE&&!(CARD&&CARDCH)&&!window.csvPlaying)location.reload();});  // 右欄を読んでいる間に溜まった再読込はここで
+ document.querySelector('aside').addEventListener('mouseleave',function(){if(window.csvReloadAfter&&!LPE&&!window.csvPlaying)location.reload();});  // 右欄を読んでいる間に溜まった再読込はここで
  render();})();
 (function(){var b=document.getElementById('bb');if(!b)return;function lab(){b.textContent=BBL[bbMode]+(HID?'・✕'+HID:'');}lab();  // 💬 クリック＝2時間以内→全部→なし・Shift+クリック＝✕ で閉じた吹き出しを全部戻す
  b.onclick=function(ev){if(ev.shiftKey){try{localStorage.removeItem('csv-office-seen');}catch(e){}location.reload();return;}try{localStorage.setItem('csv-office-bubble',BBM[(BBM.indexOf(bbMode)+1)%BBM.length]);}catch(e){}location.reload();};
