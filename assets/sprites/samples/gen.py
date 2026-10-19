@@ -47,7 +47,7 @@ SCALE = 3  # 書き出し PNG の 1 マス（36×48）
 RIM = (255, 255, 255, 90)  # 書き出し PNG の外側 1px のフチ（白 35%）。None で無し
 
 # office.py の MODEL_COL と同じ色。unknown＝モデル不明時に agent.png へ乗算される色
-MODEL_COLORS = {"opus": "#8a5cf6", "sonnet": "#3b82f6", "haiku": "#d4a017", "fable": "#f472b6"}
+MODEL_COLORS = {"opus": "#f472b6", "sonnet": "#3b82f6", "haiku": "#d4a017", "fable": "#8a5cf6"}
 UNKNOWN_COLOR = "#c24b4b"
 MODELS = list(MODEL_COLORS)
 MODEL_LABEL = {"opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku", "fable": "Fable"}

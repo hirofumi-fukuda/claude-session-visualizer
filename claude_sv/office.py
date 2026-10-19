@@ -570,7 +570,7 @@ setInterval(function(){var sc=document.createElement('script');sc.src='office_st
 // ---------- 配置図 ----------
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});};
 var n=D.tracks.length, RX=Math.max(430, n*62), RY=270, W=RX*2+260, H=740, CX=W/2, CY=380;
-var MODEL_COL=function(m){return !m?'#c24b4b':/opus/.test(m)?'#8a5cf6':/sonnet/.test(m)?'#3b82f6':/haiku/.test(m)?'#d4a017':/fable/.test(m)?'#f472b6':'#c24b4b';};
+var MODEL_COL=function(m){return !m?'#c24b4b':/opus/.test(m)?'#f472b6':/sonnet/.test(m)?'#3b82f6':/haiku/.test(m)?'#d4a017':/fable/.test(m)?'#8a5cf6':'#c24b4b';};
 // エージェント＝ロボット（アンテナ・金属の頭・光る目）。シャツ色＝モデル。人間（下の HS）とは頭の形で見分ける
 var SPR=["....AA......","....AA......","..MMMMMMMM..",".MMMMMMMMMM.",".MVVMMMMVVM.",".MMMMMMMMMM.","..MMMMMMMM..","....MM......","..TTTTTTTT..",".TTTTTTTTTT.",".M.TTTTTT.M.",".M.TTTTTT.M.","...TTTTTT...","...MM..MM...","...MM..MM...","...BB..BB..."];
 var PAL={M:'#b8c0cc',V:'#5ad1e6',B:'#222'};
@@ -1024,10 +1024,10 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<i class="sw" style="background:#4aa3ff"></i>待機 '
               '<i class="sw" style="background:#e5533b"></i>許可待ち '
               '<i class="sw" style="background:#555"></i>空席</span>'
-              '<span>｜ シャツ <i class="sw" style="background:#8a5cf6"></i>Opus '
+              '<span>｜ シャツ <i class="sw" style="background:#8a5cf6"></i>Fable '
+              '<i class="sw" style="background:#f472b6"></i>Opus '
               '<i class="sw" style="background:#3b82f6"></i>Sonnet '
-              '<i class="sw" style="background:#d4a017"></i>Haiku '
-              '<i class="sw" style="background:#f472b6"></i>Fable</span>'
+              '<i class="sw" style="background:#d4a017"></i>Haiku</span>'
               '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）</span>'
               '<span>｜ 💤 離席中＝プロセスは無いが今日動いた席（主は休憩室のソファ・席は点線枠）</span>'
               '<span>｜ 🏠 退社＝最後の発話が文頭「退社」の席（復帰日まで主は不在・「退社 次 10/20」で復帰日指定・既定は次の平日。人間の最後の発話が退社なら 👤 も帰宅）</span>'

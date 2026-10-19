@@ -14,16 +14,16 @@ MDL_CSS = """
 /* モデルバッジ: 系統ごとに色分け。系統名併記＝色だけに意味を載せない（claude_sv/modelbadge.py 共有） */
 .mdl{display:inline-block;font-size:10.5px;font-weight:600;line-height:1.7;
   padding:0 8px;border-radius:999px;border:1px solid;white-space:nowrap}
-.mdl-opus{color:#b083f0;background:rgba(176,131,240,.14);border-color:rgba(176,131,240,.36)}
+.mdl-opus{color:#e0648c;background:rgba(224,100,140,.14);border-color:rgba(224,100,140,.36)}
 .mdl-sonnet{color:#4a90e2;background:rgba(74,144,226,.14);border-color:rgba(74,144,226,.36)}
 .mdl-haiku{color:#d99423;background:rgba(217,148,35,.14);border-color:rgba(217,148,35,.36)}
-.mdl-fable{color:#e0648c;background:rgba(224,100,140,.14);border-color:rgba(224,100,140,.36)}
+.mdl-fable{color:#b083f0;background:rgba(176,131,240,.14);border-color:rgba(176,131,240,.36)}
 .mdl-unk{color:var(--muted);background:var(--wash);border-color:var(--border)}
 /* ライトモードは文字色だけ濃色へ（淡背景での可読性・S14）。背景/枠の色相は共通 */
-:root[data-theme="light"] .mdl-opus{color:#7c3aed}
+:root[data-theme="light"] .mdl-opus{color:#c01a5e}
 :root[data-theme="light"] .mdl-sonnet{color:#2563eb}
 :root[data-theme="light"] .mdl-haiku{color:#b45309}
-:root[data-theme="light"] .mdl-fable{color:#c01a5e}
+:root[data-theme="light"] .mdl-fable{color:#7c3aed}
 """
 
 
