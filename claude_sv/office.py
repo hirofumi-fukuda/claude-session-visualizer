@@ -530,7 +530,9 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 @keyframes zz{0%{opacity:.3;transform:translateY(0)}50%{opacity:1}100%{opacity:.3;transform:translateY(-6px)}} .zz{animation:zz 2.4s ease-in-out infinite;transform-box:fill-box}
 .empty{padding:30px;color:var(--muted)}
 #ptool{position:fixed;left:12px;bottom:34px;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:calc(100% - 24px);background:var(--surface);border:1px solid #f59e0b;border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
-#ptool span{color:var(--muted);font-size:11px} #ptool select{font:inherit;font-size:12px;background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:999px;padding:2px 8px}
+#ctool{position:fixed;left:12px;bottom:84px;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:calc(100% - 24px);background:var(--surface);border:1px solid #8b5cf6;border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+#ctool .vt{display:inline-flex;flex-direction:column;align-items:center;gap:1px;padding:2px 4px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:10px;cursor:pointer} #ctool .vt.on{border:2px solid #8b5cf6} #ctool .vt img{width:27px;height:36px;image-rendering:pixelated}
+#ctool span,#ptool span{color:var(--muted);font-size:11px} #ctool select,#ptool select{font:inherit;font-size:12px;background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:999px;padding:2px 8px}
 footer{flex:none;padding:6px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
 #rbar{display:none;flex-basis:100%;flex-wrap:wrap;align-items:center;gap:4px 12px;min-width:0} header.playing #rbar{display:flex} header.playing .legend{display:none}
 #rclk{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--gold);white-space:nowrap;line-height:1.2;min-width:3.2em} #rcap{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
@@ -551,7 +553,7 @@ var clk=document.getElementById('clock'), WD='日月火水木金土', skyFn=null
 function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());if(skyFn)skyFn(d);}
 tick(); setInterval(tick,1000);
 // 再読込は ▶ 再生中なら保留して再生の終わりに回す（10 秒ごとの stamp・イベント境界・休憩しきい値の全部・S23）
-function softReload(){if(LPE){window.csvReloadAfter=true;return;}if(window.csvPlaying){window.csvReloadAfter=true;return;}location.reload();}
+function softReload(){if(LPE||CHE){window.csvReloadAfter=true;return;}if(window.csvPlaying){window.csvReloadAfter=true;return;}location.reload();}
 window.__officeStamp=function(s){if(s&&s!==STAMP)softReload();};
 setInterval(function(){var sc=document.createElement('script');sc.src='office_stamp.js?t='+Date.now();sc.onload=sc.onerror=function(){sc.remove();};document.head.appendChild(sc);},POLL_MS);
 
@@ -576,7 +578,10 @@ function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" w
 // テーマ内の「種類」＝ agent-<種類>[-<モデル>][-<ポーズ>].png の <種類>（モデル名・ポーズ名以外のトークン）。トラック名のハッシュで固定割当（config office.sprite_variants で上書き可）
 var MODELS={opus:1,sonnet:1,haiku:1,fable:1,unknown:1}, POSES={typing:1,idle:1,wait:1,rest:1};  // rest＝💤 離席中（絵が無ければ idle 系に落ちる・S23）
 function varsOf(M){if(M.__vars)return M.__vars;var vs={};Object.keys(M).forEach(function(k){var t=k.split('-');if(t[0]!=='agent')return;t.slice(1).forEach(function(w){if(!MODELS[w]&&!POSES[w])vs[w]=1;});});return (M.__vars=Object.keys(vs).sort());}
-var VOVR=D.sprite_variants||{}, TOVR=D.sprite_track_themes||{}, NOVR=D.sprite_tenant_themes||{};
+// 🧑‍🎨 キャラ変更（S24）: このブラウザで席ごとに選んだテーマ・種類（localStorage csv-office-chars＝{トラック名:{theme,variant}}・'' は既定に戻す）が config より優先
+var CHL={},CHE=false,CHSEL='';try{CHL=JSON.parse(localStorage.getItem('csv-office-chars')||'{}')||{};CHE=localStorage.getItem('csv-office-charedit')==='1';CHSEL=localStorage.getItem('csv-office-charsel')||'';}catch(e){CHL={};}
+var VOVR=Object.assign({},D.sprite_variants||{}), TOVR=Object.assign({},D.sprite_track_themes||{}), NOVR=D.sprite_tenant_themes||{};
+Object.keys(CHL).forEach(function(k){var o=CHL[k]||{};if('theme' in o){if(o.theme)TOVR[k]=o.theme;else delete TOVR[k];}if('variant' in o){if(o.variant)VOVR[k]=o.variant;else delete VOVR[k];}});
 var RESV={};Object.keys(VOVR).forEach(function(k){RESV[VOVR[k]]=1;});  // 役目の種類（hub・scribe 等）は名指しの席だけ＝ハッシュで他の席に配らない（S23 ⑦）
 function variantFor(track,M){var ALL=varsOf(M||SP);if(!ALL.length)return '';if(VOVR[track]&&ALL.indexOf(VOVR[track])>=0)return VOVR[track];var VARS=ALL.filter(function(v){return !RESV[v];});if(!VARS.length)return '';var h=5381;for(var i=0;i<track.length;i++)h=((h*33)^track.charCodeAt(i))>>>0;return VARS[h%VARS.length];}
 // 席ごとの別テーマ: トラック名（office.sprite_track_themes）＞部屋名（office.sprite_tenant_themes・trackRoom は部屋の配置時に埋まる）＞画面のテーマ。指定のテーマが無ければ次へ落ちる
@@ -598,9 +603,10 @@ var PAL=LIGHT?{tileA:'#e6e2d9',tileB:'#ebe7df',grid:'#d8d3c8',carpetA:'#dccfb5',
 :{tileA:'#2a2d3f',tileB:'#2f3348',grid:null,carpetA:'#3d3330',carpetB:'#4a3f3a',wall:'#000',wallOp:0.16,wallStroke:'#cbd5e1',wallStrokeOp:0.5,wallW:4,roomTxt:'#e2e8f0',roomSub:'#cbd5e1',emptyTxt:'#94a3b8',chair:'#3a3e58',chair2:'#2a2d44',plate:'#f3efe0',plateStroke:null,islOp:0.10,sideOp:0.05,propTxt:'#cbd5e1',doorTxt:'#cbd5e1',doorStroke:'#cbd5e1',txt:function(c){return c;}};
 function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,away=(!live&&t.away&&t.away.length)?t.away:null,onSofa=!!(away&&awayAt[t.name]>=0),leave=(!live&&t.leave)?t.leave:null;  // leave＝🏠 退社（S23 ⑩・Python 側で live/away は落としてある）
  var st='empty'; if(live){st=t.occupied_by.some(function(s){return s.live.status==='perm';})?'perm':t.occupied_by.some(function(s){return s.live.status==='busy';})?'busy':'idle';}
- var g='<g class="desk"'+(t.dormant?' opacity="'+(LIGHT?0.68:0.5)+'"':leave?' opacity="'+(LIGHT?0.85:0.75)+'"':'')+'>';  // 休眠席は薄く（ライトは背景が明るいぶん濃いめ）・🏠 退社は少し薄く
+ var g='<g class="desk" data-track="'+esc(t.name)+'"'+(CHE?' style="cursor:pointer"':'')+(t.dormant?' opacity="'+(LIGHT?0.68:0.5)+'"':leave?' opacity="'+(LIGHT?0.85:0.75)+'"':'')+'>';  // 休眠席は薄く（ライトは背景が明るいぶん濃いめ）・🏠 退社は少し薄く
  var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.rc?' 📱RC':'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):leave?'🏠 退社（'+leave.t+' に締め・次の出勤 '+leave.until_t+'）\n   '+(leave.name||'')+' '+(leave.model||'')+(leave.s?' S'+leave.s:'')+(leave.text?'\n   「'+leave.text+'」':''):away?'💤 離席中（プロセスなし・最後の動き '+away[0].t+(onSofa?'・休憩室のソファ':'')+'）\n'+away.map(function(a){return '   '+(a.name||'')+' '+(a.model||'')+(a.s?' S'+a.s:'')+' 最後 '+a.t;}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
  g+='<title>'+esc(tip)+'</title>';
+ if(CHE)g+='<rect class="chsel" x="'+(x-w/2-8)+'" y="'+(y-72)+'" width="'+(w+16)+'" height="'+(h+102)+'" rx="9" fill="#8b5cf6" fill-opacity="'+(CHSEL===t.name?0.14:0.03)+'" stroke="#8b5cf6" stroke-dasharray="5 3" stroke-width="'+(CHSEL===t.name?3:1.5)+'"/>';  // 🧑‍🎨 キャラ変更モード＝席が押せる枠（選択中は濃く）
  if(away)g+='<rect x="'+(x-w/2-6)+'" y="'+(y-70)+'" width="'+(w+12)+'" height="'+(h+98)+'" rx="8" fill="#64748b" fill-opacity="0.08" stroke="#64748b" stroke-dasharray="6 4" stroke-width="2"/><text class="zz" x="'+(x+w/2-4)+'" y="'+(y-52)+'" text-anchor="end" font-size="14">💤</text>';  // 💤 離席中＝席は点線枠で確保（S23）
  if(leave)g+='<rect x="'+(x-w/2-6)+'" y="'+(y-70)+'" width="'+(w+12)+'" height="'+(h+98)+'" rx="8" fill="#a8a29e" fill-opacity="0.07" stroke="#a8a29e" stroke-dasharray="2 5" stroke-width="2"/><text x="'+x+'" y="'+(y-54)+'" text-anchor="middle" font-size="11" fill="'+PAL.emptyTxt+'">🏠 '+esc(leave.t)+' 退社</text><text x="'+x+'" y="'+(y-40)+'" text-anchor="middle" font-size="10" fill="'+PAL.emptyTxt+'">次 '+esc(leave.until_t)+'</text>';  // 🏠 退社＝主は不在（椅子だけ）・薄い点線枠と復帰日（S23 ⑩）
  if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});
@@ -635,6 +641,7 @@ function doorOf(name){var rn=trackRoom[name];return (rn&&door[rn])||null;}
 (function(){var el=document.getElementById('wsf');if(!el)return;var h='';
  if(ROOMS.length)[['','🏢 全館']].concat(ROOMS.map(function(r){return [r.name,r.name];})).forEach(function(o){var on=o[0]===''?!wsSel:(shown.length===1&&shown[0].name===o[0]);h+='<button type="button" class="tgl wsb'+(on?' on':'')+'" data-ws="'+esc(o[0])+'">'+esc(o[1])+'</button>';});
  h+='<button type="button" id="magnet" class="tgl wsb'+(MAGNET?' on':'')+'" title="稼働中の席を島の中でハブ側のマスから詰める（クリックで切替）">🧲 ハブ寄せ</button>';
+ if(Object.keys(THEMES).length)h+='<button type="button" id="charedit" class="tgl wsb'+(CHE?' on':'')+'" title="席をクリックしてキャラのテーマ・種類を選ぶ（このブラウザだけ・config へは 📋 JSON をコピー）。変更モード中は自動更新を保留">🧑‍🎨 キャラ変更</button>';
  if(D.lounge)h+='<button type="button" id="propedit" class="tgl wsb'+(LPE?' on':'')+'" title="休憩室の小物をドラッグで動かす（このブラウザだけ・config へは 📋 JSON をコピー）。配置モード中は自動更新を保留">🪑 小物配置</button>';
  el.innerHTML=h; el.querySelectorAll('.wsb[data-ws]').forEach(function(b){b.onclick=function(){var v=b.dataset.ws;try{localStorage.setItem('csv-office-ws',v);}catch(e){}var u=new URL(location.href);if(v)u.searchParams.set('ws',v);else u.searchParams.delete('ws');location.href=u.toString();};});
  var mb=document.getElementById('magnet');if(mb)mb.onclick=function(){try{localStorage.setItem('csv-office-magnet',MAGNET?'0':'1');}catch(e){}location.reload();};})();
@@ -680,7 +687,9 @@ function whiteboard(bx,by,bw,bhMax){var c=D.counts,d=new Date(),date=(d.getMonth
   pend.concat(done).slice(0,3).forEach(function(t){lines.push({t:(t.mark||'・')+' '+t.t,col:t.done?'#9ca3af':'#111',strike:t.done,tip:t.t});});
   if(!top.length)lines.push({t:'（🔴 TOP の見出しなし）',col:'#9ca3af'});
   var ev=evLine();if(ev)lines.push({t:ev.text,alts:ev.alts,col:'#b45309',id:'wbev'});
-  var wt=BOARD.waiting;if(wt&&wt.n)lines.push({t:'⏸ 返信待ち '+wt.n+'件'+(wt.urgent?'（🔴'+wt.urgent+'）':'')+'：'+(wt.items||[]).join('・'),col:'#111',tip:'返信待ち（こちらボール外）\n'+(wt.items||[]).join('\n')});}
+  var wt=BOARD.waiting;if(wt&&wt.n){var ur=(wt.items||[]).slice(0,wt.urgent||0);  // 🔴 だけ名前・他は件数（S24・items は 🔴 が先頭）
+   var wal=[];for(var k=ur.length;k>=1;k--)wal.push('⏸ 返信待ち '+wt.n+'件：🔴 '+ur.slice(0,k).join('・')+(wt.n-k?' ほか'+(wt.n-k)+'件':''));wal.push('⏸ 返信待ち '+wt.n+'件'+(wt.urgent?'（🔴'+wt.urgent+'）':''));  // 入りきらなければ名前を後ろから減らす
+   lines.push({t:wal[0],alts:wal,col:'#111',tip:'返信待ち（こちらボール外）\n'+(wt.items||[]).join('\n')});}}
  var Hh=Math.min(bhMax,44+lines.length*LH+10),y0=by+24;
  s+='<a href="daily.html" target="_blank" rel="noopener" style="cursor:pointer"><title>📓 日誌を開く（daily.html）</title>'+board(bw,Hh);
  s+='<text x="'+(bx+14)+'" y="'+y0+'"'+WBF+' font-size="15" font-weight="700" fill="#1d4ed8">'+date+' 今日</text>';
@@ -904,6 +913,32 @@ renderLog();
  document.addEventListener('pointerup',function(ev){if(!DR)return;var d=DR,id=d.g.dataset.id,o=Object.assign({},lpOf(id)||{});DR=null;
   if(d.moved){o.x=Math.round(+d.g.dataset.x+d.dx);o.y=Math.round(+d.g.dataset.y+d.dy);delete o.hide;LPL[id]=o;store();}
   else if(ev.shiftKey){if(!confirm(id+' を隠す？（↺ 戻す か config で戻せる）'))return;o.hide=true;LPL[id]=o;store();}});})();
+// 🧑‍🎨 キャラ変更モード（S24・個人PC B の代わりに席クリック）: 席を選ぶ→テーマ（プルダウン）と種類（絵のタイル）を選ぶ＝このブラウザに保存して読み直す。
+// config へ戻すのは「📋 JSON をコピー」→ office の sprite_track_themes／sprite_variants に貼る。名指しした種類は名指しの席だけに付く（ハッシュの配り直しで他の席の絵が変わることがある）
+(function(){var ce=document.getElementById('charedit');if(ce)ce.onclick=function(){try{localStorage.setItem('csv-office-charedit',CHE?'0':'1');}catch(e){}location.reload();};
+ if(!CHE)return;
+ function store(){try{localStorage.setItem('csv-office-chars',JSON.stringify(CHL));}catch(e){}location.reload();}
+ function setSel(n){CHSEL=n;try{localStorage.setItem('csv-office-charsel',n);}catch(e){}}
+ function jsonText(){return '"sprite_track_themes": '+JSON.stringify(TOVR,null,2)+',\n"sprite_variants": '+JSON.stringify(VOVR,null,2);}
+ var tb=document.createElement('div');tb.id='ctool';document.body.appendChild(tb);
+ function thumb(M,v,mk){var ks=v?['agent-'+v+'-'+mk,'agent-'+v+'-'+mk+'-idle','agent-'+v,'agent-'+v+'-idle']:['agent-'+mk,'agent'];for(var i=0;i<ks.length;i++)if(M[ks[i]])return M[ks[i]];return '';}
+ function render(){var nloc=Object.keys(CHL).length,h='<b>🧑‍🎨 キャラ変更</b><button type="button" class="tgl" id="ct-js" title="config.local.json の office に貼る文面">📋 JSON をコピー</button>'+(nloc?'<button type="button" class="tgl" id="ct-rs" title="このブラウザで変えた分を捨てて config に戻す">↺ 戻す（'+nloc+'）</button>':'');
+  var t=CHSEL&&byName[CHSEL];
+  if(!t)h+='<span>席をクリックして選ぶ／自動更新は保留中</span>';
+  else{var cfgT=(D.sprite_track_themes||{})[CHSEL]||'',curT=String(TOVR[CHSEL]||'').split('/')[0],M=mapFor(CHSEL),curV=VOVR[CHSEL]||'',autoV=variantFor(CHSEL,M);
+   var occ=(t.occupied_by||[])[0],mk=modelKey(occ&&occ.live?occ.live.model:'');
+   h+='<span>席</span><b>'+esc(CHSEL)+'</b><select id="ct-th" title="この席のテーマ（既定＝部屋か画面のテーマ）"><option value="">既定のテーマ</option>'+Object.keys(THEMES).map(function(k){return '<option'+(k===curT?' selected':'')+'>'+esc(k)+'</option>';}).join('')+'</select>';
+   h+='<button type="button" class="vt'+(curV?'':' on')+'" data-v="" title="名前のハッシュで自動（いまは '+esc(autoV||'なし')+'）"><img src="'+thumb(M,autoV,mk)+'" alt="">自動</button>';
+   varsOf(M).forEach(function(v){var src=thumb(M,v,mk);if(!src)return;h+='<button type="button" class="vt'+(v===curV?' on':'')+'" data-v="'+esc(v)+'" title="'+esc(v)+'"><img src="'+src+'" alt="">'+esc(v)+'</button>';});
+   if(CHL[CHSEL])h+='<button type="button" class="tgl" id="ct-one" title="この席だけ config の指定に戻す">↺ この席</button>';}
+  tb.innerHTML=h;
+  document.getElementById('ct-js').onclick=function(){var s=jsonText();if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(s).then(function(){alert('コピーした（config.local.json の office の同じキーを置き換えて watcher を再起動）');},function(){prompt('コピーして config.local.json の office に貼る',s);});else prompt('コピーして config.local.json の office に貼る',s);};
+  var rs=document.getElementById('ct-rs');if(rs)rs.onclick=function(){if(!confirm('このブラウザで変えたキャラを全部 config の指定に戻す？'))return;CHL={};store();};
+  var one=document.getElementById('ct-one');if(one)one.onclick=function(){delete CHL[CHSEL];store();};
+  var th=document.getElementById('ct-th');if(th)th.onchange=function(){var o=Object.assign({},CHL[CHSEL]||{});o.theme=this.value;o.variant='';CHL[CHSEL]=o;store();};  // テーマを変えたら種類は自動に戻す（種類はテーマごとに違う）
+  tb.querySelectorAll('.vt').forEach(function(b){b.onclick=function(){var o=Object.assign({},CHL[CHSEL]||{});o.variant=b.dataset.v;CHL[CHSEL]=o;store();};});}
+ document.querySelectorAll('#scene .desk[data-track]').forEach(function(g){g.addEventListener('click',function(ev){ev.stopPropagation();setSel(g.dataset.track);document.querySelectorAll('#scene .chsel').forEach(function(r){var on=r.parentNode===g;r.setAttribute('fill-opacity',on?0.14:0.03);r.setAttribute('stroke-width',on?3:1.5);});render();});});
+ render();})();
 (function(){var b=document.getElementById('bb');if(!b)return;function lab(){b.textContent=BBL[bbMode]+(HID?'・✕'+HID:'');}lab();  // 💬 クリック＝2時間以内→全部→なし・Shift+クリック＝✕ で閉じた吹き出しを全部戻す
  b.onclick=function(ev){if(ev.shiftKey){try{localStorage.removeItem('csv-office-seen');}catch(e){}location.reload();return;}try{localStorage.setItem('csv-office-bubble',BBM[(BBM.indexOf(bbMode)+1)%BBM.length]);}catch(e){}location.reload();};
  document.querySelectorAll('.bx').forEach(function(x){x.addEventListener('click',function(ev){ev.stopPropagation();markSeen(x.dataset.n,+x.dataset.ts);var sy=x.closest('.say');if(sy)sy.remove();HID++;lab();});});})();
