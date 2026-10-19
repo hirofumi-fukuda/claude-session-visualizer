@@ -479,6 +479,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "islands": islands, "rooms": rooms, "hub_side": hub_side,  # 🪑 ハブの右隣の小机（S22）
             "live_near_hub": bool((cfg.get("office") or {}).get("live_near_hub", False)),  # 🧲 稼働席をハブ側に詰める既定（S22）
             "lounge": _lounge(cfg), "props": load_props(),
+            "day_end": str((cfg.get("office") or {}).get("day_end") or "19:00"),  # 🕐 帯の時計の「定時まで」（S24）
             "lounge_props": dict((cfg.get("office") or {}).get("lounge_props") or {}),  # 🪑 休憩室の小物の置き場所（id→{kind,x,y,scale,hide}・休憩室の左上からの px・S24）  # ☕ 休憩室（S22・無ければ None）と小物の絵（assets/props/）
             "board": _board(cfg),  # 🧾 ホワイトボードの要点（S23・daily から）
             "counts": {"edges": len(edges), "unread": unread, "failed": failed,
@@ -549,8 +550,8 @@ var root=document.documentElement, btn=document.getElementById('tgl');
 function lab(){btn.textContent=root.dataset.theme==='light'?'☾ ダーク':'☀ ライト';} lab();
 btn.onclick=function(){root.dataset.theme=root.dataset.theme==='light'?'dark':'light';try{localStorage.setItem('csv-theme',root.dataset.theme);}catch(e){} lab();
  var u=new URL(location.href);if(u.searchParams.has('theme')){u.searchParams.delete('theme');location.href=u.toString();}else location.reload();};  // 図の配色は読み込み時に決めるので再読込（?theme= の一時上書きは外す）
-var clk=document.getElementById('clock'), WD='日月火水木金土', skyFn=null;
-function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());if(skyFn)skyFn(d);}
+var clk=document.getElementById('clock'), WD='日月火水木金土', skyFn=null, clockFn=null;
+function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());if(skyFn)skyFn(d);if(clockFn)clockFn(d);}
 tick(); setInterval(tick,1000);
 // 再読込は ▶ 再生中なら保留して再生の終わりに回す（10 秒ごとの stamp・イベント境界・休憩しきい値の全部・S23）
 function softReload(){if(LPE||CHE){window.csvReloadAfter=true;return;}if(window.csvPlaying){window.csvReloadAfter=true;return;}location.reload();}
@@ -717,6 +718,14 @@ function ticker(bx,by,bw,bh){var fs=15,iw=bw-28,LH=Math.floor((bh-30)/3),rows=[]
   if(tw<=iw)s+='<g><title>'+esc(r.t)+'</title>'+tx(bx+14)+'</g>';
   else{var span=Math.ceil(tw+80);s+='<g><title>'+esc(r.t)+'</title>'+tx(bx+14)+tx(bx+14+span)+'<animateTransform attributeName="transform" type="translate" from="0 0" to="-'+span+' 0" dur="'+Math.max(8,Math.round(span/70))+'s" repeatCount="indefinite"/></g>';}});
  return s+'</g>';}
+// 🕐 時計コーナー（S24）: 帯の左端。大きな時刻（秒つき）・日付・「定時まで あと h:mm」（定時＝config office.day_end・既定 19:00）。tick() から毎秒書き換え
+function clockCorner(bx,by,bw,bh){var cx=bx+bw/2,F=' text-anchor="middle" font-family="Consolas,BIZ UDGothic,monospace"';
+ clockFn=function(d){var p=function(n){return('0'+n).slice(-2);},q=function(id,t){var el=document.getElementById(id);if(el)el.textContent=t;},now=d.getHours()*60+d.getMinutes(),end=hm2m(D.day_end),r=end==null?null:end-now;
+  q('bclk-t',p(d.getHours())+':'+p(d.getMinutes()));q('bclk-s',':'+p(d.getSeconds()));q('bclk-d',(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'）');
+  q('bclk-r',r==null?'':r>0?'定時 '+D.day_end+' まで あと '+Math.floor(r/60)+':'+p(r%60):'定時 '+D.day_end+' を過ぎた');};
+ return R(bx,by,bw,bh,'#0f172a',' rx="6" stroke="#334155" stroke-width="3"')+'<text id="bclk-d" x="'+cx+'" y="'+(by+26)+'"'+F+' font-size="15" fill="#94a3b8"></text>'+
+  '<text x="'+cx+'" y="'+(by+bh/2+18)+'"'+F+' font-size="44" font-weight="700" fill="#67e8f9"><tspan id="bclk-t"></tspan><tspan id="bclk-s" font-size="20" fill="#0e7490"></tspan></text>'+
+  '<text id="bclk-r" x="'+cx+'" y="'+(by+bh-14)+'"'+F+' font-size="13" fill="#fbbf24"></text>';}
 function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;function fits(ox,iw){return ox+iw<=right;}
  s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" fill="url(#carpet)" stroke="'+PAL.txt(col)+'" stroke-opacity="0.5" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(name)+'</text>';
  // 壁側: 🧾 ホワイトボードが壁いっぱい（S23 ⑤ 案A・窓は床のソファの隣に下ろした）。狭ければ S22 の小さい板
@@ -788,7 +797,8 @@ if(ROOMS.length){hubVisible=false;
  var BY=BAND?M+BAND_H+RG:M, r0=placeRoom(shown[0],M,BY), X2=M+r0.w+RG, ys=BY, sideW=0;
  shown.slice(1).forEach(function(r){var s=placeRoom(r,X2,ys);sideW=Math.max(sideW,s.w);ys+=s.h+RG;});
  W=(sideW?X2+sideW:M+r0.w)+M; H=Math.max(BY+r0.h,ys-RG)+M;
- if(BAND){var bw=W-M*2,ww=Math.round(bw*0.56);floors+=whiteboard(M,M,ww,BAND_H,true);floors+=ticker(M+ww+RG,M,bw-ww-RG,(WB.h||BAND_H)+5);}
+ if(BAND){var CW=240,bw=W-M*2-CW-RG,ww=Math.round((bw-RG)/2),bx0=M+CW+RG;floors+=whiteboard(bx0,M,ww,BAND_H,true);var bh=(WB.h||BAND_H)+5;  // 🕐 時計｜🧾 板｜📟 掲示板＝板と掲示板は 1:1（S24）
+  floors+=clockCorner(M,M,CW,bh)+ticker(bx0+ww+RG,M,bw-ww-RG,bh);}
  // 絞り込みで隠した部屋＝右端のドア。そこ宛／そこ発の矢印は壁の外へ出る線になる
  if(hidden.length){var DX=W;W+=260;H=Math.max(H,BY+40+hidden.length*110);
   hidden.forEach(function(r,k){var dp=[DX+230,BY+80+k*110];door[r.name]=dp;
@@ -868,7 +878,7 @@ if(bbMode!=='off'){var near=!!(D.human&&!onBreak);
  if(hp&&D.human.text&&(bbMode==='all'||mins<=120)){if(seen('__human',D.human.ts*1000))HID++;else svg+=say(hp[0]+18,hp[1]-24,'👤',D.human.text,mins,'#2e9e6b',30,{n:'__human',ts:D.human.ts*1000});}}
 Object.keys(tints).forEach(function(id){svg+='<filter id="'+id+'" x="0" y="0" width="1" height="1"><feFlood flood-color="'+tints[id]+'" result="c"/><feComposite in="c" in2="SourceAlpha" operator="in" result="m"/><feBlend in="m" in2="SourceGraphic" mode="multiply"/></filter>';});
 svg+='</svg>';
-document.getElementById('scene').innerHTML=svg;
+document.getElementById('scene').innerHTML=svg;if(clockFn)tick();  // 🕐 帯の時計は差し込んだ直後に1回埋める
 // 🪟 休憩室の窓: 時刻で昼（6-16時）・夕（17-18時）・夜。毎秒の tick から呼ばれ、時が変わった時だけ描き直す
 skyFn=(function(){var last=-1;return function(d){var h=d.getHours();if(h===last||!WIN)return;last=h;var sky=document.getElementById('winsky'),sun=document.getElementById('winsun'),st=document.getElementById('winstars');if(!sky||!sun||!st)return;
  var day=h>=6&&h<17,eve=h>=17&&h<19,f=day?(h-6)/10:eve?(h-17):0.78;
