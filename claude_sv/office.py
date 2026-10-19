@@ -531,6 +531,7 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 @keyframes zz{0%{opacity:.3;transform:translateY(0)}50%{opacity:1}100%{opacity:.3;transform:translateY(-6px)}} .zz{animation:zz 2.4s ease-in-out infinite;transform-box:fill-box}
 .empty{padding:30px;color:var(--muted)}
 #ptool{position:fixed;left:12px;bottom:34px;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:calc(100% - 24px);background:var(--surface);border:1px solid #f59e0b;border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.che #scene svg *{pointer-events:none}.che #scene .desk,.che #scene .desk *{pointer-events:auto}  /* 🧑‍🎨 キャラ変更中は席だけ押せる（吹き出し・👤 の枠が席に重なっても素通し） */
 #ctool{position:fixed;left:12px;bottom:84px;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:calc(100% - 24px);background:var(--surface);border:1px solid #8b5cf6;border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
 #ctool .vt{display:inline-flex;flex-direction:column;align-items:center;gap:1px;padding:2px 4px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:10px;cursor:pointer} #ctool .vt.on{border:2px solid #8b5cf6} #ctool .vt img{width:27px;height:36px;image-rendering:pixelated}
 #ctool span,#ptool span{color:var(--muted);font-size:11px} #ctool select,#ptool select{font:inherit;font-size:12px;background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:999px;padding:2px 8px}
@@ -945,7 +946,7 @@ renderLog();
 // 🧑‍🎨 キャラ変更モード（S24・個人PC B の代わりに席クリック）: 席を選ぶ→テーマ（プルダウン）と種類（絵のタイル）を選ぶ＝このブラウザに保存して読み直す。
 // config へ戻すのは「📋 JSON をコピー」→ office の sprite_track_themes／sprite_variants に貼る。名指しした種類は名指しの席だけに付く（ハッシュの配り直しで他の席の絵が変わることがある）
 (function(){var ce=document.getElementById('charedit');if(ce)ce.onclick=function(){try{localStorage.setItem('csv-office-charedit',CHE?'0':'1');}catch(e){}location.reload();};
- if(!CHE)return;
+ if(!CHE)return;document.body.classList.add('che');
  function store(){try{localStorage.setItem('csv-office-chars',JSON.stringify(CHL));}catch(e){}location.reload();}
  function setSel(n){CHSEL=n;try{localStorage.setItem('csv-office-charsel',n);}catch(e){}}
  function jsonText(){return '"sprite_track_themes": '+JSON.stringify(TOVR,null,2)+',\n"sprite_variants": '+JSON.stringify(VOVR,null,2);}
