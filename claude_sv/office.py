@@ -675,7 +675,7 @@ function evLine(){if(!BOARD||!BOARD.events||!BOARD.events.length)return null;var
  else {s+=cur?'このあとの時刻固定はなし':'今日の時刻固定イベントは終了';alts=['⏰ '+s];}
  return {text:'⏰ '+s,alts:alts,until:until};}
 function pick(alts,px,fs){for(var i=0;i<alts.length;i++)if(twb(alts[i],fs)<=px)return alts[i];return fit(alts[alts.length-1],px,fs);}  // 収まる最初の候補・全滅なら最短を … で切る
-function whiteboard(bx,by,bw,bhMax){var c=D.counts,d=new Date(),date=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'）',s='';
+function whiteboard(bx,by,bw,bhMax,noWait){var c=D.counts,d=new Date(),date=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'）',s='';
  function board(W,Hh){return R(bx,by,W,Hh,'#e5e7eb',' stroke="#9ca3af" stroke-width="2"')+R(bx+4,by+4,W-8,Hh-14,'#fff')+R(bx,by+Hh,W,5,'#9ca3af')+R(bx+8,by+8,6,6,'#ef4444')+R(bx+W-14,by+8,6,6,'#3b82f6');}
  if(!BOARD||bw<320||bhMax<120){if(bw<220)return '';var F=WBF+' font-size="12"';  // S22 の小さい板
   s+=board(220,80)+'<text x="'+(bx+14)+'" y="'+(by+26)+'"'+F+' fill="#1d4ed8">'+date+'</text>';
@@ -687,7 +687,7 @@ function whiteboard(bx,by,bw,bhMax){var c=D.counts,d=new Date(),date=(d.getMonth
   pend.concat(done).slice(0,3).forEach(function(t){lines.push({t:(t.mark||'・')+' '+t.t,col:t.done?'#9ca3af':'#111',strike:t.done,tip:t.t});});
   if(!top.length)lines.push({t:'（🔴 TOP の見出しなし）',col:'#9ca3af'});
   var ev=evLine();if(ev)lines.push({t:ev.text,alts:ev.alts,col:'#b45309',id:'wbev'});
-  var wt=BOARD.waiting;if(wt&&wt.n){var ur=(wt.items||[]).slice(0,wt.urgent||0);  // 🔴 だけ名前・他は件数（S24・items は 🔴 が先頭）
+  var wt=noWait?null:BOARD.waiting;if(wt&&wt.n){  // 帯（BAND）の時は返信待ちは 📟 電光掲示板へvar ur=(wt.items||[]).slice(0,wt.urgent||0);  // 🔴 だけ名前・他は件数（S24・items は 🔴 が先頭）
    var wal=[];for(var k=ur.length;k>=1;k--)wal.push('⏸ 返信待ち '+wt.n+'件：🔴 '+ur.slice(0,k).join('・')+(wt.n-k?' ほか'+(wt.n-k)+'件':''));wal.push('⏸ 返信待ち '+wt.n+'件'+(wt.urgent?'（🔴'+wt.urgent+'）':''));  // 入りきらなければ名前を後ろから減らす
    lines.push({t:wal[0],alts:wal,col:'#111',tip:'返信待ち（こちらボール外）\n'+(wt.items||[]).join('\n')});}}
  var Hh=Math.min(bhMax,44+lines.length*LH+10),y0=by+24;
@@ -696,17 +696,34 @@ function whiteboard(bx,by,bw,bhMax){var c=D.counts,d=new Date(),date=(d.getMonth
  s+='<text x="'+(bx+bw-14)+'" y="'+y0+'" text-anchor="end"'+WBF+' font-size="13" fill="#111">在席 '+c.live+'人 ／ 未読 <tspan fill="'+(c.unread?'#dc2626':'#111')+'"'+(c.unread?' font-weight="700"':'')+'>'+c.unread+'</tspan>通 ／ 不達 <tspan fill="'+(c.failed?'#dc2626':'#111')+'"'+(c.failed?' font-weight="700"':'')+'>'+c.failed+'</tspan> ／ 📨 '+c.edges+'通/'+D.window_hours+'h</text>';
  s+=R(bx+12,y0+6,bw-24,2,'#1d4ed8',' fill-opacity=".45"');
  var y=y0+10+LH;lines.forEach(function(L){if(y>by+Hh-8)return;s+='<text'+(L.id?' id="'+L.id+'"':'')+' x="'+(bx+14)+'" y="'+y+'"'+WBF+' font-size="'+fs+'" fill="'+L.col+'"'+(L.strike?' text-decoration="line-through"':'')+'>'+(L.tip?'<title>'+esc(L.tip)+'</title>':'')+esc(L.alts?pick(L.alts,maxw,fs):fit(L.t,maxw,fs))+'</text>';y+=LH;});
- s+='</a>';WB={maxw:maxw,fs:fs};
+ s+='</a>';WB={maxw:maxw,fs:fs,h:Hh};
  var ev0=evLine();if(ev0){setInterval(function(){var el=document.getElementById('wbev'),e=evLine();if(el&&e)el.textContent=pick(e.alts,WB.maxw,WB.fs);},30000);  // 「あと n分」は30秒ごとに書き直す
   if(ev0.until!=null){var left=(ev0.until-(d.getHours()*60+d.getMinutes()))*60000-d.getSeconds()*1000;if(left>0)setTimeout(softReload,Math.min(left+1500,2e9));}}  // 次のイベント境界で描き直し
  return s;}
+// 📟 電光掲示板（S24・案A）: 建物の上の帯の右。動きのある情報を種類ごとに1行＝📨 新着／⏸ 返信待ち（🔴 が先頭）／🏠 退社・💤 離席中。
+// 幅に収まらない行は右から左へ流れ続ける（同じ文を2つ並べて1周ぶんずらす）
+function ticker(bx,by,bw,bh){var fs=15,iw=bw-28,LH=Math.floor((bh-30)/3),rows=[],s='',all=[D.hub].concat(D.tracks);
+ var es=D.edges.filter(function(e){return !e.removed;}).slice(-5).reverse();
+ rows.push({c:'#fbbf24',t:es.length?es.map(function(e){return (e.ok?'📨 ':'❌ ')+(e.t||'').slice(-5)+' '+e.frm+' → '+e.to+(e.summary?'「'+e.summary+'」':'');}).join('　◆　'):'📨 新着なし（'+D.window_hours+'h）'});
+ var wt=BOARD&&BOARD.waiting,it=(wt&&wt.items)||[],u=(wt&&wt.urgent)||0;
+ rows.push({c:'#f87171',t:wt&&wt.n?'⏸ 返信待ち '+wt.n+'件：'+(u?'🔴 '+it.slice(0,u).join('・')+(it.length>u?' ／ ':''):'')+it.slice(u).join('・'):'⏸ 返信待ちなし'});
+ var lv=all.filter(function(t){return !t.live&&t.leave;}).map(function(t){return '🏠 '+t.name+' '+t.leave.t+' 退社（次 '+t.leave.until_t+'）';}),
+  aw=all.filter(function(t){return !t.live&&!t.leave&&t.away&&t.away.length;}).map(function(t){return '💤 '+t.name+' '+t.away[0].t+'〜';});
+ rows.push({c:'#86efac',t:lv.concat(aw).join('　◆　')||'🏠 退社・💤 離席なし'});
+ s+='<pattern id="led" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="#0c0a09"/><circle cx="2" cy="2" r=".7" fill="#292524"/></pattern><clipPath id="ledclip"><rect x="'+(bx+12)+'" y="'+by+'" width="'+iw+'" height="'+bh+'"/></clipPath>';
+ s+=R(bx,by,bw,bh,'#292524',' rx="6" stroke="#57534e" stroke-width="3"')+R(bx+6,by+6,bw-12,bh-12,'url(#led)');
+ s+='<text x="'+(bx+14)+'" y="'+(by+22)+'" font-size="11" fill="#a8a29e">📟 いまの動き</text><g clip-path="url(#ledclip)">';
+ rows.forEach(function(r,i){var y=by+28+LH*(i+1)-8,tw=twb(r.t,fs);function tx(x){return '<text x="'+x+'" y="'+y+'" font-size="'+fs+'" font-weight="700" font-family="BIZ UDGothic,Consolas,monospace" fill="'+r.c+'">'+esc(r.t)+'</text>';}
+  if(tw<=iw)s+='<g><title>'+esc(r.t)+'</title>'+tx(bx+14)+'</g>';
+  else{var span=Math.ceil(tw+80);s+='<g><title>'+esc(r.t)+'</title>'+tx(bx+14)+tx(bx+14+span)+'<animateTransform attributeName="transform" type="translate" from="0 0" to="-'+span+' 0" dur="'+Math.max(8,Math.round(span/70))+'s" repeatCount="indefinite"/></g>';}});
+ return s+'</g>';}
 function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;function fits(ox,iw){return ox+iw<=right;}
  s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" fill="url(#carpet)" stroke="'+PAL.txt(col)+'" stroke-opacity="0.5" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(name)+'</text>';
  // 壁側: 🧾 ホワイトボードが壁いっぱい（S23 ⑤ 案A・窓は床のソファの隣に下ろした）。狭ければ S22 の小さい板
  // 🪟 窓（空は skyFn が時刻で塗る）: 床のソファの右・敷居は床線の 8px 上
  var wx=x+158,wy=fy-84; if(fits(wx-4,128)){WIN={x:wx+6,y:wy+6,w:108,h:58};
   s+=R(wx,wy,120,70,'#cbd5e1')+'<rect id="winsky" x="'+(wx+6)+'" y="'+(wy+6)+'" width="108" height="58" fill="#7dd3fc"/><g id="winstars" opacity="0">'+R(wx+20,wy+14,3,3,'#fff')+R(wx+50,wy+22,2,2,'#fff')+R(wx+90,wy+12,3,3,'#fff')+R(wx+70,wy+40,2,2,'#fff')+'</g><circle id="winsun" cx="'+(wx+40)+'" cy="'+(wy+26)+'" r="9" fill="#fde047"/>'+R(wx+58,wy+6,4,58,'#cbd5e1')+R(wx+6,wy+33,108,4,'#cbd5e1')+R(wx-4,wy+70,128,6,'#94a3b8');}
- var bx=x+24; s+=whiteboard(bx,y+34,right-bx,h-172);  // 板の高さ＝床側の自販機（104）に当たらない範囲
+ var bx=x+24; if(!BAND)s+=whiteboard(bx,y+34,right-bx,h-172);  // 板の高さ＝床側の自販機（104）に当たらない範囲・帯がある時は板は帯へ（S24 案A）
  // 床側（左→右）: 🛋️ ソファ・🪟 窓・☕ コーヒー（右隣が人の立ち位置）・🥤 自販機・🖨️ 印刷機。幅が足りなければ右から落とす（テーブル・鉢植えは ⑤ で落とした＝板の幅優先）
  LGB={x:x,y:y,w:w,h:h};
  function at(id,dx,dy){var o=lpOf(id),bx=LPBOX[id];if(o&&o.hide)return null;if(o&&o.x!=null&&o.y!=null)return [x+(+o.x),y+(+o.y)];return fits(x+dx,bx[0])?[x+dx,y+dy]:null;}  // 標準の小物の左上（config/ローカルの上書き・無ければ既定位置で幅が足りる時だけ）
@@ -765,14 +782,16 @@ function placeRoom(r,X,Y){var inner;
  walls+='<rect x="'+X+'" y="'+Y+'" width="'+w+'" height="'+h+'" rx="16" fill="'+PAL.wall+'" fill-opacity="'+PAL.wallOp+'" stroke="'+PAL.wallStroke+'" stroke-opacity="'+PAL.wallStrokeOp+'" stroke-width="'+PAL.wallW+'"/><text x="'+(X+16)+'" y="'+(Y+25)+'" font-size="16" font-weight="700" fill="'+PAL.roomTxt+'">'+esc(r.name)+'</text><text x="'+(X+w-14)+'" y="'+(Y+25)+'" text-anchor="end" font-size="12" fill="'+PAL.roomSub+'" fill-opacity="0.85">'+esc(roomCount(r))+'</text>';
  if(inner.empty)walls+='<text x="'+(X+w/2)+'" y="'+(Y+RT+62)+'" text-anchor="middle" font-size="13" fill="'+PAL.emptyTxt+'">空室（この時間幅にセッションなし）</text>';
  return {w:w,h:h};}
+var BAND=!!(ROOMS.length&&BOARD), BAND_H=132;  // 🧾📟 帯＝部屋がある画面で daily の板があれば（高さ＝板4行ぶん）
 if(ROOMS.length){hubVisible=false;
- // 1つ目の部屋を左に・残りは右に縦積み（本業が横長なので）。絞り込み中は shown だけ
- var r0=placeRoom(shown[0],M,M), X2=M+r0.w+RG, ys=M, sideW=0;
+ // 1つ目の部屋を左に・残りは右に縦積み（本業が横長なので）。絞り込み中は shown だけ。BAND＝建物の上の帯（🧾 板＋📟 電光掲示板・S24 案A）の分だけ下げる
+ var BY=BAND?M+BAND_H+RG:M, r0=placeRoom(shown[0],M,BY), X2=M+r0.w+RG, ys=BY, sideW=0;
  shown.slice(1).forEach(function(r){var s=placeRoom(r,X2,ys);sideW=Math.max(sideW,s.w);ys+=s.h+RG;});
- W=(sideW?X2+sideW:M+r0.w)+M; H=Math.max(M+r0.h,ys-RG)+M;
+ W=(sideW?X2+sideW:M+r0.w)+M; H=Math.max(BY+r0.h,ys-RG)+M;
+ if(BAND){var bw=W-M*2,ww=Math.round(bw*0.56);floors+=whiteboard(M,M,ww,BAND_H,true);floors+=ticker(M+ww+RG,M,bw-ww-RG,(WB.h||BAND_H)+5);}
  // 絞り込みで隠した部屋＝右端のドア。そこ宛／そこ発の矢印は壁の外へ出る線になる
- if(hidden.length){var DX=W;W+=260;H=Math.max(H,M+40+hidden.length*110);
-  hidden.forEach(function(r,k){var dp=[DX+230,M+80+k*110];door[r.name]=dp;
+ if(hidden.length){var DX=W;W+=260;H=Math.max(H,BY+40+hidden.length*110);
+  hidden.forEach(function(r,k){var dp=[DX+230,BY+80+k*110];door[r.name]=dp;
    walls+='<g><title>'+esc(r.name+'（絞り込みで非表示・ボタンで表示）')+'</title><rect x="'+(dp[0]-14)+'" y="'+(dp[1]-32)+'" width="28" height="64" rx="4" fill="#8b5a2b" stroke="'+PAL.doorStroke+'" stroke-opacity=".6" stroke-width="2"/><circle cx="'+(dp[0]+6)+'" cy="'+dp[1]+'" r="3" fill="#f5c542"/><text x="'+(dp[0]-22)+'" y="'+(dp[1]+4)+'" text-anchor="end" font-size="11" fill="'+PAL.doorTxt+'">🚪 '+esc(r.name)+'</text></g>';});}
 }else if(D.islands&&D.islands.length){var r1=layoutIslands(D.islands,M,M);CX=r1.cx;CY=r1.cy;W=r1.w+M*2;H=r1.h+M*2;
 }else{
