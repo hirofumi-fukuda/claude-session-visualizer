@@ -730,7 +730,7 @@ function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;
  s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" fill="url(#carpet)" stroke="'+PAL.txt(col)+'" stroke-opacity="0.5" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(name)+'</text>';
  // 壁側: 🧾 ホワイトボードが壁いっぱい（S23 ⑤ 案A・窓は床のソファの隣に下ろした）。狭ければ S22 の小さい板
  // 🪟 窓（空は skyFn が時刻で塗る）: 床のソファの右・敷居は床線の 8px 上
- var wx=x+158,wy=fy-84; if(fits(wx-4,128)){WIN={x:wx+6,y:wy+6,w:108,h:58};
+ var wx=BAND?x+24:x+158,wy=BAND?y+34:fy-84; if(fits(wx-4,128)){  // 帯がある時は板の抜けた壁の左上へ（S24）WIN={x:wx+6,y:wy+6,w:108,h:58};
   s+=R(wx,wy,120,70,'#cbd5e1')+'<rect id="winsky" x="'+(wx+6)+'" y="'+(wy+6)+'" width="108" height="58" fill="#7dd3fc"/><g id="winstars" opacity="0">'+R(wx+20,wy+14,3,3,'#fff')+R(wx+50,wy+22,2,2,'#fff')+R(wx+90,wy+12,3,3,'#fff')+R(wx+70,wy+40,2,2,'#fff')+'</g><circle id="winsun" cx="'+(wx+40)+'" cy="'+(wy+26)+'" r="9" fill="#fde047"/>'+R(wx+58,wy+6,4,58,'#cbd5e1')+R(wx+6,wy+33,108,4,'#cbd5e1')+R(wx-4,wy+70,128,6,'#94a3b8');}
  var bx=x+24; if(!BAND)s+=whiteboard(bx,y+34,right-bx,h-172);  // 板の高さ＝床側の自販機（104）に当たらない範囲・帯がある時は板は帯へ（S24 案A）
  // 床側（左→右）: 🛋️ ソファ・🪟 窓・☕ コーヒー（右隣が人の立ち位置）・🥤 自販機・🖨️ 印刷機。幅が足りなければ右から落とす（テーブル・鉢植えは ⑤ で落とした＝板の幅優先）
