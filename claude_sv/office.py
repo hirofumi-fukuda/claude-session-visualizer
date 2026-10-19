@@ -711,11 +711,16 @@ function whiteboard(bx,by,bw,bhMax,band){var c=D.counts,d=new Date(),date=(d.get
  return s;}
 // 📟 電光掲示板（S24・案A）: 建物の上の帯の右。動きのある情報を種類ごとに1行＝📨 新着／⏸ 返信待ち（🔴 が先頭）／🏠 退社・💤 離席中。
 // 幅に収まらない行は右から左へ流れ続ける（同じ文を2つ並べて1周ぶんずらす）
+// 🏷 /rename 漏れ（S24）: 席にいるセッションで ①自動命名のまま（nameSource≠user）②名前の末尾 S〈n〉 が台帳の S と違う（S を上げて改名し忘れ）。S なしの名前は宛先・席名とも通るので出さない（12 席が S なし運用＝出すとノイズ）
+function renameIssues(t){var out=[];(t.occupied_by||[]).forEach(function(x){var L=x.live||{},nm=L.name||'',m=/S(\d+)$/.exec(nm.replace(/\s+/g,''));
+  if(!L.named)out.push({s:x.s,msg:'自動命名のまま'+(nm?'（'+nm+'）':'')});
+  else if(t!==D.hub&&x.s&&m&&+m[1]!==+x.s)out.push({s:x.s,msg:'名前が S'+m[1]+' のまま（'+nm+'）'});});return out;}
 function ticker(bx,by,bw,bh){var fs=15,iw=bw-28,LH=Math.floor((bh-30)/3),rows=[],s='',all=[D.hub].concat(D.tracks);
  var es=D.edges.filter(function(e){return !e.removed;}).slice(-5).reverse();
  rows.push({c:'#fbbf24',t:es.length?es.map(function(e){return (e.ok?'📨 ':'❌ ')+(e.t||'').slice(-5)+' '+e.frm+' → '+e.to+(e.summary?'「'+e.summary+'」':'');}).join('　◆　'):'📨 新着なし（'+D.window_hours+'h）'});
  var wt=BOARD&&BOARD.waiting,it=(wt&&wt.items)||[],u=(wt&&wt.urgent)||0;
- rows.push({c:'#f87171',t:wt&&wt.n?'⏸ 返信待ち '+wt.n+'件：'+(u?'🔴 '+it.slice(0,u).join('・')+(it.length>u?' ／ ':''):'')+it.slice(u).join('・'):'⏸ 返信待ちなし'});
+ var rn=[];all.forEach(function(t){renameIssues(t).forEach(function(r){rn.push(t.name+(r.s?' S'+r.s:'')+'＝'+r.msg);});});
+ rows.push({c:'#f87171',t:(wt&&wt.n?'⏸ 返信待ち '+wt.n+'件：'+(u?'🔴 '+it.slice(0,u).join('・')+(it.length>u?' ／ ':''):'')+it.slice(u).join('・'):'⏸ 返信待ちなし')+(rn.length?'　◆　🏷 /rename まだ '+rn.length+'件：'+rn.join('・'):'')});
  var lv=all.filter(function(t){return !t.live&&t.leave;}).map(function(t){return '🏠 '+t.name+' '+t.leave.t+' 退社（次 '+t.leave.until_t+'）';}),
   aw=all.filter(function(t){return !t.live&&!t.leave&&t.away&&t.away.length;}).map(function(t){return '💤 '+t.name+' '+t.away[0].t+'〜';});
  rows.push({c:'#86efac',t:lv.concat(aw).join('　◆　')||'🏠 退社・💤 離席なし'});
@@ -968,6 +973,7 @@ renderLog();
  function render(){var t=CARD&&byName[CARD];if(!t){box.innerHTML='';box.style.display='none';return;}box.style.display='block';
   var cur=t.cur,tip=TIPS[CARD]||'',h='<div class="ch"><b>'+esc(CARD)+(cur&&cur.s?' S'+cur.s:'')+'</b><button type="button" class="tgl" id="cd-x" title="閉じる（Esc）">✕</button></div>';
   h+='<div class="cs">'+esc(tip.split('\n').slice(1).join('\n'))+'</div>';
+  renameIssues(t).forEach(function(r){h+='<div class="cs" style="color:#f87171">🏷 /rename まだ：'+esc(r.msg)+(r.s&&t!==D.hub?' → /rename '+esc(CARD.replace(/\s+/g,'')+'S'+r.s):'')+'</div>';});
   var lh=null;(t.occupied_by||[]).forEach(function(s){var x=s.live&&s.live.last_human;if(x&&x.text&&(!lh||x.ts>lh.ts))lh={ts:x.ts,text:x.text};});
   if(D.human&&D.human.track===CARD&&D.human.text&&(!lh||D.human.ts>lh.ts))lh={ts:D.human.ts,text:D.human.text};
   if(lh)h+='<h3>👤 最後の指示（'+hm(lh.ts*1000)+'）</h3><div class="lh">'+esc(lh.text)+'</div>';
