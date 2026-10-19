@@ -676,9 +676,9 @@ function evLine(){if(!BOARD||!BOARD.events||!BOARD.events.length)return null;var
  else {s+=cur?'このあとの時刻固定はなし':'今日の時刻固定イベントは終了';alts=['⏰ '+s];}
  return {text:'⏰ '+s,alts:alts,until:until};}
 function pick(alts,px,fs){for(var i=0;i<alts.length;i++)if(twb(alts[i],fs)<=px)return alts[i];return fit(alts[alts.length-1],px,fs);}  // 収まる最初の候補・全滅なら最短を … で切る
-function whiteboard(bx,by,bw,bhMax,noWait){var c=D.counts,d=new Date(),date=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'）',s='';
+function whiteboard(bx,by,bw,bhMax,band){var c=D.counts,d=new Date(),date=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'）',s='';
  function board(W,Hh){return R(bx,by,W,Hh,'#e5e7eb',' stroke="#9ca3af" stroke-width="2"')+R(bx+4,by+4,W-8,Hh-14,'#fff')+R(bx,by+Hh,W,5,'#9ca3af')+R(bx+8,by+8,6,6,'#ef4444')+R(bx+W-14,by+8,6,6,'#3b82f6');}
- if(!BOARD||bw<320||bhMax<120){if(bw<220)return '';var F=WBF+' font-size="12"';  // S22 の小さい板
+ if(!BOARD||bw<320||bhMax<100){if(bw<220)return '';var F=WBF+' font-size="12"';  // S22 の小さい板
   s+=board(220,80)+'<text x="'+(bx+14)+'" y="'+(by+26)+'"'+F+' fill="#1d4ed8">'+date+'</text>';
   s+='<text x="'+(bx+14)+'" y="'+(by+44)+'"'+F+' fill="#111">在席 '+c.live+'人 ／ 未読 <tspan fill="'+(c.unread?'#dc2626':'#111')+'">'+c.unread+'</tspan>通</text>';
   s+='<text x="'+(bx+14)+'" y="'+(by+62)+'"'+F+' fill="#111">📨 '+c.edges+'通 /'+D.window_hours+'h'+(c.failed?' ／ <tspan fill="#dc2626">不達 '+c.failed+'</tspan>':'')+'</text>';return s;}
@@ -687,8 +687,8 @@ function whiteboard(bx,by,bw,bhMax,noWait){var c=D.counts,d=new Date(),date=(d.g
  else{var top=BOARD.top||[],pend=top.filter(function(t){return !t.done;}),done=top.filter(function(t){return t.done;});
   pend.concat(done).slice(0,3).forEach(function(t){lines.push({t:(t.mark||'・')+' '+t.t,col:t.done?'#9ca3af':'#111',strike:t.done,tip:t.t});});
   if(!top.length)lines.push({t:'（🔴 TOP の見出しなし）',col:'#9ca3af'});
-  var ev=evLine();if(ev)lines.push({t:ev.text,alts:ev.alts,col:'#b45309',id:'wbev'});
-  var wt=noWait?null:BOARD.waiting;if(wt&&wt.n){  // 帯（BAND）の時は返信待ちは 📟 電光掲示板へvar ur=(wt.items||[]).slice(0,wt.urgent||0);  // 🔴 だけ名前・他は件数（S24・items は 🔴 が先頭）
+  var ev=band?null:evLine();if(ev)lines.push({t:ev.text,alts:ev.alts,col:'#b45309',id:'wbev'});
+  var wt=band?null:BOARD.waiting;if(wt&&wt.n){  // 帯（BAND）の時は ⏰ は 🕐 時計・返信待ちは 📟 電光掲示板へvar ur=(wt.items||[]).slice(0,wt.urgent||0);  // 🔴 だけ名前・他は件数（S24・items は 🔴 が先頭）
    var wal=[];for(var k=ur.length;k>=1;k--)wal.push('⏸ 返信待ち '+wt.n+'件：🔴 '+ur.slice(0,k).join('・')+(wt.n-k?' ほか'+(wt.n-k)+'件':''));wal.push('⏸ 返信待ち '+wt.n+'件'+(wt.urgent?'（🔴'+wt.urgent+'）':''));  // 入りきらなければ名前を後ろから減らす
    lines.push({t:wal[0],alts:wal,col:'#111',tip:'返信待ち（こちらボール外）\n'+(wt.items||[]).join('\n')});}}
  var Hh=Math.min(bhMax,44+lines.length*LH+10),y0=by+24;
@@ -718,14 +718,14 @@ function ticker(bx,by,bw,bh){var fs=15,iw=bw-28,LH=Math.floor((bh-30)/3),rows=[]
   if(tw<=iw)s+='<g><title>'+esc(r.t)+'</title>'+tx(bx+14)+'</g>';
   else{var span=Math.ceil(tw+80);s+='<g><title>'+esc(r.t)+'</title>'+tx(bx+14)+tx(bx+14+span)+'<animateTransform attributeName="transform" type="translate" from="0 0" to="-'+span+' 0" dur="'+Math.max(8,Math.round(span/70))+'s" repeatCount="indefinite"/></g>';}});
  return s+'</g>';}
-// 🕐 時計コーナー（S24）: 帯の左端。大きな時刻（秒つき）・日付・「定時まで あと h:mm」（定時＝config office.day_end・既定 19:00）。tick() から毎秒書き換え
+// 🕐 時計コーナー（S24）: 帯の左端。大きな時刻（秒つき）・日付・⏰ 次の予定（板から移した）・「定時まで あと h:mm」（定時＝config office.day_end・既定 19:00）。tick() から毎秒書き換え
 function clockCorner(bx,by,bw,bh){var cx=bx+bw/2,F=' text-anchor="middle" font-family="Consolas,BIZ UDGothic,monospace"';
  clockFn=function(d){var p=function(n){return('0'+n).slice(-2);},q=function(id,t){var el=document.getElementById(id);if(el)el.textContent=t;},now=d.getHours()*60+d.getMinutes(),end=hm2m(D.day_end),r=end==null?null:end-now;
   q('bclk-t',p(d.getHours())+':'+p(d.getMinutes()));q('bclk-s',':'+p(d.getSeconds()));q('bclk-d',(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'）');
-  q('bclk-r',r==null?'':r>0?'定時 '+D.day_end+' まで あと '+Math.floor(r/60)+':'+p(r%60):'定時 '+D.day_end+' を過ぎた');};
+  q('bclk-r',r==null?'':r>0?'定時 '+D.day_end+' まで あと '+Math.floor(r/60)+':'+p(r%60):'定時 '+D.day_end+' を過ぎた');var e=evLine();q('bclk-e',e?pick(e.alts,bw-20,13):'');};
  return R(bx,by,bw,bh,'#0f172a',' rx="6" stroke="#334155" stroke-width="3"')+'<text id="bclk-d" x="'+cx+'" y="'+(by+26)+'"'+F+' font-size="15" fill="#94a3b8"></text>'+
-  '<text x="'+cx+'" y="'+(by+bh/2+18)+'"'+F+' font-size="44" font-weight="700" fill="#67e8f9"><tspan id="bclk-t"></tspan><tspan id="bclk-s" font-size="20" fill="#0e7490"></tspan></text>'+
-  '<text id="bclk-r" x="'+cx+'" y="'+(by+bh-14)+'"'+F+' font-size="13" fill="#fbbf24"></text>';}
+  '<text x="'+cx+'" y="'+(by+62)+'"'+F+' font-size="40" font-weight="700" fill="#67e8f9"><tspan id="bclk-t"></tspan><tspan id="bclk-s" font-size="18" fill="#0e7490"></tspan></text>'+
+  '<text id="bclk-e" x="'+cx+'" y="'+(by+bh-30)+'"'+F+' font-size="13" fill="#fbbf24"></text><text id="bclk-r" x="'+cx+'" y="'+(by+bh-12)+'"'+F+' font-size="12" fill="#94a3b8"></text>';}
 function drawLounge(x,y,w,h,name){var col='#f59e0b',s='',fy=y+h-28,right=x+w-10;function fits(ox,iw){return ox+iw<=right;}
  s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" fill="url(#carpet)" stroke="'+PAL.txt(col)+'" stroke-opacity="0.5" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(name)+'</text>';
  // 壁側: 🧾 ホワイトボードが壁いっぱい（S23 ⑤ 案A・窓は床のソファの隣に下ろした）。狭ければ S22 の小さい板
@@ -791,13 +791,13 @@ function placeRoom(r,X,Y){var inner;
  walls+='<rect x="'+X+'" y="'+Y+'" width="'+w+'" height="'+h+'" rx="16" fill="'+PAL.wall+'" fill-opacity="'+PAL.wallOp+'" stroke="'+PAL.wallStroke+'" stroke-opacity="'+PAL.wallStrokeOp+'" stroke-width="'+PAL.wallW+'"/><text x="'+(X+16)+'" y="'+(Y+25)+'" font-size="16" font-weight="700" fill="'+PAL.roomTxt+'">'+esc(r.name)+'</text><text x="'+(X+w-14)+'" y="'+(Y+25)+'" text-anchor="end" font-size="12" fill="'+PAL.roomSub+'" fill-opacity="0.85">'+esc(roomCount(r))+'</text>';
  if(inner.empty)walls+='<text x="'+(X+w/2)+'" y="'+(Y+RT+62)+'" text-anchor="middle" font-size="13" fill="'+PAL.emptyTxt+'">空室（この時間幅にセッションなし）</text>';
  return {w:w,h:h};}
-var BAND=!!(ROOMS.length&&BOARD), BAND_H=132;  // 🧾📟 帯＝部屋がある画面で daily の板があれば（高さ＝板4行ぶん）
+var BAND=!!(ROOMS.length&&BOARD), BAND_H=112, BAND_G=16;  // 🧾📟 帯＝部屋がある画面で daily の板があれば（高さ＝板3行ぶん・建物との間は詰める＝図の縮みを抑える）
 if(ROOMS.length){hubVisible=false;
  // 1つ目の部屋を左に・残りは右に縦積み（本業が横長なので）。絞り込み中は shown だけ。BAND＝建物の上の帯（🧾 板＋📟 電光掲示板・S24 案A）の分だけ下げる
- var BY=BAND?M+BAND_H+RG:M, r0=placeRoom(shown[0],M,BY), X2=M+r0.w+RG, ys=BY, sideW=0;
+ var BY=BAND?M+BAND_H+BAND_G:M, r0=placeRoom(shown[0],M,BY), X2=M+r0.w+RG, ys=BY, sideW=0;
  shown.slice(1).forEach(function(r){var s=placeRoom(r,X2,ys);sideW=Math.max(sideW,s.w);ys+=s.h+RG;});
  W=(sideW?X2+sideW:M+r0.w)+M; H=Math.max(BY+r0.h,ys-RG)+M;
- if(BAND){var CW=240,bw=W-M*2-CW-RG,ww=Math.round((bw-RG)/2),bx0=M+CW+RG;floors+=whiteboard(bx0,M,ww,BAND_H,true);var bh=(WB.h||BAND_H)+5;  // 🕐 時計｜🧾 板｜📟 掲示板＝板と掲示板は 1:1（S24）
+ if(BAND){var CW=300,bw=W-M*2-CW-RG,ww=Math.round((bw-RG)/2),bx0=M+CW+RG;floors+=whiteboard(bx0,M,ww,BAND_H,true);var bh=(WB.h||BAND_H)+5;  // 🕐 時計｜🧾 板｜📟 掲示板＝板と掲示板は 1:1（S24）
   floors+=clockCorner(M,M,CW,bh)+ticker(bx0+ww+RG,M,bw-ww-RG,bh);}
  // 絞り込みで隠した部屋＝右端のドア。そこ宛／そこ発の矢印は壁の外へ出る線になる
  if(hidden.length){var DX=W;W+=260;H=Math.max(H,BY+40+hidden.length*110);
