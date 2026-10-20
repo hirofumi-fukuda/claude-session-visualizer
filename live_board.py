@@ -464,6 +464,84 @@ def _scan_last_human(chunk: str):
     return None
 
 
+_LAST_REPLY_CACHE: dict = {}  # transcript path → (size, result)。_peek_last_human と同じ差分読み
+_REPLY_SKIP = ("理解", "▸ 理解", "要判断")  # L1 ヘッダの「理解」行は指示の言い直し＝吹き出しには出さない
+def _reply_gist(text: str) -> str:
+    """assistant の本文から吹き出し向けの1行を取る（S25 🗨）。
+
+    Markdown の飾り（** / 見出し # / 箇条書き - / 引用 > / ▸）を剥がし、コードブロックは飛ばす。
+    L1 ヘッダがあれば「やったこと」の行を優先・「理解」の行は飛ばす。それ以外は最初の行＝結論先頭。
+    """
+    lines, fence, cand = [], False, ""
+    for raw in text.splitlines():
+        t = raw.strip()
+        if t.startswith("```"):
+            fence = not fence
+            continue
+        if fence or not t:
+            continue
+        t = re.sub(r"^(?:[#>\-\*•▸\s]|\d+\.\s)+", "", t)
+        t = t.replace("**", "").replace("`", "").strip()
+        if not t:
+            continue
+        if t.startswith(_REPLY_SKIP):
+            continue
+        if t.startswith("やったこと"):
+            t = re.sub(r"^やったこと\s*[:：]\s*", "", t)
+            return t[:120]
+        if not cand:
+            cand = t
+    return cand[:120]
+
+
+def _peek_last_reply(transcript: Path, tail_bytes=None):
+    """末尾から読んで「エージェントの最後の返事（text ブロック）」の時刻(epoch)と要旨を返す（無ければ None・S25 🗨）。
+
+    tool_use / thinking だけの assistant 行は飛ばす。作業中の途中経過（text）も拾う＝「いま何をしているか」が吹き出しに出る。
+    """
+    key = str(transcript)
+    try:
+        size = transcript.stat().st_size
+    except OSError:
+        return None
+    hit = _LAST_REPLY_CACHE.get(key)
+    if hit and hit[0] == size:
+        return hit[1]
+    result = None
+    for tb in ((tail_bytes,) if tail_bytes else _LAST_HUMAN_WINDOWS):
+        try:
+            with open(transcript, "rb") as f:
+                f.seek(max(0, size - tb))
+                chunk = f.read().decode("utf-8", errors="replace")
+        except OSError:
+            return None
+        result = _scan_last_reply(chunk)
+        if result or tb >= size:
+            break
+    _LAST_REPLY_CACHE[key] = (size, result)
+    return result
+
+
+def _scan_last_reply(chunk: str):
+    for line in reversed(chunk.splitlines()):
+        if '"type":"assistant"' not in line or '"type":"text"' not in line or '"isSidechain":true' in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("type") != "assistant" or rec.get("isSidechain"):
+            continue
+        content = (rec.get("message") or {}).get("content")
+        texts = [x.get("text") or "" for x in content if isinstance(x, dict) and x.get("type") == "text"] if isinstance(content, list) else [content if isinstance(content, str) else ""]
+        gist = _reply_gist("\n".join(t for t in texts if t))
+        if gist:
+            ts = _ts_epoch(rec.get("timestamp"))
+            if ts:
+                return {"ts": ts, "text": gist}
+    return None
+
+
 def _peek_model(transcript: Path, tail_bytes=None):
     """末尾だけ読んで最後の assistant レコードの model を短縮形で返す（委託のengine表記と対）。
 
@@ -676,6 +754,7 @@ def build_rows():
             "ws_key": ws,  # encoded ws dir（office のテナント＝部屋の判定に使う・S22）
             "model": _peek_model(transcript),  # 委託の engine 表記と対（誰が働いているか）
             "last_human": _peek_last_human(transcript),  # 人間の最終発話（オフィス図の人間位置）
+            "last_reply": _peek_last_reply(transcript),  # 🗨 エージェントの最後の返事（席の吹き出し・S25）
             "pid": rec.get("pid") or "",
             "sid": sid,   # タブ復元スナップショット用（claude-wt/restore_tabs.ps1）
             "cwd": cwd,

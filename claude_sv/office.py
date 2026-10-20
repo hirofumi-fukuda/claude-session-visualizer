@@ -320,6 +320,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
                      "rc": bool((registry.get(sid) or {}).get("bridgeSessionId")),  # 📱 Remote Control オン（キーの有無＝ハブ 10/15 発見・オフ時は消える/None 想定）
                      "model": r.get("model") or "", "title": (r.get("title") or "")[:60],
                      "last_human": r.get("last_human"),
+                     "last_reply": r.get("last_reply"),  # 🗨 最後の返事（吹き出し・席カード・S25）
                      "ws": r.get("ws") or "", "ws_key": r.get("ws_key") or "", "cwd": r.get("cwd") or ""}
         if sid not in labels and r.get("project") and r["project"] != "—":
             labels[sid] = {"project": r["project"], "s": r.get("session_no"),
@@ -881,13 +882,13 @@ if(hp){var prev=null;try{prev=JSON.parse(localStorage.getItem('csv-human-at')||'
   (from?'<animateTransform attributeName="transform" type="translate" from="'+(from[0]-hp[0])+' '+(from[1]-hp[1])+'" to="0 0" dur="1.4s" fill="freeze" calcMode="spline" keySplines="0.4 0 0.2 1"/>':'')+'</g>';
  try{localStorage.setItem('csv-human-at',JSON.stringify({track:D.human.track,brk:onBreak}));}catch(e){}
  if(!onBreak&&LOUNGE){var left=BREAK_MIN*60000-(Date.now()-D.human.ts*1000);if(left>0)setTimeout(softReload,Math.min(left+800,2e9));}}
-// 💬 吹き出し（S24・個人PC G を移植）: 席の最新の出来事 1 つ（👤 人間の指示／📨→ 送った／📨← 届いた／❌→ 不達）を頭上に。15 分まで濃く・2 時間で薄く。
+// 💬 吹き出し（S24・個人PC G を移植）: 席の最新の出来事 1 つ（👤 人間の指示／🗨 返事〔S25〕／📨→ 送った／📨← 届いた／❌→ 不達）を頭上に。15 分まで濃く・2 時間で薄く。
 // ✕＝確認した（SEEN={席名: 閉じた出来事の ts}＝それより新しい出来事でまた出る・このブラウザだけ）。全部の机・人間のあとに描く＝隣の机に隠れない
 var BBM=['fresh','all','off'],BBL={fresh:'💬 2時間以内',all:'💬 全部',off:'💬 なし'},bbMode='fresh',HID=0,SEEN={};
 try{var bb0=localStorage.getItem('csv-office-bubble');if(BBL[bb0])bbMode=bb0;SEEN=JSON.parse(localStorage.getItem('csv-office-seen')||'{}')||{};}catch(e){SEEN={};}
 function seen(n,ts){return SEEN[n]>=ts;}
 function markSeen(n,ts){SEEN[n]=ts;var cut=Date.now()-(D.window_hours||48)*3600000;Object.keys(SEEN).forEach(function(k){if(!(SEEN[k]>cut))delete SEEN[k];});try{localStorage.setItem('csv-office-seen',JSON.stringify(SEEN));}catch(e){}}
-var SAYC={'👤':'#2e9e6b','📨→':'#5ad1e6','📨←':'#f5c542','❌→':'#ff5a5a'};
+var SAYC={'👤':'#2e9e6b','🗨':'#7c6cf0','📨→':'#5ad1e6','📨←':'#f5c542','❌→':'#ff5a5a'};
 function cleanText(s){s=String(s||'').replace(/\s+/g,' ').trim();if(!s)return '';if(s.charAt(0)==='<')return '（ツール操作）';return s;}
 function wrapTo(s,w,f,maxLines){var a=Array.from(s),lines=[],cur='';for(var i=0;i<a.length;i++){if(twb(cur+a[i],f)>w){if(lines.length===maxLines-1){lines.push(fit(cur+a.slice(i).join(''),w,f));return lines;}lines.push(cur);cur=a[i];}else cur+=a[i];}if(cur)lines.push(cur);return lines;}
 function say(x,yTip,kind,text,ageMin,col,dx,key,big){var f=11,maxW=big?236:168,lines=wrapTo(kind+' '+cleanText(text),maxW,f,big?4:2);if(!lines.length)return '';  // dx＝枠だけ横にずらす（しっぽは x のまま）・big＝本文あり（4 行）
@@ -899,6 +900,7 @@ function say(x,yTip,kind,text,ageMin,col,dx,key,big){var f=11,maxW=big?236:168,l
  return g+'</g>';}
 function sayFor(t,s,single){var best=null;function put(kind,text,ts,big){if(!text||!(ts>0))return;if(!best||ts>best.ts)best={kind:kind,text:text,ts:ts,big:!!big};}
  var lh=s.live&&s.live.last_human;if(lh&&lh.text)put('👤',lh.text,lh.ts*1000);
+ var lr=s.live&&s.live.last_reply;if(lr&&lr.text)put('🗨',lr.text,lr.ts*1000);  // 🗨 返事（S25）＝指示より新しければこちらが出る。作業中は指示・返事待ちは返事
  D.edges.forEach(function(e){if(e.removed)return;var ts=Date.parse(e.ts),tx=e.body||e.summary,bg=!!e.body;if(e.frm===t.name&&(single||e.frm_s==null||e.frm_s===s.s))put(e.ok?'📨→':'❌→',e.to+(e.ok?'「':' 不達「')+tx+'」',ts,bg);else if(e.to===t.name&&e.ok&&(single||e.to_s==null||e.to_s===s.s))put('📨←',e.frm+'「'+tx+'」',ts,bg);});
  return best;}
 if(bbMode!=='off'){var near=!!(D.human&&!onBreak);
@@ -998,6 +1000,8 @@ renderLog();
   var lh=null;(t.occupied_by||[]).forEach(function(s){var x=s.live&&s.live.last_human;if(x&&x.text&&(!lh||x.ts>lh.ts))lh={ts:x.ts,text:x.text};});
   if(D.human&&D.human.track===CARD&&D.human.text&&(!lh||D.human.ts>lh.ts))lh={ts:D.human.ts,text:D.human.text};
   if(lh)h+='<h3>👤 最後の指示（'+hm(lh.ts*1000)+'）</h3><div class="lh">'+esc(lh.text)+'</div>';
+  var lr=null;(t.occupied_by||[]).forEach(function(s){var x=s.live&&s.live.last_reply;if(x&&x.text&&(!lr||x.ts>lr.ts))lr={ts:x.ts,text:x.text};});
+  if(lr)h+='<h3>🗨 最後の返事（'+hm(lr.ts*1000)+'）</h3><div class="lh">'+esc(lr.text)+'</div>';  // S25
   var es=[];D.edges.forEach(function(e,i){if(e.frm===CARD||e.to===CARD)es.push(i);});
   h+='<h3>📨 この席のやり取り'+(es.length?'（'+es.length+' 件'+(es.length>6?'・新しい 6 件':'')+'）':'（直近 '+D.window_hours+'h になし）')+'</h3>';
   es.slice(-6).reverse().forEach(function(i){var e=D.edges[i],st=!e.ok?' <span class="ng">❌不達</span>':e.removed?' <span class="rm">🗑破棄</span>':e.read===false?' <span class="un">📨未読</span>':'';
@@ -1049,7 +1053,8 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<i class="sw" style="background:#f472b6"></i>Opus '
               '<i class="sw" style="background:#3b82f6"></i>Sonnet '
               '<i class="sw" style="background:#d4a017"></i>Haiku</span>'
-              '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）</span>'
+              '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）'
+              '<i class="sw" style="background:#7c6cf0"></i>🗨 席の吹き出し＝最新の出来事（指示／返事／📨）</span>'
               '<span>｜ 💤 離席中＝プロセスは無いが今日動いた席（主は休憩室のソファ・席は点線枠）</span>'
               '<span>｜ 🏠 退社＝最後の発話が文頭「退社」の席（復帰日まで主は不在・「退社 次 10/20」で復帰日指定・既定は次の平日。人間の最後の発話が退社なら 👤 も帰宅）</span>'
               '<span>｜ ▶ 再生＝今日の 📨 の流れ＋👤 の席移動（空きは休憩室経由・再生中は再読込を保留）</span>'
