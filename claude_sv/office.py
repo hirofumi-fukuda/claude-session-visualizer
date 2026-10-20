@@ -25,6 +25,7 @@ break_after_min 分で人間のスプライトが休憩室へ歩く（話しか�
 🎨 絵のテーマの優先順（S22）: sprite_track_themes（トラック名）＞ sprite_tenant_themes（部屋名）＞ sprite_theme（全体）。部屋単位が要るのは
 workspace_hints の無い ws（副業）で名無しトラックが出るとトラック名キーでは追いつかないため。
 
+🟢/🔴 watcher 生死（S25）: watcher が毎ループ reports/watcher_beat.js に時刻を書き、ページがヘッダで「稼働／停止（最終 HH:MM:SS）」を出す（再読込なし・間隔の 3 倍で 🔴・タブ名にも 🔴）。
 更新の仕組みは daily_view と同じ: 中身が変わった時だけ office.html を書き、ページは office_stamp.js を
 数秒おきに読んで差分があればリロードする（スクロール・選択は保たない＝配置図なので不要）。
 """
@@ -501,6 +502,7 @@ CSS = """
 html,body{height:100%} body{margin:0;height:100vh;overflow:hidden;display:flex;flex-direction:column;background:var(--plane);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","Yu Gothic UI",Meiryo,sans-serif;font-size:13px;line-height:1.5}
 header{flex:none;padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 header h1{font-size:16px;margin:0;font-weight:600} .sub{color:var(--muted);font-size:11.5px}
+#beat{border:1px solid var(--border);border-radius:8px;padding:0 6px;white-space:nowrap} #beat[data-st=live]{color:#2e9e6b} #beat[data-st=dead]{color:var(--red);border-color:var(--red);font-weight:600}
 .navs{margin-left:auto;display:flex;gap:6px;align-items:center}
 .tgl{background:none;border:1px solid var(--border);color:var(--ink2);border-radius:999px;padding:3px 11px;font-size:12px;cursor:pointer;text-decoration:none;font-family:inherit}
 .tgl:hover{background:var(--wash);color:var(--ink)} .tgl.cur{background:var(--wash);color:var(--ink);cursor:default}
@@ -570,7 +572,22 @@ tick(); setInterval(tick,1000);
 // 右欄の保留は 2 分まで（マウスを右欄に置いたまま離席しても止まり続けない）
 function softReload(){if(LPE){window.csvReloadAfter=true;return;}if(document.querySelector('aside:hover')){var h=window.csvHoldSince=window.csvHoldSince||Date.now();if(Date.now()-h<120000){window.csvReloadAfter=true;return;}}if(window.csvPlaying){window.csvReloadAfter=true;return;}location.reload();}
 window.__officeStamp=function(s){if(s&&s!==STAMP)softReload();};
-setInterval(function(){var sc=document.createElement('script');sc.src='office_stamp.js?t='+Date.now();sc.onload=sc.onerror=function(){sc.remove();};document.head.appendChild(sc);},POLL_MS);
+function pull(name){var sc=document.createElement('script');sc.src=name+'?t='+Date.now();sc.onload=function(){sc.remove();};sc.onerror=function(){sc.remove();if(name==='watcher_beat.js')beatErr=true;};document.head.appendChild(sc);}
+setInterval(function(){pull('office_stamp.js');pull('watcher_beat.js');},POLL_MS);
+// 🟢/🔴 watcher 生死（S25）: watcher は変化が無くても毎ループ watcher_beat.js に時刻を書く。ページは stamp と一緒に読み、
+// 間隔の 3 倍（最低 30 秒）止まったら 🔴。ファイルが無い＝beat を書かない古い watcher か未起動。再読込なしで変わる（タブ名にも出す）
+var beatAt=0,beatSec=10,beatErr=false,beatEl=document.getElementById('beat'),TITLE0=document.title;
+window.__watcherBeat=function(ts,sec){beatAt=ts*1000;if(sec)beatSec=sec;beatErr=false;};
+pull('watcher_beat.js');
+function hms(ms){var d=new Date(ms),p=function(n){return('0'+n).slice(-2);};return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
+function beatTick(){if(!beatEl)return;var age=Date.now()-beatAt,lim=Math.max(30,beatSec*3)*1000,st,tx,tip;
+ if(!beatAt&&!beatErr){st='wait';tx='🟡 watcher 確認中';tip='watcher_beat.js を読んでいる';}
+ else if(!beatAt){st='dead';tx='🔴 watcher 停止？';tip='watcher_beat.js が無い＝live_board.py --html --watch が動いていないか、beat を書かない古い版';}
+ else if(age<lim){st='live';tx='🟢 watcher 稼働（'+hms(beatAt)+'）';tip='最後の beat ＝'+hms(beatAt)+'・'+beatSec+'秒ごと';}
+ else{st='dead';tx='🔴 watcher 停止（最終 '+hms(beatAt)+'）';tip='beat が '+Math.round(age/1000)+'秒 止まっている。python live_board.py --html --watch '+beatSec+' で再起動';}
+ if(beatEl.dataset.st!==st){beatEl.dataset.st=st;document.title=(st==='dead'?'🔴 ':'')+TITLE0;}
+ beatEl.textContent=tx;beatEl.title=tip;}
+setInterval(beatTick,1000);
 
 // ---------- 配置図 ----------
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});};
@@ -1071,7 +1088,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
 <style>{CSS}</style></head>
 <body>
 <header><div><h1>🏢 バーチャルオフィス</h1>
-<div class="sub">いま <b id="clock"></b> ／ 生成 {now} ／ 席=トラック・人=稼働セッション・矢印=SendMessage（新しいほど濃い・15分以内は動く）・席にマウスで詳細・クリックで席カード</div></div>
+<div class="sub">いま <b id="clock"></b> ／ 生成 {now} <span id="beat" data-st="wait">🟡 watcher 確認中</span> ／ 席=トラック・人=稼働セッション・矢印=SendMessage（新しいほど濃い・15分以内は動く）・席にマウスで詳細・クリックで席カード</div></div>
 {tiles}
 <button class="tgl" id="play" type="button" title="今日の 📨 の流れと 👤 の席移動を時刻順に再生（再生中は自動更新を保留）">▶ 流れを再生</button>
 <div class="navs">{nav_html("office")}<button class="tgl" id="tgl" type="button"></button></div>
@@ -1082,6 +1099,18 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
 <footer>live_board.py --html --watch が同じループで書き換え中（変化があった時だけ・数秒〜10秒で反映）。ローカル閲覧専用＝案件名が入るので公開しない。</footer>
 <script>{js}</script>
 </body></html>"""
+
+
+def write_beat(out_dir: Path, watch_sec: int) -> None:
+    """🟢/🔴 watcher 生死（S25）: 毎ループ時刻だけを書く（中身の変化とは無関係・stamp は従来どおり変化時のみ）。
+    ページは stamp と一緒にこれを読み、間隔の 3 倍止まったら 🔴 を出す。名前を office_ にしないのは他のページも同じ 1 ファイルを読めるように。"""
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "watcher_beat.js").write_text(
+            f"window.__watcherBeat&&window.__watcherBeat({int(datetime.now().timestamp())},{int(watch_sec)});",
+            encoding="utf-8")
+    except OSError:
+        pass
 
 
 def write_office(cfg: dict, out_dir: Path, res: dict, labels: dict, rows,

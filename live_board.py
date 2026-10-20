@@ -39,7 +39,7 @@ from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.modelbadge import MDL_CSS, model_badge
 from claude_sv.daily_view import write_daily
 from claude_sv.messages import human_text, collect as collect_messages, label_sessions, learned_user_names, load_registry, recent_html
-from claude_sv.office import away_cutoff, leave_sids, write_office
+from claude_sv.office import away_cutoff, leave_sids, write_beat, write_office
 from claude_sv.nav import nav_html
 from claude_sv.parser import _clean_user_text, _iter_text_items
 
@@ -1445,6 +1445,7 @@ def main():
                     print(f"{datetime.now().strftime('%H:%M:%S')} office updated")
             except Exception as e:  # noqa: BLE001
                 print(f"office view error: {e!r}")
+            write_beat(out_path.parent, watch or 10)  # 🟢/🔴 生死（S25）: 変化が無くても毎ループ書く＝ページ側が止まりを検知できる
             try:  # 日誌ビュー（S20）: 同じループに相乗り＝プロセスは1個のまま。失敗してもボードは止めない
                 if write_daily(load_config(REPO_ROOT), out_path.parent):
                     print(f"{datetime.now().strftime('%H:%M:%S')} daily updated")
