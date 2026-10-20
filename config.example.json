@@ -32,7 +32,7 @@
     "dir": "~/path/to/daily",
     "open": ["最重要", "Today's Focus", "本日の予定 > TOP", "返信待ち"]
   },
-  "_office_comment": "バーチャルオフィス（S21・reports/office.html）。human=人間の表示名（最後に話しかけた席の横に立つ）。window_hours=やり取りを拾う時間幅。teams=島わけ（島名→トラック名の配列・config の順に ハブ右/左/上/下/右上/左上/右下/左下 へ）。表にないトラックは other_island（既定「その他」）。show_idle_tracks=teams に載っていて時間幅内にセッションが無いトラックも空席（半透明）で出す（既定 true）。island_slots=島の置き場を指定（r/l/t/b/tr/tl/br/bl）。live_near_hub=稼働中の席を島の中でハブに近いマスから詰める（既定 false・ヘッダの🧲で切替）。lounge=休憩室（島の空きセル・slot 既定 tr）{name, slot, break_after_min}。家具・窓の昼夕夜・ホワイトボード（在席/未読）・印刷機コーナー（作業中の席があれば用紙が出る）。最後の発話から break_after_min 分（既定 20）で人間が休憩室へ歩く（話しかけると席へ戻る）。小物の絵は assets/props/<名前>.png で差し替え可（README）。各島の角に観葉植物。hub_side=島に入れずハブの右隣に小机で並べるトラック名（同じ部屋・採番なしの運用型など）。sprite_theme=既定の絵のテーマ（assets/sprites/<テーマ>/・\"office/human-3\" のように人間候補も指定可）。sprite_track_themes=席ごとに別テーマ（{\"トラック名\": \"テーマ\"}・例: 業務ハブだけ ninja。そのテーマに無い絵は画面のテーマには落ちず、テーマ内の粗い名前へ落ちる）。sprite_tenant_themes=部屋ごとに別テーマ（{\"部屋名\": \"テーマ\"}・優先順＝トラック名＞部屋＞全体。名無しトラックが出る副業の部屋向け）。tenants=ビル＝部屋（ワークスペース単位・S22）{部屋名: [encoded ws dir または workspace_labels の表示名]}。最初の部屋が本業＝ハブと teams（島わけ）はここ・2つ目以降は部屋ごとに席を格子で並べる・どの部屋にも無い ws は other_tenant（既定「その他」）の部屋（席がある時だけ出す）。?ws=〈部屋名の一部〉／ヘッダのボタンで1部屋だけに絞れる（隠した部屋宛の矢印は右端のドアへ）",
+  "_office_comment": "バーチャルオフィス（S21・reports/office.html）。human=人間の表示名（最後に話しかけた席の横に立つ）。window_hours=やり取りを拾う時間幅。teams=島わけ（島名→トラック名の配列・config の順に ハブ右/左/上/下/右上/左上/右下/左下 へ）。表にないトラックは other_island（既定「その他」）。show_idle_tracks=teams に載っていて時間幅内にセッションが無いトラックも空席（半透明）で出す（既定 true）。island_slots=島の置き場を指定（r/l/t/b/tr/tl/br/bl）。live_near_hub=稼働中の席を島の中でハブに近いマスから詰める（既定 false・ヘッダの🧲で切替）。lounge=休憩室（島の空きセル・slot 既定 tr）{name, slot, break_after_min}。家具・窓の昼夕夜・ホワイトボード（在席/未読）・印刷機コーナー（作業中の席があれば用紙が出る）。最後の発話から break_after_min 分（既定 20）で人間が休憩室へ歩く（話しかけると席へ戻る）。小物の絵は assets/props/<名前>.png で差し替え可（README）。各島の角に観葉植物。hub_side=島に入れずハブの右隣に小机で並べるトラック名（同じ部屋・採番なしの運用型など）。hub_room=ハブの部屋名（中央セルいっぱいの床に名札・S25）。セルを独占する島は目一杯に広がる（席は中央寄せ）。sprite_theme=既定の絵のテーマ（assets/sprites/<テーマ>/・\"office/human-3\" のように人間候補も指定可）。sprite_track_themes=席ごとに別テーマ（{\"トラック名\": \"テーマ\"}・例: 業務ハブだけ ninja。そのテーマに無い絵は画面のテーマには落ちず、テーマ内の粗い名前へ落ちる）。sprite_tenant_themes=部屋ごとに別テーマ（{\"部屋名\": \"テーマ\"}・優先順＝トラック名＞部屋＞全体。名無しトラックが出る副業の部屋向け）。tenants=ビル＝部屋（ワークスペース単位・S22）{部屋名: [encoded ws dir または workspace_labels の表示名]}。最初の部屋が本業＝ハブと teams（島わけ）はここ・2つ目以降は部屋ごとに席を格子で並べる・どの部屋にも無い ws は other_tenant（既定「その他」）の部屋（席がある時だけ出す）。?ws=〈部屋名の一部〉／ヘッダのボタンで1部屋だけに絞れる（隠した部屋宛の矢印は右端のドアへ）",
   "office": {
     "human": "人間",
     "tenants": { "🏢 本業": ["c--Users-me-work-main", "GeminxEE"], "💼 副業X": ["c--source-side-x"] },
@@ -45,7 +45,8 @@
     "island_slots": { "🏭 現場・生産": "l" },
     "live_near_hub": true,
     "lounge": { "name": "☕ 休憩室", "slot": "tr", "break_after_min": 20 },
-    "hub_side": ["会議サポート"],
+    "hub_side": [],
+    "hub_room": "🏯 司令室",
     "other_island": "その他",
     "show_idle_tracks": true,
     "sprite_theme": "animal",

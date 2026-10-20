@@ -14,7 +14,8 @@ config の順）。ヘッダの 🧲 ボタンで切替（localStorage）。席�
 自販機・観葉植物・窓＝時刻で昼夕夜・ホワイトボード＝在席/未読・印刷機コーナー＝作業中の席があれば用紙が出る）。最後の発話から
 break_after_min 分で人間のスプライトが休憩室へ歩く（話しかけると席へ戻る・戻る席の点線枠は残す）。各島の角に観葉植物（飾り）。
 小物の絵は assets/props/<名前>.png があればそれ・無ければコード内の矩形描画（受け口が先・絵は後から差し替え）。
-🪑 hub_side（S22）: cfg.office.hub_side＝トラック名リスト。島に入れずハブの右隣に小机で並べる（同じ部屋・採番なしの運用型＝会議サポート等）。
+🪑 hub_side（S22）: cfg.office.hub_side＝トラック名リスト。島に入れずハブの右隣に小机で並べる（同じ部屋・採番なしの運用型。10/20 からは空＝会議サポートは「会議室」島へ）。
+🏯 hub_room（S25）: cfg.office.hub_room＝ハブの部屋名（例「🏯 司令室」）。中央セルいっぱいを床にして名札を出す。セルを独占する島も同様に目一杯に広げ席は中央寄せ。
 📱 Remote Control（S22）: 稼働台帳 sessions/<pid>.json に bridgeSessionId があれば RC オン＝席の右上に 📱（外出先から指示できる席・ハブ 10/15 発見）。
 🎨 配色（S22）: 図もページのテーマ（☀/☾・localStorage csv-theme＝他ページと共通）に追従。light＝明るいオフィス（白い壁・淡いタイル床・ベージュのカーペット）。オフィスは保存値が無ければ light・?theme=light|dark で一時上書き（保存しない・スクショ用）。
 🧾 ホワイトボード（S23・ハブ提案 10/15）: 休憩室の壁いっぱいに今日の daily の要点＝🔴 TOP 見出し3行・⏰ 次の時刻固定イベント・⏸ 返信待ち（件数と相手）・
@@ -477,6 +478,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "sprite_track_themes": (cfg.get("office") or {}).get("sprite_track_themes") or {},  # トラック名→テーマ名（席ごとの別テーマ・例: 業務ハブだけ ninja）
             "sprite_tenant_themes": (cfg.get("office") or {}).get("sprite_tenant_themes") or {},  # 部屋名→テーマ名（副業の部屋ごとに別の絵・S22）
             "islands": islands, "rooms": rooms, "hub_side": hub_side,  # 🪑 ハブの右隣の小机（S22）
+            "hub_room": str((cfg.get("office") or {}).get("hub_room") or ""),  # 🏯 ハブの部屋名（中央セルいっぱいの床・S25）
             "live_near_hub": bool((cfg.get("office") or {}).get("live_near_hub", False)),  # 🧲 稼働席をハブ側に詰める既定（S22）
             "lounge": _lounge(cfg), "props": load_props(),
             "day_end": str((cfg.get("office") or {}).get("day_end") or "19:00"),  # 🕐 帯の時計の「定時まで」（S24）
@@ -789,7 +791,7 @@ function layoutIslands(islands,OX,OY){
  var SLOT={r:[2,1],l:[0,1],t:[1,0],b:[1,2],tr:[2,0],tl:[0,0],br:[2,2],bl:[0,2]}, ORDER=['r','l','t','b','tr','tl','br','bl'];
  var cells={}; for(var cx0=0;cx0<3;cx0++)for(var cy0=0;cy0<3;cy0++)cells[cx0+','+cy0]=[];
  islands.forEach(function(isl,i){var sl=SLOT[isl.slot]||SLOT[ORDER[i%ORDER.length]];var m=isl.tracks.length,cols=Math.min(m,Math.max(Math.ceil(Math.sqrt(m)),Math.ceil(m/2))),rows=Math.ceil(m/cols);
-  isl.cols=cols;isl.rows=rows;isl.w=(cols-1)*PX+120+PAD*2+30;isl.h=rows*PY-11+PAD*2+TITLE;cells[sl[0]+','+sl[1]].push(isl);});
+  isl.cols=cols;isl.rows=rows;isl.w=isl.nw=(cols-1)*PX+120+PAD*2+30;isl.h=isl.nh=rows*PY-11+PAD*2+TITLE;cells[sl[0]+','+sl[1]].push(isl);});
  var LG=D.lounge?{lounge:true,name:D.lounge.name,w:420,h:230}:null; if(LG){var ls=SLOT[D.lounge.slot]||SLOT.tr;cells[ls[0]+','+ls[1]].push(LG);}  // ☕ 休憩室＝島の空きセル（既定 tr）。島と同居なら縦に積む
  var NS=SIDE.length, SHIFT=NS?65+(NS-1)*70:0, HUBW=NS?390+(NS-1)*140:260, HUBH=200, colW=[0,HUBW,0], rowH=[0,HUBH,0];  // 🪑 hub_side の小机の分だけ中央セルを広げ、ハブを左へずらす
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var w=Math.max.apply(null,L.map(function(x){return x.w;})),h=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
@@ -797,14 +799,14 @@ function layoutIslands(islands,OX,OY){
  var colX=[OX,OX+colW[0]+(colW[0]?G:0)], rowY=[OY,OY+rowH[0]+(rowH[0]?G:0)]; colX[2]=colX[1]+colW[1]+G; rowY[2]=rowY[1]+rowH[1]+G;
  var hx=colX[1]+colW[1]/2-SHIFT, hy=rowY[1]+rowH[1]/2+30;  // ハブの中心（🧲 の距離の基準）
  SIDE.forEach(function(n,k){pos[n]=[Math.round(hx+165+k*140),Math.round(hy)];});  // 小机＝ハブ（幅190）の右 10px から 140px 間隔
- if(NS)floors+='<rect x="'+(hx-111)+'" y="'+(hy-82)+'" width="'+(352+(NS-1)*140)+'" height="166" rx="12" fill="#f5c542" fill-opacity="'+PAL.sideOp+'" stroke="'+PAL.txt('#f5c542')+'" stroke-opacity="0.45" stroke-dasharray="6 4" stroke-width="1.5"/>';  // ハブと小机をひとつの床で囲う
- if(LG)Object.keys(cells).forEach(function(k){var L=cells[k];if(L.length===1&&L[0]===LG){var c=k.split(',').map(Number);LG.w=colW[c[0]];LG.h=rowH[c[1]];}});  // セルを独占するなら目一杯に広げる
+ if(D.hub_room||NS){var HR=D.hub_room||HUB;floors+='<rect x="'+colX[1]+'" y="'+rowY[1]+'" width="'+colW[1]+'" height="'+rowH[1]+'" rx="12" fill="#f5c542" fill-opacity="'+PAL.islOp+'" stroke="'+PAL.txt('#f5c542')+'" stroke-opacity="0.45" stroke-width="2"/><text x="'+(colX[1]+12)+'" y="'+(rowY[1]+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt('#f5c542')+'">'+esc(HR)+'</text><text x="'+(colX[1]+colW[1]-10)+'" y="'+(rowY[1]+18)+'" text-anchor="end" font-size="11" fill="'+PAL.txt('#f5c542')+'" fill-opacity="0.8">'+(1+NS)+'席</text>'+plant(colX[1]+colW[1]-36,rowY[1]+rowH[1]-55,0.7);}  // 🏯 ハブの部屋＝中央セルいっぱい（S25・hub_room の名前。小机があれば同じ部屋）
+ Object.keys(cells).forEach(function(k){var L=cells[k];if(L.length===1){var c=k.split(',').map(Number);L[0].w=colW[c[0]];L[0].h=rowH[c[1]];}});  // セルを独占する島・休憩室は目一杯に広げる（席は中央に寄せる・S25）
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var tot=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
   var y=c[1]===0?rowY[0]+rowH[0]-tot:c[1]===2?rowY[2]:rowY[1]+(rowH[1]-tot)/2;
   L.forEach(function(isl){var x=c[0]===0?colX[0]+colW[0]-isl.w:c[0]===2?colX[2]:colX[1]+(colW[1]-isl.w)/2;if(isl.lounge){floors+=drawLounge(x,y,isl.w,isl.h,isl.name);y+=isl.h+G;return;}var col=ISL_COL[islands.indexOf(isl)%ISL_COL.length];
    floors+='<rect x="'+x+'" y="'+y+'" width="'+isl.w+'" height="'+isl.h+'" rx="12" fill="'+col+'" fill-opacity="'+PAL.islOp+'" stroke="'+PAL.txt(col)+'" stroke-opacity="0.45" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(isl.name)+'</text><text x="'+(x+isl.w-10)+'" y="'+(y+18)+'" text-anchor="end" font-size="11" fill="'+PAL.txt(col)+'" fill-opacity="0.8">'+isl.tracks.length+'席</text>';
    floors+=plant(x+isl.w-36,y+isl.h-55,0.7);  // 🪴 島の角の観葉植物（飾り・配置計算には影響しない）
-   var cellsOf=[];for(var k=0;k<isl.tracks.length;k++){var cc=k%isl.cols,rr=Math.floor(k/isl.cols);cellsOf.push([Math.round(x+PAD+60+cc*PX),Math.round(y+PAD+TITLE+62+rr*PY)]);}
+   var cellsOf=[],sx=(isl.w-isl.nw)/2,sy=(isl.h-isl.nh)/2;for(var k=0;k<isl.tracks.length;k++){var cc=k%isl.cols,rr=Math.floor(k/isl.cols);cellsOf.push([Math.round(x+sx+PAD+60+cc*PX),Math.round(y+sy+PAD+TITLE+62+rr*PY)]);}
    var names=isl.tracks.slice();if(MAGNET){cellsOf.sort(function(a,b){return Math.hypot(a[0]-hx,a[1]-hy)-Math.hypot(b[0]-hx,b[1]-hy);});names.sort(function(a,b){return liveRank(a)-liveRank(b);});}
    names.forEach(function(name,k){pos[name]=cellsOf[k];});
    y+=isl.h+G;});});
