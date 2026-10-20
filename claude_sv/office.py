@@ -570,8 +570,8 @@ var root=document.documentElement, btn=document.getElementById('tgl');
 function lab(){btn.textContent=root.dataset.theme==='light'?'☾ ダーク':'☀ ライト';} lab();
 btn.onclick=function(){root.dataset.theme=root.dataset.theme==='light'?'dark':'light';try{localStorage.setItem('csv-theme',root.dataset.theme);}catch(e){} lab();
  var u=new URL(location.href);if(u.searchParams.has('theme')){u.searchParams.delete('theme');location.href=u.toString();}else location.reload();};  // 図の配色は読み込み時に決めるので再読込（?theme= の一時上書きは外す）
-var clk=document.getElementById('clock'), WD='日月火水木金土', skyFn=null, clockFn=null;
-function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());if(skyFn)skyFn(d);if(clockFn)clockFn(d);}
+var clk=document.getElementById('clock'), WD='日月火水木金土', skyFn=null, clockFn=null, ledFn=null;
+function tick(){var d=new Date(),p=function(n){return('0'+n).slice(-2);};clk.textContent=(d.getMonth()+1)+'/'+d.getDate()+'（'+WD[d.getDay()]+'） '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());if(skyFn)skyFn(d);if(clockFn)clockFn(d);if(ledFn)ledFn(d);}
 tick(); setInterval(tick,1000);
 // 再読込は ▶ 再生中なら保留して再生の終わりに回す（10 秒ごとの stamp・イベント境界・休憩しきい値の全部・S23）
 // 🗂️ 右欄にマウスがある間（読む・キャラを選ぶ）も保留（右欄から出たら読み直す・S24）。キャラ欄が開いているだけでは保留しない＝開いたまま放置すると画面が止まり続けた（S24）
@@ -761,27 +761,39 @@ function whiteboard(bx,by,bw,bhMax,band){var c=D.counts,d=new Date(),date=(d.get
  var ev0=evLine();if(ev0){setInterval(function(){var el=document.getElementById('wbev'),e=evLine();if(el&&e)el.textContent=pick(e.alts,WB.maxw,WB.fs);},30000);  // 「あと n分」は30秒ごとに書き直す
   if(ev0.until!=null){var left=(ev0.until-(d.getHours()*60+d.getMinutes()))*60000-d.getSeconds()*1000;if(left>0)setTimeout(softReload,Math.min(left+1500,2e9));}}  // 次のイベント境界で描き直し
  return s;}
-// 📟 電光掲示板（S24・案A）: 建物の上の帯の右。動きのある情報を種類ごとに1行＝📨 新着／⏸ 返信待ち（🔴 が先頭）／🏠 退社・💤 離席中。
-// 幅に収まらない行は右から左へ流れ続ける（同じ文を2つ並べて1周ぶんずらす）
+// 📟 電光掲示板（S24 案A → S25 ページ送り）: 建物の上の帯の右。動きのある情報を種類ごとに1行＝📨 新着／⏸ 返信待ち（🔴 は常時固定）／🏠 退社・💤 離席中。
+// 流さない＝幅に収まる単位に切って LED_SEC 秒ごとに静止ページを切り替える（発車標方式・S25 ふくちゃん「流れると読みにくい」）。右端に 2/6。
+// ページ番号は壁時計から割り出す（Date.now()/LED_SEC）＝10秒ごとの再読込でもページが飛ばない。1件で幅を超えるものは … で切る（ツールチップに全文）
 // 🏷 /rename 漏れ（S24）: 席にいるセッションで ①自動命名のまま（nameSource≠user）②名前の末尾 S〈n〉 が台帳の S と違う（S を上げて改名し忘れ）。S なしの名前は宛先・席名とも通るので出さない（12 席が S なし運用＝出すとノイズ）
 function renameIssues(t){var out=[];(t.occupied_by||[]).forEach(function(x){var L=x.live||{},nm=L.name||'',m=/S(\d+)$/.exec(nm.replace(/\s+/g,''));
   if(!L.named)out.push({s:x.s,msg:'自動命名のまま'+(nm?'（'+nm+'）':'')});
   else if(t!==D.hub&&x.s&&m&&+m[1]!==+x.s)out.push({s:x.s,msg:'名前が S'+m[1]+' のまま（'+nm+'）'});});return out;}
+var LED_SEC=7;
+function ledPages(head,items,sep,iw,fs){  // head＝常時表示の頭（空可）・items＝切り替える件 → ページ配列（各ページ＝表示文字列）。幅＝iw からページ番号ぶんを引く
+ var avail=iw-twb(' 00/00',fs),h=head?fit(head,avail,fs):'',room=avail-twb(h,fs),pages=[],cur='';
+ if(!items.length||room<fs*4)return [h||items.join(sep)];
+ items.forEach(function(it){var cand=cur?cur+sep+it:it;if(twb(cand,fs)<=room){cur=cand;return;}if(cur)pages.push(cur);cur=twb(it,fs)<=room?it:fit(it,room,fs);});
+ if(cur)pages.push(cur);return pages.map(function(p){return h+p;});}
 function ticker(bx,by,bw,bh){var fs=15,iw=bw-28,LH=Math.floor((bh-30)/3),rows=[],s='',all=[D.hub].concat(D.tracks);
- var es=D.edges.filter(function(e){return !e.removed;}).slice(-5).reverse();
- rows.push({c:'#fbbf24',t:es.length?es.map(function(e){return (e.ok?'📨 ':'❌ ')+(e.t||'').slice(-5)+' '+e.frm+' → '+e.to+(e.summary?'「'+e.summary+'」':'');}).join('　◆　'):'📨 新着なし（'+D.window_hours+'h）'});
+ var es=D.edges.filter(function(e){return !e.removed;}).slice(-5).reverse().map(function(e){return (e.ok?'📨 ':'❌ ')+(e.t||'').slice(-5)+' '+e.frm+' → '+e.to+(e.summary?'「'+e.summary+'」':'');});
+ rows.push({c:'#fbbf24',head:es.length?'':'📨 新着なし（'+D.window_hours+'h）',items:es,sep:'　◆　'});
  var wt=BOARD&&BOARD.waiting,it=(wt&&wt.items)||[],u=(wt&&wt.urgent)||0;
- var rn=[];all.forEach(function(t){renameIssues(t).forEach(function(r){rn.push(t.name+(r.s?' S'+r.s:'')+'＝'+r.msg);});});
- rows.push({c:'#f87171',t:(wt&&wt.n?'⏸ 返信待ち '+wt.n+'件：'+(u?'🔴 '+it.slice(0,u).join('・')+(it.length>u?' ／ ':''):'')+it.slice(u).join('・'):'⏸ 返信待ちなし')+(rn.length?'　◆　🏷 /rename まだ '+rn.length+'件：'+rn.join('・'):'')});
+ var rn=[];all.forEach(function(t){renameIssues(t).forEach(function(r){rn.push('🏷 /rename まだ '+t.name+(r.s?' S'+r.s:'')+'＝'+r.msg);});});
+ var wh,wi;if(wt&&wt.n){var hs='⏸ 返信待ち '+wt.n+'件：',hf=hs+(u?'🔴 '+it.slice(0,u).join('・')+(it.length>u||rn.length?' ／ ':''):'');
+  if(twb(hf,fs)<=iw*0.5){wh=hf;wi=it.slice(u);}else{wh=hs;wi=it.slice(0,u).map(function(x){return '🔴'+x;}).concat(it.slice(u));}}  // 🔴 は頭に固定＝流さない・見逃さない。🔴 が多くて幅の半分を超えたら頭は件数だけにして 🔴 付きで先頭ページへ
+ else{wh='⏸ 返信待ちなし'+(rn.length?' ／ ':'');wi=[];}
+ rows.push({c:'#f87171',head:wh,items:wi.concat(rn),sep:'・'});
  var lv=all.filter(function(t){return !t.live&&t.leave;}).map(function(t){return '🏠 '+t.name+' '+t.leave.t+' 退社（次 '+t.leave.until_t+'）';}),
   aw=all.filter(function(t){return !t.live&&!t.leave&&t.away&&t.away.length;}).map(function(t){return '💤 '+t.name+' '+t.away[0].t+'〜';});
- rows.push({c:'#86efac',t:lv.concat(aw).join('　◆　')||'🏠 退社・💤 離席なし'});
+ rows.push({c:'#86efac',head:lv.length||aw.length?'':'🏠 退社・💤 離席なし',items:lv.concat(aw),sep:'　◆　'});
  s+='<pattern id="led" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="#0c0a09"/><circle cx="2" cy="2" r=".7" fill="#292524"/></pattern><clipPath id="ledclip"><rect x="'+(bx+12)+'" y="'+by+'" width="'+iw+'" height="'+bh+'"/></clipPath>';
  s+=R(bx,by,bw,bh,'#292524',' rx="6" stroke="#57534e" stroke-width="3"')+R(bx+6,by+6,bw-12,bh-12,'url(#led)');
  s+='<text x="'+(bx+14)+'" y="'+(by+22)+'" font-size="11" fill="#a8a29e">📟 いまの動き</text><g clip-path="url(#ledclip)">';
- rows.forEach(function(r,i){var y=by+28+LH*(i+1)-8,tw=twb(r.t,fs);function tx(x){return '<text x="'+x+'" y="'+y+'" font-size="'+fs+'" font-weight="700" font-family="BIZ UDGothic,Consolas,monospace" fill="'+r.c+'">'+esc(r.t)+'</text>';}
-  if(tw<=iw)s+='<g><title>'+esc(r.t)+'</title>'+tx(bx+14)+'</g>';
-  else{var span=Math.ceil(tw+80);s+='<g><title>'+esc(r.t)+'</title>'+tx(bx+14)+tx(bx+14+span)+'<animateTransform attributeName="transform" type="translate" from="0 0" to="-'+span+' 0" dur="'+Math.max(8,Math.round(span/70))+'s" repeatCount="indefinite"/></g>';}});
+ var k0=Math.floor(Date.now()/(LED_SEC*1000));
+ rows.forEach(function(r,i){var y=by+28+LH*(i+1)-8;r.pages=ledPages(r.head,r.items,r.sep,iw,fs);var n=r.pages.length,j=k0%n,full=r.head+r.items.join(r.sep);
+  s+='<g><title>'+esc(full)+'</title><text id="led-r'+i+'" x="'+(bx+14)+'" y="'+y+'" font-size="'+fs+'" font-weight="700" font-family="BIZ UDGothic,Consolas,monospace" fill="'+r.c+'">'+esc(r.pages[j])+'</text>'+
+   '<text id="led-p'+i+'" x="'+(bx+14+iw)+'" y="'+y+'" text-anchor="end" font-size="11" font-family="Consolas,monospace" fill="#78716c">'+(n>1?(j+1)+'/'+n:'')+'</text></g>';});
+ ledFn=function(d){var k=Math.floor(d.getTime()/(LED_SEC*1000));if(k===k0)return;k0=k;rows.forEach(function(r,i){var n=r.pages.length,j=k%n,el=document.getElementById('led-r'+i),pe=document.getElementById('led-p'+i);if(el)el.textContent=r.pages[j];if(pe)pe.textContent=n>1?(j+1)+'/'+n:'';});};
  return s+'</g>';}
 // 🕐 時計コーナー（S24）: 帯の左端。大きな時刻（秒つき）・日付・⏰ 次の予定（板から移した）・「定時まで あと h:mm」（定時＝config office.day_end・既定 19:00）。tick() から毎秒書き換え
 function clockCorner(bx,by,bw,bh){var cx=bx+bw/2,F=' text-anchor="middle" font-family="Consolas,BIZ UDGothic,monospace"';
