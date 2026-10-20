@@ -16,6 +16,8 @@ break_after_min 分で人間のスプライトが休憩室へ歩く（話しか�
 小物の絵は assets/props/<名前>.png があればそれ・無ければコード内の矩形描画（受け口が先・絵は後から差し替え）。
 🪑 hub_side（S22）: cfg.office.hub_side＝トラック名リスト。島に入れずハブの右隣に小机で並べる（同じ部屋・採番なしの運用型。10/20 からは空＝会議サポートは「会議室」島へ）。
 🏯 hub_room（S25）: cfg.office.hub_room＝ハブの部屋名（例「🏯 司令室」）。中央セルいっぱいを床にして名札を出す。セルを独占する島も同様に目一杯に広げ席は中央寄せ。
+🪪 nicknames（S25）: cfg.office.nicknames＝席名→呼び名（例 業務ハブ→ハブ・会議サポート→シノ）。名札・ツールチップ・席カードに「席名（呼び名）」。
+   宛先＝セッション名は変えない（正本＝~/.claude/agent-ops.md ⑥ の表・config は名札用のコピー）。
 📱 Remote Control（S22）: 稼働台帳 sessions/<pid>.json に bridgeSessionId があれば RC オン＝席の右上に 📱（外出先から指示できる席・ハブ 10/15 発見）。
 🎨 配色（S22）: 図もページのテーマ（☀/☾・localStorage csv-theme＝他ページと共通）に追従。light＝明るいオフィス（白い壁・淡いタイル床・ベージュのカーペット）。オフィスは保存値が無ければ light・?theme=light|dark で一時上書き（保存しない・スクショ用）。
 🧾 ホワイトボード（S23・ハブ提案 10/15）: 休憩室の壁いっぱいに今日の daily の要点＝🔴 TOP 見出し3行・⏰ 次の時刻固定イベント・⏸ 返信待ち（件数と相手）・
@@ -484,6 +486,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "sprite_tenant_themes": (cfg.get("office") or {}).get("sprite_tenant_themes") or {},  # 部屋名→テーマ名（副業の部屋ごとに別の絵・S22）
             "islands": islands, "rooms": rooms, "hub_side": hub_side,  # 🪑 ハブの右隣の小机（S22）
             "hub_room": str((cfg.get("office") or {}).get("hub_room") or ""),  # 🏯 ハブの部屋名（中央セルいっぱいの床・S25）
+            "nicknames": (cfg.get("office") or {}).get("nicknames") or {},  # 🪪 席名→呼び名（名札に「業務ハブ（ハブ）」・正本＝agent-ops ⑥ の表・S25）
             "live_near_hub": bool((cfg.get("office") or {}).get("live_near_hub", False)),  # 🧲 稼働席をハブ側に詰める既定（S22）
             "lounge": _lounge(cfg), "props": load_props(),
             "day_end": str((cfg.get("office") or {}).get("day_end") or "19:00"),  # 🕐 帯の時計の「定時まで」（S24）
@@ -646,7 +649,7 @@ var PAL=LIGHT?{tileA:'#e6e2d9',tileB:'#ebe7df',grid:'#d8d3c8',carpetA:'#dccfb5',
 function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,away=(!live&&t.away&&t.away.length)?t.away:null,onSofa=!!(away&&awayAt[t.name]>=0),leave=(!live&&t.leave)?t.leave:null;  // leave＝🏠 退社（S23 ⑩・Python 側で live/away は落としてある）
  var st='empty'; if(live){st=t.occupied_by.some(function(s){return s.live.status==='perm';})?'perm':t.occupied_by.some(function(s){return s.live.status==='busy';})?'busy':'idle';}
  var g='<g class="desk" data-track="'+esc(t.name)+'" style="cursor:pointer"'+(t.dormant?' opacity="'+(LIGHT?0.68:0.5)+'"':leave?' opacity="'+(LIGHT?0.85:0.75)+'"':'')+'>';  // 休眠席は薄く（ライトは背景が明るいぶん濃いめ）・🏠 退社は少し薄く
- var tip=t.name+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.rc?' 📱RC':'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):leave?'🏠 退社（'+leave.t+' に締め・次の出勤 '+leave.until_t+'）\n   '+(leave.name||'')+' '+(leave.model||'')+(leave.s?' S'+leave.s:'')+(leave.text?'\n   「'+leave.text+'」':''):away?'💤 離席中（プロセスなし・最後の動き '+away[0].t+(onSofa?'・休憩室のソファ':'')+'）\n'+away.map(function(a){return '   '+(a.name||'')+' '+(a.model||'')+(a.s?' S'+a.s:'')+' 最後 '+a.t;}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
+ var tip=t.name+nickOf(t.name)+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.rc?' 📱RC':'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):leave?'🏠 退社（'+leave.t+' に締め・次の出勤 '+leave.until_t+'）\n   '+(leave.name||'')+' '+(leave.model||'')+(leave.s?' S'+leave.s:'')+(leave.text?'\n   「'+leave.text+'」':''):away?'💤 離席中（プロセスなし・最後の動き '+away[0].t+(onSofa?'・休憩室のソファ':'')+'）\n'+away.map(function(a){return '   '+(a.name||'')+' '+(a.model||'')+(a.s?' S'+a.s:'')+' 最後 '+a.t;}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
  g+='<title>'+esc(tip)+'</title>';TIPS[t.name]=tip;
  g+='<rect class="chsel'+(CARD===t.name?' on':'')+'" x="'+(x-w/2-8)+'" y="'+(y-72)+'" width="'+(w+16)+'" height="'+(h+102)+'" rx="9" fill="#8b5cf6" fill-opacity="0.12" stroke="#8b5cf6" stroke-dasharray="5 3" stroke-width="3"/>';  // 🗂️ 席の当たり枠（見えない・席の空いた所も押せる）＝カードを開いている席だけ見せる
  if(away)g+='<rect x="'+(x-w/2-6)+'" y="'+(y-70)+'" width="'+(w+12)+'" height="'+(h+98)+'" rx="8" fill="#64748b" fill-opacity="0.08" stroke="#64748b" stroke-dasharray="6 4" stroke-width="2"/><text class="zz" x="'+(x+w/2-4)+'" y="'+(y-52)+'" text-anchor="end" font-size="14">💤</text>';  // 💤 離席中＝席は点線枠で確保（S23）
@@ -662,7 +665,7 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,awa
  else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="'+PAL.chair+'"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="'+PAL.chair2+'"/>';}
  g+='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="#8b5a2b"/><rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="8" fill="#b57a3e"/>';
  var nm=big?2:1;for(var i=0;i<nm;i++){var mx=x-(nm-1)*22+i*44-16;g+='<rect x="'+mx+'" y="'+(y+10)+'" width="32" height="22" fill="#111"/><rect x="'+(mx+2)+'" y="'+(y+12)+'" width="28" height="18" fill="'+SCR[st]+'"/>';if(st==='busy')g+='<rect class="cur" x="'+(mx+6)+'" y="'+(y+22)+'" width="4" height="4" fill="#fff"/>';}
- var label=t.name+(cur&&cur.s?' S'+cur.s:'');
+ var label=t.name+nickOf(t.name)+(cur&&cur.s?' S'+cur.s:'');
  g+='<rect x="'+(x-w/2)+'" y="'+(y+h+4)+'" width="'+w+'" height="18" fill="'+PAL.plate+'"'+(PAL.plateStroke?' stroke="'+PAL.plateStroke+'"':'')+'/><text x="'+x+'" y="'+(y+h+17)+'" text-anchor="middle" font-size="'+(label.length>12?10:12)+'" fill="#222">'+esc(label)+'</text>';
  if(t.occupied_by.length>1)g+='<text x="'+(x+w/2-4)+'" y="'+(y+h+17)+'" text-anchor="end" font-size="10" fill="#777">+'+(t.occupied_by.length-1)+'</text>';
  var un=unreadBy[t.name]||0;
@@ -691,6 +694,7 @@ function roomMatch(r,q){return !q||roomKey(r.name).indexOf(roomKey(q))>=0;}
 var shown=ROOMS.filter(function(r){return roomMatch(r,wsSel);}); if(ROOMS.length&&!shown.length){wsSel='';shown=ROOMS.slice();}
 var hidden=ROOMS.filter(function(r){return shown.indexOf(r)<0;});
 var SIDE=D.hub_side||[];  // 🪑 ハブの右隣に小机で並べるトラック（島には入らない・S22）
+var NICK=D.nicknames||{};function nickOf(n){return NICK[n]?'（'+NICK[n]+'）':'';}  // 🪪 呼び名（S25）: 名札・ツールチップ・席カードに「席名（呼び名）」。宛先（セッション名）は変えない
 function roomTracks(r){var ts=r.main?[HUB].concat(SIDE):(r.tracks||[]).slice();if(r.main)(r.islands||[]).forEach(function(i){ts=ts.concat(i.tracks);});return ts;}
 ROOMS.forEach(function(r){roomTracks(r).forEach(function(t){trackRoom[t]=r.name;});});
 function doorOf(name){var rn=trackRoom[name];return (rn&&door[rn])||null;}
@@ -1022,7 +1026,7 @@ renderLog();
   h+='</div><div class="chr">'+(CHL[CARD]?'<button type="button" class="tgl" id="cd-one" title="この席だけ config の指定に戻す">↺ この席</button>':'')+'<button type="button" class="tgl" id="cd-js" title="config.local.json の office に貼る文面">📋 JSON をコピー</button>'+(nloc?'<button type="button" class="tgl" id="cd-rs" title="このブラウザで変えた分を全部捨てて config に戻す">↺ 全部戻す（'+nloc+'）</button>':'')+'</div></details>';
   return h;}
  function render(){var t=CARD&&byName[CARD];if(!t){box.innerHTML='';box.style.display='none';return;}box.style.display='block';
-  var cur=t.cur,tip=TIPS[CARD]||'',h='<div class="ch"><b>'+esc(CARD)+(cur&&cur.s?' S'+cur.s:'')+'</b><button type="button" class="tgl" id="cd-x" title="閉じる（Esc）">✕</button></div>';
+  var cur=t.cur,tip=TIPS[CARD]||'',h='<div class="ch"><b>'+esc(CARD+nickOf(CARD))+(cur&&cur.s?' S'+cur.s:'')+'</b><button type="button" class="tgl" id="cd-x" title="閉じる（Esc）">✕</button></div>';
   h+='<div class="cs">'+esc(tip.split('\n').slice(1).join('\n'))+'</div>';
   renameIssues(t).forEach(function(r){h+='<div class="cs" style="color:#f87171">🏷 /rename まだ：'+esc(r.msg)+(r.s&&t!==D.hub?' → /rename '+esc(CARD.replace(/\s+/g,'')+'S'+r.s):'')+'</div>';});
   var lh=null;(t.occupied_by||[]).forEach(function(s){var x=s.live&&s.live.last_human;if(x&&x.text&&(!lh||x.ts>lh.ts))lh={ts:x.ts,text:x.text};});
