@@ -25,6 +25,8 @@ break_after_min 分で人間のスプライトが休憩室へ歩く（話しか�
 🎨 絵のテーマの優先順（S22）: sprite_track_themes（トラック名）＞ sprite_tenant_themes（部屋名）＞ sprite_theme（全体）。部屋単位が要るのは
 workspace_hints の無い ws（副業）で名無しトラックが出るとトラック名キーでは追いつかないため。
 
+🧩 サブエージェント（S25）: 親の jsonl の隣 <sid>/subagents/agent-*.meta.json＋jsonl の stat・先頭/末尾 4KB だけ読む（live_board._peek_subagents）。
+作業中（jsonl が 90 秒以内に動き・報告の印なし）は親の机の上に半分の大きさで立つ（最大 3−在席数・ホバーで説明/種類/時刻）。今日終わった分は 🧩n。席カードに「🧩 今日の分身」一覧。
 🟢/🔴 watcher 生死（S25）: watcher が毎ループ reports/watcher_beat.js に時刻を書き、ページがヘッダで「稼働／停止（最終 HH:MM:SS）」を出す（再読込なし・間隔の 3 倍で 🔴・タブ名にも 🔴）。
 更新の仕組みは daily_view と同じ: 中身が変わった時だけ office.html を書き、ページは office_stamp.js を
 数秒おきに読んで差分があればリロードする（スクロール・選択は保たない＝配置図なので不要）。
@@ -322,6 +324,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
                      "model": r.get("model") or "", "title": (r.get("title") or "")[:60],
                      "last_human": r.get("last_human"),
                      "last_reply": r.get("last_reply"),  # 🗨 最後の返事（吹き出し・席カード・S25）
+                     "subagents": r.get("subagents") or [],  # 🧩 今日のサブエージェント（机のちび分身・席カード・S25）
                      "ws": r.get("ws") or "", "ws_key": r.get("ws_key") or "", "cwd": r.get("cwd") or ""}
         if sid not in labels and r.get("project") and r["project"] != "—":
             labels[sid] = {"project": r["project"], "s": r.get("session_no"),
@@ -628,6 +631,9 @@ function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKe
  for(var j=0;j<gray.length;j++)if(M[gray[j]]){var id='tint'+shirt.replace('#','');tints[id]=shirt;return img(M[gray[j]],x,y,id);}
  var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=(c==='T'||c==='A')?shirt:PAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
 var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
+// 🧩 サブエージェント（S25）: 席の稼働セッション全部の分身を新しい順に。state＝busy（jsonl が 90 秒以内に動いている）／done（報告済み）／stale（印が無く止まっている＝foreground 起動や途中で切れた）
+function subsOf(t){var o=[];(t.occupied_by||[]).forEach(function(s){((s.live&&s.live.subagents)||[]).forEach(function(a){o.push(a);});});o.sort(function(a,b){return b.ts-a.ts;});return o;}
+function subTip(a){return '🧩 '+(a.desc||'（説明なし）')+'\n'+(a.type||'')+(a.shape?'・'+a.shape:'')+'・'+(a.start_t?a.start_t+'〜':'')+(a.state==='busy'?'作業中（最後の動き '+a.t+'）':a.state==='done'?a.t+' 報告済み':a.t+' で止まった（報告の印なし）');}
 // 📨 やり取りの見せ方（S24・個人PC 競馬場の移植）: env＝封筒（未読）・紙飛行機（送信直後 15 分）・くしゃ紙（不達）で見せ、線は行・封筒クリックの時だけ／line＝従来の常設の線。ヘッダの「〰 線」で切替（localStorage）
 var ARW='env'; try{if(localStorage.getItem('csv-office-arrows')==='line')ARW='line';}catch(e){}
 var unreadBy={},lastUn={},failBy={},lastFail={}; D.edges.forEach(function(e,i){if(e.ok&&!e.removed&&e.read===false){unreadBy[e.to]=(unreadBy[e.to]||0)+1;lastUn[e.to]=i;}if(!e.ok&&!e.removed){failBy[e.frm]=(failBy[e.frm]||0)+1;lastFail[e.frm]=i;}});
@@ -647,6 +653,11 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,awa
  if(leave)g+='<rect x="'+(x-w/2-6)+'" y="'+(y-70)+'" width="'+(w+12)+'" height="'+(h+98)+'" rx="8" fill="#a8a29e" fill-opacity="0.07" stroke="#a8a29e" stroke-dasharray="2 5" stroke-width="2"/><text x="'+x+'" y="'+(y-54)+'" text-anchor="middle" font-size="11" fill="'+PAL.emptyTxt+'">🏠 '+esc(leave.t)+' 退社</text><text x="'+x+'" y="'+(y-40)+'" text-anchor="middle" font-size="10" fill="'+PAL.emptyTxt+'">次 '+esc(leave.until_t)+'</text>';  // 🏠 退社＝主は不在（椅子だけ）・薄い点線枠と復帰日（S23 ⑩）
  if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});
   if(t.occupied_by.some(function(s){return s.live.rc;}))g+='<text x="'+(x+w/2-2)+'" y="'+(y-6)+'" text-anchor="end" font-size="15">📱</text>';}  // 📱 Remote Control オンの席（S22）
+ // 🧩 サブエージェント（S25）: 作業中の分身は机の上の右側に半分の大きさで立つ（最大＝3−在席数・主と同じ絵・ホバーで中身）。今日終わった分は 🧩n の数字だけ
+ var subs=subsOf(t),sb=subs.filter(function(a){return a.state==='busy';}),sd=subs.length-sb.length;
+ if(live&&sb.length){var occ=t.occupied_by[0],mx=big?3:Math.max(1,3-t.occupied_by.length);sb.slice(0,mx).forEach(function(a,i){g+='<g class="typing" transform="translate('+(x+w/2-22-i*18)+','+(y+10)+') scale(0.5)"><title>'+esc(subTip(a))+'</title>'+sprite(0,0,MODEL_COL(occ.live.model),occ.live.model,'busy',t.name)+'</g>';});
+  if(sb.length>mx)g+='<text x="'+(x+w/2-22-mx*18+14)+'" y="'+(y+30)+'" text-anchor="end" font-size="10" fill="#fff">+'+(sb.length-mx)+'</text>';}
+ if(sd)g+='<text x="'+(x-w/2+3)+'" y="'+(y-4)+'" font-size="11" fill="'+PAL.propTxt+'"><title>'+esc('🧩 今日終わった分身 '+sd+'件（席カードに一覧）')+'</title>🧩'+sd+'</text>';
  else if(away&&!onSofa){g+='<g opacity="0.45">'+sprite(x-w/2+14,y-62,MODEL_COL(away[0].model),away[0].model,'away',t.name)+'</g>';}  // ソファから溢れた離席者は席に半透明で残す
  else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="'+PAL.chair+'"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="'+PAL.chair2+'"/>';}
  g+='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="#8b5a2b"/><rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="8" fill="#b57a3e"/>';
@@ -1019,6 +1030,7 @@ renderLog();
   if(lh)h+='<h3>👤 最後の指示（'+hm(lh.ts*1000)+'）</h3><div class="lh">'+esc(lh.text)+'</div>';
   var lr=null;(t.occupied_by||[]).forEach(function(s){var x=s.live&&s.live.last_reply;if(x&&x.text&&(!lr||x.ts>lr.ts))lr={ts:x.ts,text:x.text};});
   if(lr)h+='<h3>🗨 最後の返事（'+hm(lr.ts*1000)+'）</h3><div class="lh">'+esc(lr.text)+'</div>';  // S25
+  var subs=subsOf(t);if(subs.length){h+='<h3>🧩 今日の分身（'+subs.length+'）</h3>';subs.slice(0,8).forEach(function(a){h+='<div class="row" title="'+esc(subTip(a))+'"><span class="t">'+esc((a.start_t||a.t)+(a.state==='busy'?'〜':''))+'</span>'+(a.state==='busy'?'🟢 作業中':a.state==='done'?'✅ 報告済み':'⏹ 止まった？')+' <span class="who">'+esc(a.type||'')+'</span><br><span class="sm">'+esc(a.desc||'（説明なし）')+'</span></div>';});if(subs.length>8)h+='<div class="cs">ほか '+(subs.length-8)+' 件</div>';}  // 🧩 S25
   var es=[];D.edges.forEach(function(e,i){if(e.frm===CARD||e.to===CARD)es.push(i);});
   h+='<h3>📨 この席のやり取り'+(es.length?'（'+es.length+' 件'+(es.length>6?'・新しい 6 件':'')+'）':'（直近 '+D.window_hours+'h になし）')+'</h3>';
   es.slice(-6).reverse().forEach(function(i){var e=D.edges[i],st=!e.ok?' <span class="ng">❌不達</span>':e.removed?' <span class="rm">🗑破棄</span>':e.read===false?' <span class="un">📨未読</span>':'';
@@ -1072,6 +1084,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<i class="sw" style="background:#d4a017"></i>Haiku</span>'
               '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）'
               '<i class="sw" style="background:#7c6cf0"></i>🗨 席の吹き出し＝最新の出来事（指示／返事／📨）</span>'
+              '<span>｜ 🧩 分身＝サブエージェント（作業中は机の上に小さく立つ・今日終わった分は 🧩n・席カードに一覧）</span>'
               '<span>｜ 💤 離席中＝プロセスは無いが今日動いた席（主は休憩室のソファ・席は点線枠）</span>'
               '<span>｜ 🏠 退社＝最後の発話が文頭「退社」の席（復帰日まで主は不在・「退社 次 10/20」で復帰日指定・既定は次の平日。人間の最後の発話が退社なら 👤 も帰宅）</span>'
               '<span>｜ ▶ 再生＝今日の 📨 の流れ＋👤 の席移動（空きは休憩室経由・再生中は再読込を保留）</span>'

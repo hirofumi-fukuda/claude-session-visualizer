@@ -542,6 +542,76 @@ def _scan_last_reply(chunk: str):
     return None
 
 
+_SUBAGENT_CACHE: dict = {}  # agent jsonl path → (size, mtime, info)。stat が変わらなければ読み直さない
+_SUBAGENT_BUSY_SEC = 90  # 終了の印が無く、jsonl がこの秒数以内に書かれていれば稼働中
+
+
+def _today_epoch() -> float:
+    return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+
+def _peek_subagents(transcript: Path, sid: str, now_epoch: float, since_epoch: float):
+    """🧩 親セッションのサブエージェント（S25）: <親 jsonl の隣>/<sid>/subagents/agent-*.meta.json を列挙する。
+
+    読むのは meta（200B 級）と jsonl の stat・先頭 4KB（開始時刻）・末尾 4KB（終了の印）だけ＝本体は MB 級なので開かない。
+    状態＝ done（meta.finished か SubagentHandback で報告済み）／busy（印が無く mtime が 90 秒以内）／stale（印が無く止まっている＝
+    foreground 起動や途中で切れたもの）。since_epoch（今日の 0 時）より古いものは返さない。新しい順。
+    ⚠️ Workflow 起動分の置き場は未確認（この PC に実例が無い・初回実行時に見る）。
+    """
+    d = transcript.parent / sid / "subagents"
+    try:
+        metas = sorted(d.glob("agent-*.meta.json"))
+    except OSError:
+        return []
+    out = []
+    for mp in metas:
+        jp = mp.with_name(mp.name[:-len(".meta.json")] + ".jsonl")
+        try:
+            st = jp.stat()
+        except OSError:
+            continue
+        if st.st_mtime < since_epoch:
+            continue
+        key = str(jp)
+        hit = _SUBAGENT_CACHE.get(key)
+        if hit and hit[0] == st.st_size and hit[1] == st.st_mtime:
+            info = hit[2]
+        else:
+            info = _read_subagent(mp, jp, st.st_size)
+            _SUBAGENT_CACHE[key] = (st.st_size, st.st_mtime, info)
+        if info is None:
+            continue
+        state = "done" if info["finished"] else ("busy" if now_epoch - st.st_mtime < _SUBAGENT_BUSY_SEC else "stale")
+        out.append(dict(info, state=state, ts=int(st.st_mtime // 60 * 60),  # 分に丸める＝稼働中の毎秒更新で office.html を書き直さない
+                        t=datetime.fromtimestamp(st.st_mtime).strftime("%H:%M")))
+    out.sort(key=lambda a: -a["ts"])
+    return out
+
+
+def _read_subagent(mp: Path, jp: Path, size: int):
+    try:
+        meta = json.loads(mp.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        meta = {}
+    try:
+        with open(jp, "rb") as f:
+            head = f.read(4096).decode("utf-8", errors="replace")
+            f.seek(max(0, size - 4096))
+            tail = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    m = re.search(r'"timestamp":"([^"]+)"', head)
+    start = _ts_epoch(m.group(1)) if m else None
+    return {
+        "id": mp.name[len("agent-"):-len(".meta.json")],
+        "desc": str(meta.get("description") or "")[:80],
+        "type": str(meta.get("agentType") or ""),
+        "shape": str(meta.get("requestShape") or ""),  # background / foreground / ''（古い版）
+        "finished": bool(meta.get("finished")) or '"SubagentHandback"' in tail,
+        "start_t": datetime.fromtimestamp(start).strftime("%H:%M") if start else "",
+    }
+
+
 def _peek_model(transcript: Path, tail_bytes=None):
     """末尾だけ読んで最後の assistant レコードの model を短縮形で返す（委託のengine表記と対）。
 
@@ -755,6 +825,7 @@ def build_rows():
             "model": _peek_model(transcript),  # 委託の engine 表記と対（誰が働いているか）
             "last_human": _peek_last_human(transcript),  # 人間の最終発話（オフィス図の人間位置）
             "last_reply": _peek_last_reply(transcript),  # 🗨 エージェントの最後の返事（席の吹き出し・S25）
+            "subagents": _peek_subagents(transcript, sid, now_epoch, _today_epoch()),  # 🧩 今日のサブエージェント（机のちび分身・S25）
             "pid": rec.get("pid") or "",
             "sid": sid,   # タブ復元スナップショット用（claude-wt/restore_tabs.ps1）
             "cwd": cwd,
