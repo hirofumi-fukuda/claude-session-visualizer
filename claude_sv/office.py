@@ -658,13 +658,14 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,awa
   if(t.occupied_by.some(function(s){return s.live.rc;}))g+='<text x="'+(x+w/2-2)+'" y="'+(y-6)+'" text-anchor="end" font-size="15">📱</text>';}  // 📱 Remote Control オンの席（S22）
  // 🧩 サブエージェント（S25）: 作業中の分身は机の上の右側に半分の大きさで立つ（最大＝3−在席数・主と同じ絵・ホバーで中身）。今日終わった分は 🧩n の数字だけ
  var subs=subsOf(t),sb=subs.filter(function(a){return a.state==='busy';}),sd=subs.length-sb.length;
- if(live&&sb.length){var occ=t.occupied_by[0],mx=big?3:Math.max(1,3-t.occupied_by.length);sb.slice(0,mx).forEach(function(a,i){g+='<g class="typing" transform="translate('+(x+w/2-22-i*18)+','+(y+10)+') scale(0.5)"><title>'+esc(subTip(a))+'</title>'+sprite(0,0,MODEL_COL(occ.live.model),occ.live.model,'busy',t.name)+'</g>';});
-  if(sb.length>mx)g+='<text x="'+(x+w/2-22-mx*18+14)+'" y="'+(y+30)+'" text-anchor="end" font-size="10" fill="#fff">+'+(sb.length-mx)+'</text>';}
  if(sd)g+='<text x="'+(x-w/2+3)+'" y="'+(y-4)+'" font-size="11" fill="'+PAL.propTxt+'"><title>'+esc('🧩 今日終わった分身 '+sd+'件（席カードに一覧）')+'</title>🧩'+sd+'</text>';
- else if(away&&!onSofa){g+='<g opacity="0.45">'+sprite(x-w/2+14,y-62,MODEL_COL(away[0].model),away[0].model,'away',t.name)+'</g>';}  // ソファから溢れた離席者は席に半透明で残す
- else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="'+PAL.chair+'"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="'+PAL.chair2+'"/>';}
+ if(!live){if(away&&!onSofa){g+='<g opacity="0.45">'+sprite(x-w/2+14,y-62,MODEL_COL(away[0].model),away[0].model,'away',t.name)+'</g>';}  // ソファから溢れた離席者は席に半透明で残す
+  else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="'+PAL.chair+'"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="'+PAL.chair2+'"/>';}}
  g+='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="#8b5a2b"/><rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="8" fill="#b57a3e"/>';
  var nm=big?2:1;for(var i=0;i<nm;i++){var mx=x-(nm-1)*22+i*44-16;g+='<rect x="'+mx+'" y="'+(y+10)+'" width="32" height="22" fill="#111"/><rect x="'+(mx+2)+'" y="'+(y+12)+'" width="28" height="18" fill="'+SCR[st]+'"/>';if(st==='busy')g+='<rect class="cur" x="'+(mx+6)+'" y="'+(y+22)+'" width="4" height="4" fill="#fff"/>';}
+ // 🧩 分身は机の後（天板の上に立つ）に描く。transform 属性は外側の g に置く＝.typing の CSS アニメ（transform）が属性を上書きして原点に飛ぶため内側に分ける（10/21 テストで発覚）
+ if(live&&sb.length){var occ=t.occupied_by[0],smx=big?3:Math.max(1,3-t.occupied_by.length);sb.slice(0,smx).forEach(function(a,i){g+='<g transform="translate('+(x+w/2-22-i*18)+','+(y+10)+') scale(0.5)"><g class="typing"><title>'+esc(subTip(a))+'</title>'+sprite(0,0,MODEL_COL(occ.live.model),occ.live.model,'busy',t.name)+'</g></g>';});
+  if(sb.length>smx)g+='<text x="'+(x+w/2-22-smx*18+14)+'" y="'+(y+30)+'" text-anchor="end" font-size="10" fill="#fff">+'+(sb.length-smx)+'</text>';}
  var label=t.name+nickOf(t.name)+(cur&&cur.s?' S'+cur.s:'');
  g+='<rect x="'+(x-w/2)+'" y="'+(y+h+4)+'" width="'+w+'" height="18" fill="'+PAL.plate+'"'+(PAL.plateStroke?' stroke="'+PAL.plateStroke+'"':'')+'/><text x="'+x+'" y="'+(y+h+17)+'" text-anchor="middle" font-size="'+(label.length>12?10:12)+'" fill="#222">'+esc(label)+'</text>';
  if(t.occupied_by.length>1)g+='<text x="'+(x+w/2-4)+'" y="'+(y+h+17)+'" text-anchor="end" font-size="10" fill="#777">+'+(t.occupied_by.length-1)+'</text>';
