@@ -16,7 +16,7 @@ break_after_min 分で人間のスプライトが休憩室へ歩く（話しか�
 小物の絵は assets/props/<名前>.png があればそれ・無ければコード内の矩形描画（受け口が先・絵は後から差し替え）。
 🪑 hub_side（S22）: cfg.office.hub_side＝トラック名リスト。島に入れずハブの右隣に小机で並べる（同じ部屋・採番なしの運用型。10/20 からは空＝会議サポートは「会議室」島へ）。
 🏯 hub_room（S25）: cfg.office.hub_room＝ハブの部屋名（例「🏯 司令室」）。中央セルいっぱいを床にして名札を出す。セルを独占する島も同様に目一杯に広げ席は中央寄せ。
-🪪 nicknames（S25）: cfg.office.nicknames＝席名→呼び名（例 業務ハブ→ハブ・会議サポート→シノ）。名札・ツールチップ・席カードに「席名（呼び名）」。
+🪪 nicknames（S25）: cfg.office.nicknames＝席名→呼び名（例 業務ハブ→ハブ・会議サポート→店長〔10/21 までシノ〕）。名札・ツールチップ・席カードに「席名（呼び名）」。
    宛先＝セッション名は変えない（正本＝~/.claude/agent-ops.md ⑥ の表・config は名札用のコピー）。
 📱 Remote Control（S22）: 稼働台帳 sessions/<pid>.json に bridgeSessionId があれば RC オン＝席の右上に 📱（外出先から指示できる席・ハブ 10/15 発見）。
 🎨 配色（S22）: 図もページのテーマ（☀/☾・localStorage csv-theme＝他ページと共通）に追従。light＝明るいオフィス（白い壁・淡いタイル床・ベージュのカーペット）。オフィスは保存値が無ければ light・?theme=light|dark で一時上書き（保存しない・スクショ用）。
