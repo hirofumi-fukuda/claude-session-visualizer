@@ -28,7 +28,7 @@ break_after_min 分で人間のスプライトが休憩室へ歩く（話しか�
 workspace_hints の無い ws（副業）で名無しトラックが出るとトラック名キーでは追いつかないため。
 
 🧩 サブエージェント（S25）: 親の jsonl の隣 <sid>/subagents/agent-*.meta.json＋jsonl の stat・先頭/末尾 4KB だけ読む（live_board._peek_subagents）。
-作業中（jsonl が 90 秒以内に動き・報告の印なし）は親の机の上に半分の大きさで立つ（最大 3−在席数・ホバーで説明/種類/時刻）。今日終わった分は 🧩n。席カードに「🧩 今日の分身」一覧。
+作業中（jsonl が 90 秒以内に動き・報告の印なし）は親の机の上に 0.67 倍・薄め（0.8）の clone ポーズで立つ（最大 3−在席数・ホバーで説明/種類/時刻）。今日終わった分は 🧩n。席カードに「🧩 今日の分身」一覧。
 🟢/🔴 watcher 生死（S25）: watcher が毎ループ reports/watcher_beat.js に時刻を書き、ページがヘッダで「稼働／停止（最終 HH:MM:SS）」を出す（再読込なし・間隔の 3 倍で 🔴・タブ名にも 🔴）。
 更新の仕組みは daily_view と同じ: 中身が変わった時だけ office.html を書き、ページは office_stamp.js を
 数秒おきに読んで差分があればリロードする（スクロール・選択は保たない＝配置図なので不要）。
@@ -614,7 +614,7 @@ try{var sprQ=new URLSearchParams(location.search).get('spr');if(sprQ!==null)sprS
  var eff=sprSel||defT; if(eff){var parts=eff.split('/'),th=THEMES[parts[0]];if(th){SP={};Object.keys(th).forEach(function(k){SP[k]=th[k];});if(parts[1]&&th[parts[1]])SP.human=th[parts[1]];}}})();
 function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" width="36" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"'+(filt?' filter="url(#'+filt+')"':'')+'/>';}
 // テーマ内の「種類」＝ agent-<種類>[-<モデル>][-<ポーズ>].png の <種類>（モデル名・ポーズ名以外のトークン）。トラック名のハッシュで固定割当（config office.sprite_variants で上書き可）
-var MODELS={opus:1,sonnet:1,haiku:1,fable:1,unknown:1}, POSES={typing:1,idle:1,wait:1,rest:1};  // rest＝💤 離席中（絵が無ければ idle 系に落ちる・S23）
+var MODELS={opus:1,sonnet:1,haiku:1,fable:1,unknown:1}, POSES={typing:1,idle:1,wait:1,rest:1,clone:1};  // rest＝💤 離席中（絵が無ければ idle 系に落ちる・S23）／clone＝🧩 影分身（印＋煙・無ければ主の絵に落ちる・10/21）
 function varsOf(M){if(M.__vars)return M.__vars;var vs={};Object.keys(M).forEach(function(k){var t=k.split('-');if(t[0]!=='agent')return;t.slice(1).forEach(function(w){if(!MODELS[w]&&!POSES[w])vs[w]=1;});});return (M.__vars=Object.keys(vs).sort());}
 // 🧑‍🎨 キャラ変更（S24）: このブラウザで席ごとに選んだテーマ・種類（localStorage csv-office-chars＝{トラック名:{theme,variant}}・'' は既定に戻す）が config より優先
 // 🗂️ 席カード（S24）: 開いている席＝csv-office-card・キャラ欄を開いているか＝csv-office-cardchar
@@ -626,7 +626,7 @@ function variantFor(track,M){var ALL=varsOf(M||SP);if(!ALL.length)return '';if(V
 // 席ごとの別テーマ: トラック名（office.sprite_track_themes）＞部屋名（office.sprite_tenant_themes・trackRoom は部屋の配置時に埋まる）＞画面のテーマ。指定のテーマが無ければ次へ落ちる
 function mapFor(track){var th=TOVR[track]||NOVR[trackRoom[track]];if(th){var tm=THEMES[String(th).split('/')[0]];if(tm)return tm;}return SP;}
 function modelKey(model){return /opus/.test(model||'')?'opus':/sonnet/.test(model||'')?'sonnet':/haiku/.test(model||'')?'haiku':/fable/.test(model||'')?'fable':'unknown';}
-function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKey(model),pose=status==='busy'?'typing':status==='perm'?'wait':status==='away'?'rest':'idle',v=variantFor(track||'',M);
+function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKey(model),pose=status==='busy'?'typing':status==='perm'?'wait':status==='away'?'rest':status==='clone'?'clone':'idle',v=variantFor(track||'',M);
  var direct=[],gray=[];
  if(v){direct.push('agent-'+v+'-'+mk+'-'+pose,'agent-'+v+'-'+mk);gray.push('agent-'+v+'-'+pose,'agent-'+v);}
  direct.push('agent-'+mk+'-'+pose,'agent-'+mk);gray.push('agent-'+pose,'agent');
@@ -656,7 +656,7 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,awa
  if(leave)g+='<rect x="'+(x-w/2-6)+'" y="'+(y-70)+'" width="'+(w+12)+'" height="'+(h+98)+'" rx="8" fill="#a8a29e" fill-opacity="0.07" stroke="#a8a29e" stroke-dasharray="2 5" stroke-width="2"/><text x="'+x+'" y="'+(y-54)+'" text-anchor="middle" font-size="11" fill="'+PAL.emptyTxt+'">🏠 '+esc(leave.t)+' 退社</text><text x="'+x+'" y="'+(y-40)+'" text-anchor="middle" font-size="10" fill="'+PAL.emptyTxt+'">次 '+esc(leave.until_t)+'</text>';  // 🏠 退社＝主は不在（椅子だけ）・薄い点線枠と復帰日（S23 ⑩）
  if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});
   if(t.occupied_by.some(function(s){return s.live.rc;}))g+='<text x="'+(x+w/2-2)+'" y="'+(y-6)+'" text-anchor="end" font-size="15">📱</text>';}  // 📱 Remote Control オンの席（S22）
- // 🧩 サブエージェント（S25）: 作業中の分身は机の上の右側に半分の大きさで立つ（最大＝3−在席数・主と同じ絵・ホバーで中身）。今日終わった分は 🧩n の数字だけ
+ // 🧩 サブエージェント（S25）: 作業中の分身は机の上の右側に 0.67 倍で立つ（最大＝3−在席数・clone ポーズ・ホバーで中身）。今日終わった分は 🧩n の数字だけ
  var subs=subsOf(t),sb=subs.filter(function(a){return a.state==='busy';}),sd=subs.length-sb.length;
  if(sd)g+='<text x="'+(x-w/2+3)+'" y="'+(y-4)+'" font-size="11" fill="'+PAL.propTxt+'"><title>'+esc('🧩 今日終わった分身 '+sd+'件（席カードに一覧）')+'</title>🧩'+sd+'</text>';
  if(!live){if(away&&!onSofa){g+='<g opacity="0.45">'+sprite(x-w/2+14,y-62,MODEL_COL(away[0].model),away[0].model,'away',t.name)+'</g>';}  // ソファから溢れた離席者は席に半透明で残す
@@ -664,8 +664,9 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,awa
  g+='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="#8b5a2b"/><rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="8" fill="#b57a3e"/>';
  var nm=big?2:1;for(var i=0;i<nm;i++){var mx=x-(nm-1)*22+i*44-16;g+='<rect x="'+mx+'" y="'+(y+10)+'" width="32" height="22" fill="#111"/><rect x="'+(mx+2)+'" y="'+(y+12)+'" width="28" height="18" fill="'+SCR[st]+'"/>';if(st==='busy')g+='<rect class="cur" x="'+(mx+6)+'" y="'+(y+22)+'" width="4" height="4" fill="#fff"/>';}
  // 🧩 分身は机の後（天板の上に立つ）に描く。transform 属性は外側の g に置く＝.typing の CSS アニメ（transform）が属性を上書きして原点に飛ぶため内側に分ける（10/21 テストで発覚）
- if(live&&sb.length){var occ=t.occupied_by[0],smx=big?3:Math.max(1,3-t.occupied_by.length);sb.slice(0,smx).forEach(function(a,i){g+='<g transform="translate('+(x+w/2-22-i*18)+','+(y+10)+') scale(0.5)"><g class="typing"><title>'+esc(subTip(a))+'</title>'+sprite(0,0,MODEL_COL(occ.live.model),occ.live.model,'busy',t.name)+'</g></g>';});
-  if(sb.length>smx)g+='<text x="'+(x+w/2-22-smx*18+14)+'" y="'+(y+30)+'" text-anchor="end" font-size="10" fill="#fff">+'+(sb.length-smx)+'</text>';}
+ // 見た目＝デザイナー案「c 弱」（ふくちゃん 10/21 決定）: clone ポーズ（印＋足元の煙・絵が無ければ主の絵）× 倍率 0.67（1 ドット 2px・足元は y+34）× 不透明度 0.8。間隔 18（大机は 3 体目がモニターに被るので 16）
+ if(live&&sb.length){var occ=t.occupied_by[0],smx=big?3:Math.max(1,3-t.occupied_by.length),sp=big?16:18;sb.slice(0,smx).forEach(function(a,i){g+='<g transform="translate('+(x+w/2-26-i*sp)+','+(y+2)+') scale(0.67)" opacity="0.8"><g class="typing"><title>'+esc(subTip(a))+'</title>'+sprite(0,0,MODEL_COL(occ.live.model),occ.live.model,'clone',t.name)+'</g></g>';});
+  if(sb.length>smx)g+='<text x="'+(x+w/2-26-smx*sp+14)+'" y="'+(y+30)+'" text-anchor="end" font-size="10" fill="#fff">+'+(sb.length-smx)+'</text>';}
  var label=t.name+nickOf(t.name)+(cur&&cur.s?' S'+cur.s:'');
  g+='<rect x="'+(x-w/2)+'" y="'+(y+h+4)+'" width="'+w+'" height="18" fill="'+PAL.plate+'"'+(PAL.plateStroke?' stroke="'+PAL.plateStroke+'"':'')+'/><text x="'+x+'" y="'+(y+h+17)+'" text-anchor="middle" font-size="'+(label.length>12?10:12)+'" fill="#222">'+esc(label)+'</text>';
  if(t.occupied_by.length>1)g+='<text x="'+(x+w/2-4)+'" y="'+(y+h+17)+'" text-anchor="end" font-size="10" fill="#777">+'+(t.occupied_by.length-1)+'</text>';

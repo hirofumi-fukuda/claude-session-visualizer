@@ -205,7 +205,7 @@ def kind_parts(mod, pal, src):
     1枚＝agent_sources の絵＋種類の目印（(x, y, 層) を順に重ねる）。グレー版の絵でも目印は色のまま（体に溶けないように）。"""
     out = {}
     for kind, (label, stamps) in getattr(mod, "KINDS", {}).items():
-        if kind in MODELS + ["unknown", "typing", "idle", "wait"]:
+        if kind in MODELS + ["unknown", "typing", "idle", "wait", "rest", "clone"]:
             raise SystemExit(f"{mod.NAME}: KINDS の {kind!r} はモデル名・ポーズ名（office.py が種類と見なさない）")
         marks = ["." * W] * H
         for x, y, layer in stamps:
