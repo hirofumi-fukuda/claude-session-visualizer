@@ -749,7 +749,7 @@ function whiteboard(bx,by,bw,bhMax,band){var c=D.counts,d=new Date(),date=(d.get
   pend.concat(done).slice(0,3).forEach(function(t){lines.push({t:(t.mark||'・')+' '+t.t,col:t.done?'#9ca3af':'#111',strike:t.done,tip:t.t});});
   if(!top.length)lines.push({t:'（🔴 TOP の見出しなし）',col:'#9ca3af'});
   var ev=band?null:evLine();if(ev)lines.push({t:ev.text,alts:ev.alts,col:'#b45309',id:'wbev'});
-  var wt=band?null:BOARD.waiting;if(wt&&wt.n){  // 帯（BAND）の時は ⏰ は 🕐 時計・返信待ちは 📟 電光掲示板へvar ur=(wt.items||[]).slice(0,wt.urgent||0);  // 🔴 だけ名前・他は件数（S24・items は 🔴 が先頭）
+  var wt=band?null:BOARD.waiting;if(wt&&wt.n){var ur=(wt.items||[]).slice(0,wt.urgent||0);  // 帯（BAND）の時は ⏰ は 🕐 時計・返信待ちは 📟 電光掲示板へ／🔴 だけ名前・他は件数（S24・items は 🔴 が先頭）
    var wal=[];for(var k=ur.length;k>=1;k--)wal.push('⏸ 返信待ち '+wt.n+'件：🔴 '+ur.slice(0,k).join('・')+(wt.n-k?' ほか'+(wt.n-k)+'件':''));wal.push('⏸ 返信待ち '+wt.n+'件'+(wt.urgent?'（🔴'+wt.urgent+'）':''));  // 入りきらなければ名前を後ろから減らす
    lines.push({t:wal[0],alts:wal,col:'#111',tip:'返信待ち（こちらボール外）\n'+(wt.items||[]).join('\n')});}}
  var Hh=Math.min(bhMax,44+lines.length*LH+10),y0=by+24;
