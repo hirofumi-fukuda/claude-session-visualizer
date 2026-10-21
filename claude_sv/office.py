@@ -601,7 +601,7 @@ var n=D.tracks.length, RX=Math.max(430, n*62), RY=270, W=RX*2+260, H=740, CX=W/2
 var MODEL_COL=function(m){return !m?'#c24b4b':/opus/.test(m)?'#f472b6':/sonnet/.test(m)?'#3b82f6':/haiku/.test(m)?'#d4a017':/fable/.test(m)?'#8a5cf6':'#c24b4b';};
 // エージェント＝ロボット（アンテナ・金属の頭・光る目）。シャツ色＝モデル。人間（下の HS）とは頭の形で見分ける
 var SPR=["....AA......","....AA......","..MMMMMMMM..",".MMMMMMMMMM.",".MVVMMMMVVM.",".MMMMMMMMMM.","..MMMMMMMM..","....MM......","..TTTTTTTT..",".TTTTTTTTTT.",".M.TTTTTT.M.",".M.TTTTTT.M.","...TTTTTT...","...MM..MM...","...MM..MM...","...BB..BB..."];
-var PAL={M:'#b8c0cc',V:'#5ad1e6',B:'#222'};
+var SPAL={M:'#b8c0cc',V:'#5ad1e6',B:'#222'};  // コード内ドット絵の色（PNG が無い時だけ）。図の配色 PAL（L647）と名前が被って黒く描かれていたので改名（10/21）
 // 絵のテーマ: assets/sprites/ 直下（既定）か assets/sprites/<テーマ>/。選択は localStorage に残し、切替はページ再読込で反映
 var THEMES=D.sprite_themes||{}, SP=D.sprites||{}, tints={}, sprSel='';
 try{sprSel=localStorage.getItem('csv-sprite-theme')||'';}catch(e){}
@@ -632,7 +632,7 @@ function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKe
  direct.push('agent-'+mk+'-'+pose,'agent-'+mk);gray.push('agent-'+pose,'agent');
  for(var i=0;i<direct.length;i++)if(M[direct[i]])return img(M[direct[i]],x,y,null);
  for(var j=0;j<gray.length;j++)if(M[gray[j]]){var id='tint'+shirt.replace('#','');tints[id]=shirt;return img(M[gray[j]],x,y,id);}
- var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=(c==='T'||c==='A')?shirt:PAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
+ var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=(c==='T'||c==='A')?shirt:SPAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
 var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
 // 🧩 サブエージェント（S25）: 席の稼働セッション全部の分身を新しい順に。state＝busy（jsonl が 90 秒以内に動いている）／done（報告済み）／stale（印が無く止まっている＝foreground 起動や途中で切れた）
 function subsOf(t){var o=[];(t.occupied_by||[]).forEach(function(s){((s.live&&s.live.subagents)||[]).forEach(function(a){o.push(a);});});o.sort(function(a,b){return b.ts-a.ts;});return o;}
