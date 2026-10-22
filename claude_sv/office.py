@@ -649,15 +649,17 @@ var LIGHT=document.documentElement.dataset.theme==='light';
 function shade(c,f){var n=parseInt(c.slice(1),16);function k(v){return Math.max(0,Math.min(255,Math.round(v*f)));}return '#'+((1<<24)|(k(n>>16&255)<<16)|(k(n>>8&255)<<8)|k(n&255)).toString(16).slice(1);}
 var PAL=LIGHT?{tileA:'#e6e2d9',tileB:'#ebe7df',grid:'#d8d3c8',carpetA:'#dccfb5',carpetB:'#d0c2a5',wall:'#fbfaf6',wallOp:1,wallStroke:'#8f887b',wallStrokeOp:0.9,wallW:6,roomTxt:'#1f2937',roomSub:'#4b5563',emptyTxt:'#6b7280',chair:'#5b6478',chair2:'#404859',plate:'#fffdf8',plateStroke:'#bfb8a8',islOp:0.18,sideOp:0.12,propTxt:'#374151',doorTxt:'#374151',doorStroke:'#6b7280',txt:function(c){return shade(c,0.66);}}
 :{tileA:'#2a2d3f',tileB:'#2f3348',grid:null,carpetA:'#3d3330',carpetB:'#4a3f3a',wall:'#000',wallOp:0.16,wallStroke:'#cbd5e1',wallStrokeOp:0.5,wallW:4,roomTxt:'#e2e8f0',roomSub:'#cbd5e1',emptyTxt:'#94a3b8',chair:'#3a3e58',chair2:'#2a2d44',plate:'#f3efe0',plateStroke:null,islOp:0.10,sideOp:0.05,propTxt:'#cbd5e1',doorTxt:'#cbd5e1',doorStroke:'#cbd5e1',txt:function(c){return c;}};
-function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,away=(!live&&t.away&&t.away.length)?t.away:null,onSofa=!!(away&&awayAt[t.name]>=0),leave=(!live&&t.leave)?t.leave:null;  // leave＝🏠 退社（S23 ⑩・Python 側で live/away は落としてある）
- var st='empty'; if(live){st=t.occupied_by.some(function(s){return s.live.status==='perm';})?'perm':t.occupied_by.some(function(s){return s.live.status==='busy';})?'busy':'idle';}
- var g='<g class="desk" data-track="'+esc(t.name)+'" style="cursor:pointer"'+(t.dormant?' opacity="'+(LIGHT?0.68:0.5)+'"':leave?' opacity="'+(LIGHT?0.85:0.75)+'"':'')+'>';  // 休眠席は薄く（ライトは背景が明るいぶん濃いめ）・🏠 退社は少し薄く
- var tip=t.name+nickOf(t.name)+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.rc?' 📱RC':'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):leave?'🏠 退社（'+leave.t+' に締め・次の出勤 '+leave.until_t+'）\n   '+(leave.name||'')+' '+(leave.model||'')+(leave.s?' S'+leave.s:'')+(leave.text?'\n   「'+leave.text+'」':''):away?'💤 離席中（プロセスなし・最後の動き '+away[0].t+(onSofa?'・休憩室のソファ':'')+'）\n'+away.map(function(a){return '   '+(a.name||'')+' '+(a.model||'')+(a.s?' S'+a.s:'')+' 最後 '+a.t;}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');
+function deskTip(t,cur,live,away,onSofa,leave){return t.name+nickOf(t.name)+(cur&&cur.s?' S'+cur.s:'')+'\n'+(live?t.occupied_by.map(function(s){return (s.live.status==='busy'?'🟢':s.live.status==='perm'?'🔴許可待ち':'🟡')+' '+(s.live.name||'')+' '+(s.live.model||'')+(s.s?' S'+s.s:'')+(s.live.rc?' 📱RC':'')+(s.live.title?'\n   '+s.live.title:'');}).join('\n'):leave?'🏠 退社（'+leave.t+' に締め・次の出勤 '+leave.until_t+'）\n   '+(leave.name||'')+' '+(leave.model||'')+(leave.s?' S'+leave.s:'')+(leave.text?'\n   「'+leave.text+'」':''):away?'💤 離席中（プロセスなし・最後の動き '+away[0].t+(onSofa?'・休憩室のソファ':'')+'）\n'+away.map(function(a){return '   '+(a.name||'')+' '+(a.model||'')+(a.s?' S'+a.s:'')+' 最後 '+a.t;}).join('\n'):t.dormant?'停止中（この時間幅にセッションなし）':'空席（稼働セッションなし）')+(t.sessions.length?'\nセッション履歴: '+t.sessions.map(function(s){return s.s?'S'+s.s:'S?';}).join(' '):'');}
+function stOf(t,live){if(!live)return 'empty';return t.occupied_by.some(function(s){return s.live.status==='perm';})?'perm':t.occupied_by.some(function(s){return s.live.status==='busy';})?'busy':'idle';}
+function occAt(x,y,big,n,i){return NODESK?[x-(n-1)*20+i*40-18,y-40]:[x-(big?95:60)+14+i*44,y-62];}  // 在席 i 人目の絵の左上（机あり＝机の左から 44 間隔／🧍 机なし＝基準点を中心に 40 間隔）
+function deskG(t,leave){return '<g class="desk" data-track="'+esc(t.name)+'" style="cursor:pointer"'+(t.dormant?' opacity="'+(LIGHT?0.68:0.5)+'"':leave?' opacity="'+(LIGHT?0.85:0.75)+'"':'')+'>';}  // 休眠席は薄く（ライトは背景が明るいぶん濃いめ）・🏠 退社は少し薄く
+function desk(x,y,t,big){if(NODESK)return stand(x,y,t,big);var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,away=(!live&&t.away&&t.away.length)?t.away:null,onSofa=!!(away&&awayAt[t.name]>=0),leave=(!live&&t.leave)?t.leave:null;  // leave＝🏠 退社（S23 ⑩・Python 側で live/away は落としてある）
+ var st=stOf(t,live), g=deskG(t,leave), tip=deskTip(t,cur,live,away,onSofa,leave);
  g+='<title>'+esc(tip)+'</title>';TIPS[t.name]=tip;
  g+='<rect class="chsel'+(CARD===t.name?' on':'')+'" x="'+(x-w/2-8)+'" y="'+(y-72)+'" width="'+(w+16)+'" height="'+(h+102)+'" rx="9" fill="#8b5cf6" fill-opacity="0.12" stroke="#8b5cf6" stroke-dasharray="5 3" stroke-width="3"/>';  // 🗂️ 席の当たり枠（見えない・席の空いた所も押せる）＝カードを開いている席だけ見せる
  if(away)g+='<rect x="'+(x-w/2-6)+'" y="'+(y-70)+'" width="'+(w+12)+'" height="'+(h+98)+'" rx="8" fill="#64748b" fill-opacity="0.08" stroke="#64748b" stroke-dasharray="6 4" stroke-width="2"/><text class="zz" x="'+(x+w/2-4)+'" y="'+(y-52)+'" text-anchor="end" font-size="14">💤</text>';  // 💤 離席中＝席は点線枠で確保（S23）
  if(leave)g+='<rect x="'+(x-w/2-6)+'" y="'+(y-70)+'" width="'+(w+12)+'" height="'+(h+98)+'" rx="8" fill="#a8a29e" fill-opacity="0.07" stroke="#a8a29e" stroke-dasharray="2 5" stroke-width="2"/><text x="'+x+'" y="'+(y-54)+'" text-anchor="middle" font-size="11" fill="'+PAL.emptyTxt+'">🏠 '+esc(leave.t)+' 退社</text><text x="'+x+'" y="'+(y-40)+'" text-anchor="middle" font-size="10" fill="'+PAL.emptyTxt+'">次 '+esc(leave.until_t)+'</text>';  // 🏠 退社＝主は不在（椅子だけ）・薄い点線枠と復帰日（S23 ⑩）
- if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(x-w/2+14+i*44,y-62,MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});
+ if(live){t.occupied_by.slice(0,big?3:2).forEach(function(s,i){var q=occAt(x,y,big,0,i);g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(q[0],q[1],MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});
   if(t.occupied_by.some(function(s){return s.live.rc;}))g+='<text x="'+(x+w/2-2)+'" y="'+(y-6)+'" text-anchor="end" font-size="15">📱</text>';}  // 📱 Remote Control オンの席（S22）
  // 🧩 サブエージェント（S25）: 作業中の分身は机の上の右側に 0.67 倍で立つ（最大＝3−在席数・clone ポーズ・ホバーで中身）。今日終わった分は 🧩n の数字だけ
  var subs=subsOf(t),sb=subs.filter(function(a){return a.state==='busy';}),sd=subs.length-sb.length;
@@ -685,12 +687,44 @@ function desk(x,y,t,big){var w=big?190:120,h=big?52:40,cur=t.cur,live=t.live,awa
    g+='<g class="envs" data-e="'+fi+'"><title>'+esc('❌ 不達 '+nf+'通（クリックで最新の線）\n→ '+D.edges[fi].to+'「'+D.edges[fi].summary+'」')+'</title><polygon points="'+(fx-7)+','+(fy-2)+' '+(fx-3)+','+(fy-7)+' '+(fx+3)+','+(fy-6)+' '+(fx+7)+','+(fy-1)+' '+(fx+5)+','+(fy+6)+' '+(fx-2)+','+(fy+7)+' '+(fx-7)+','+(fy+4)+'" fill="#f1efe8" stroke="#888"/><path d="M'+(fx-3)+','+(fy-3)+' L'+(fx+3)+','+(fy+3)+' M'+(fx+3)+','+(fy-3)+' L'+(fx-3)+','+(fy+3)+'" stroke="#e5533b" stroke-width="2.2"/>'+(nf>1?'<text x="'+(fx+9)+'" y="'+(fy+10)+'" font-size="10" font-weight="700" fill="#e5533b">'+nf+'</text>':'')+'</g>';}
  }else if(un)g+='<rect x="'+(x+w/2-30)+'" y="'+(y-14)+'" width="30" height="14" fill="#f5c542"/><text x="'+(x+w/2-15)+'" y="'+(y-3)+'" text-anchor="middle" font-size="11" fill="#222">📨'+un+'</text>';
  return g+'</g>';}
+// 🧍 机なし（S25 ⑪）: 同じ基準点 (x,y) で、頭上の名札（y-60）→ 立ち姿（y-40〜y+8）→ 足元（🧩n・分身は右横）。名札の枠＝主のモデル色・左の ●＝状態（机ありのモニター色と同じ）
+function stand(x,y,t,big){var w=big?150:96,cur=t.cur,live=t.live,away=(!live&&t.away&&t.away.length)?t.away:null,onSofa=!!(away&&awayAt[t.name]>=0),leave=(!live&&t.leave)?t.leave:null;
+ var st=stOf(t,live), g=deskG(t,leave), tip=deskTip(t,cur,live,away,onSofa,leave);
+ g+='<title>'+esc(tip)+'</title>';TIPS[t.name]=tip;
+ g+='<rect class="chsel'+(CARD===t.name?' on':'')+'" x="'+(x-w/2-4)+'" y="'+(y-66)+'" width="'+(w+8)+'" height="90" rx="9" fill="#8b5cf6" fill-opacity="0.12" stroke="#8b5cf6" stroke-dasharray="5 3" stroke-width="3"/>';
+ if(away)g+='<rect x="'+(x-w/2-2)+'" y="'+(y-64)+'" width="'+(w+4)+'" height="86" rx="8" fill="#64748b" fill-opacity="0.08" stroke="#64748b" stroke-dasharray="6 4" stroke-width="2"/><text class="zz" x="'+(x+w/2-2)+'" y="'+(y-28)+'" text-anchor="end" font-size="14">💤</text>';
+ if(leave)g+='<rect x="'+(x-w/2-2)+'" y="'+(y-64)+'" width="'+(w+4)+'" height="86" rx="8" fill="#a8a29e" fill-opacity="0.07" stroke="#a8a29e" stroke-dasharray="2 5" stroke-width="2"/><text x="'+x+'" y="'+(y+21)+'" text-anchor="middle" font-size="9" fill="'+PAL.emptyTxt+'">🏠 '+esc(leave.t)+' 退社・次 '+esc(leave.until_t)+'</text>';
+ var occ=live?t.occupied_by.slice(0,big?3:2):[],n=occ.length,rx=x+(n?(n-1)*20:0);  // rx＝いちばん右の主の中心
+ occ.forEach(function(s,i){var q=occAt(x,y,big,n,i);g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(q[0],q[1],MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});
+ if(live&&t.occupied_by.some(function(s){return s.live.rc;}))g+='<text x="'+(x+w/2+2)+'" y="'+(y-48)+'" font-size="12">📱</text>';
+ var subs=subsOf(t),sb=subs.filter(function(a){return a.state==='busy';}),sd=subs.length-sb.length;
+ if(sd)g+='<text x="'+(x-w/2+2)+'" y="'+(y+9)+'" font-size="11" fill="'+PAL.propTxt+'"><title>'+esc('🧩 今日終わった分身 '+sd+'件（席カードに一覧）')+'</title>🧩'+sd+'</text>';
+ if(!live){if(away&&!onSofa)g+='<g opacity="0.45">'+sprite(x-18,y-40,MODEL_COL(away[0].model),away[0].model,'away',t.name)+'</g>';
+  else g+='<ellipse cx="'+x+'" cy="'+(y+5)+'" rx="15" ry="5" fill="none" stroke="'+PAL.chair+'" stroke-dasharray="4 3" stroke-width="1.5"/>';}  // 空席＝足元の点線だけ
+ if(live&&sb.length){var o0=t.occupied_by[0],smx=big?3:2,sp=14,cx0=rx+20;sb.slice(0,smx).forEach(function(a,i){g+='<g transform="translate('+(cx0+i*sp)+','+(y-24)+') scale(0.67)" opacity="0.8"><g class="typing"><title>'+esc(subTip(a))+'</title>'+sprite(0,0,MODEL_COL(o0.live.model),o0.live.model,'clone',t.name)+'</g></g>';});
+  if(sb.length>smx)g+='<text x="'+(cx0+smx*sp+12)+'" y="'+(y+8)+'" font-size="10" fill="'+PAL.propTxt+'">+'+(sb.length-smx)+'</text>';}
+ var label=t.name+nickOf(t.name)+(cur&&cur.s?' S'+cur.s:'')+(t.occupied_by.length>1?' +'+(t.occupied_by.length-1):''),bc=live?MODEL_COL(t.occupied_by[0].live.model):(PAL.plateStroke||'#777');
+ g+='<rect x="'+(x-w/2)+'" y="'+(y-60)+'" width="'+w+'" height="15" rx="3" fill="'+PAL.plate+'" stroke="'+bc+'" stroke-width="'+(live?2:1)+'"/><circle cx="'+(x-w/2+7)+'" cy="'+(y-52.5)+'" r="3.5" fill="'+SCR[st]+'"/><text x="'+(x+5)+'" y="'+(y-49)+'" text-anchor="middle" font-size="10" fill="#222">'+esc(fit(label,w-12,10))+'</text>';
+ var un=unreadBy[t.name]||0;
+ if(ARW==='env'){
+  if(un){var li=lastUn[t.name],fr=Date.now()-Date.parse(D.edges[li].ts)<15*60000,ex=rx+18,ey=y-40,k;
+   g+='<g class="envs'+(fr?' fresh':'')+'" data-e="'+li+'"><title>'+esc('📨 未読 '+un+'通（クリックで最新の線）\n'+D.edges[li].frm+'「'+D.edges[li].summary+'」')+'</title>';
+   for(k=Math.min(un,3)-1;k>=0;k--)g+=envelope(ex+6*k,ey-3*k);
+   if(un>3)g+='<text x="'+(ex+34)+'" y="'+(ey+4)+'" font-size="11" font-weight="700" fill="#b8860b">+'+(un-3)+'</text>';
+   g+='</g>';}
+  var nf=failBy[t.name]||0;
+  if(nf){var fx=x-(n?(n-1)*20:0)-26,fy=y-30,fi=lastFail[t.name];  // 不達＝いちばん左の主の肩口にくしゃ紙と ×
+   g+='<g class="envs" data-e="'+fi+'"><title>'+esc('❌ 不達 '+nf+'通（クリックで最新の線）\n→ '+D.edges[fi].to+'「'+D.edges[fi].summary+'」')+'</title><polygon points="'+(fx-7)+','+(fy-2)+' '+(fx-3)+','+(fy-7)+' '+(fx+3)+','+(fy-6)+' '+(fx+7)+','+(fy-1)+' '+(fx+5)+','+(fy+6)+' '+(fx-2)+','+(fy+7)+' '+(fx-7)+','+(fy+4)+'" fill="#f1efe8" stroke="#888"/><path d="M'+(fx-3)+','+(fy-3)+' L'+(fx+3)+','+(fy+3)+' M'+(fx+3)+','+(fy-3)+' L'+(fx-3)+','+(fy+3)+'" stroke="#e5533b" stroke-width="2.2"/>'+(nf>1?'<text x="'+(fx+9)+'" y="'+(fy+10)+'" font-size="10" font-weight="700" fill="#e5533b">'+nf+'</text>':'')+'</g>';}
+ }else if(un)g+='<rect x="'+(rx+18)+'" y="'+(y-44)+'" width="30" height="14" fill="#f5c542"/><text x="'+(rx+33)+'" y="'+(y-33)+'" text-anchor="middle" font-size="11" fill="#222">📨'+un+'</text>';
+ return g+'</g>';}
 var pos={}, floors='', walls='', door={}, trackRoom={}, hubVisible=true, LOUNGE=null, WIN=null, SOFA=null, awayAt={};  // SOFA＝💤 離席者の座る位置（drawLounge で埋まる）・awayAt＝席名→ソファ番号（-1＝溢れ）
 var ROOMS=D.rooms||[];
 // ---------- ビル＝テナント（部屋・S22）。?ws=〈部屋名の一部〉が最優先・無ければ localStorage（ヘッダのボタンで保存）・既定=全館 ----------
 var wsSel=''; try{wsSel=localStorage.getItem('csv-office-ws')||'';}catch(e){}
 // 🧲 ハブ寄せ（S22）: 稼働中の席を島の中でハブに近いマスから詰める。既定=cfg.office.live_near_hub・ヘッダのボタンで切替（localStorage）
 var MAGNET=!!D.live_near_hub; try{var mg=localStorage.getItem('csv-office-magnet');if(mg!==null)MAGNET=(mg==='1');}catch(e){}
+// 🧍 机なし（S25 ⑪・個人PC 競馬場方式の移植・10/22 試行）: 机・モニター・椅子を省き、立ち姿＋頭上の名札だけで 104×96 のマスに詰める（机ありは 166×135）。ヘッダのボタンで切替（localStorage）
+var NODESK=false; try{NODESK=localStorage.getItem('csv-office-nodesk')==='1';}catch(e){}
 var TL={}; D.tracks.forEach(function(t){TL[t.name]=t;});
 function liveRank(n){var t=TL[n];return (t&&(t.live||(t.occupied_by&&t.occupied_by.length)))?0:1;}
 try{var wsQ=new URLSearchParams(location.search).get('ws');if(wsQ!==null)wsSel=wsQ;}catch(e){}
@@ -706,14 +740,16 @@ function doorOf(name){var rn=trackRoom[name];return (rn&&door[rn])||null;}
 (function(){var el=document.getElementById('wsf');if(!el)return;var h='';
  if(ROOMS.length)[['','🏢 全館']].concat(ROOMS.map(function(r){return [r.name,r.name];})).forEach(function(o){var on=o[0]===''?!wsSel:(shown.length===1&&shown[0].name===o[0]);h+='<button type="button" class="tgl wsb'+(on?' on':'')+'" data-ws="'+esc(o[0])+'">'+esc(o[1])+'</button>';});
  h+='<button type="button" id="magnet" class="tgl wsb'+(MAGNET?' on':'')+'" title="稼働中の席を島の中でハブ側のマスから詰める（クリックで切替）">🧲 ハブ寄せ</button>';
+ h+='<button type="button" id="nodesk" class="tgl wsb'+(NODESK?' on':'')+'" title="机を省いて立ち姿＋頭上の名札だけで詰めて並べる（席が増えて図が縮む時用・クリックで切替）">🧍 机なし</button>';
  h+='<button type="button" id="arwmode" class="tgl wsb'+(ARW==='line'?' on':'')+'" title="オン＝やり取りを矢印の線で常に出す（従来）／オフ＝封筒・紙飛行機・くしゃ紙で見せ、線はクリックした時だけ">〰 線</button>';
  if(D.lounge)h+='<button type="button" id="propedit" class="tgl wsb'+(LPE?' on':'')+'" title="休憩室の小物をドラッグで動かす（このブラウザだけ・config へは 📋 JSON をコピー）。配置モード中は自動更新を保留">🪑 小物配置</button>';
  el.innerHTML=h; el.querySelectorAll('.wsb[data-ws]').forEach(function(b){b.onclick=function(){var v=b.dataset.ws;try{localStorage.setItem('csv-office-ws',v);}catch(e){}var u=new URL(location.href);if(v)u.searchParams.set('ws',v);else u.searchParams.delete('ws');location.href=u.toString();};});
  var mb=document.getElementById('magnet');if(mb)mb.onclick=function(){try{localStorage.setItem('csv-office-magnet',MAGNET?'0':'1');}catch(e){}location.reload();};
+ var nb=document.getElementById('nodesk');if(nb)nb.onclick=function(){try{localStorage.setItem('csv-office-nodesk',NODESK?'0':'1');}catch(e){}location.reload();};
  var ab=document.getElementById('arwmode');if(ab)ab.onclick=function(){try{localStorage.setItem('csv-office-arrows',ARW==='line'?'env':'line');}catch(e){}location.reload();};})();
 var byName={}; D.tracks.forEach(function(t){byName[t.name]=t;}); byName[HUB]=D.hub;
 function roomCount(r){var ts=roomTracks(r),live=0;ts.forEach(function(n){var t=byName[n];if(t)live+=(t.occupied_by||[]).length;});return ts.length+'席・'+live+'人';}
-var PX=166,PY=135,PAD=22,TITLE=26,G=48,M=24,RP=18,RT=36,RG=44;
+var PX=NODESK?104:166,PY=NODESK?96:135,DW=NODESK?96:120,CT=NODESK?66:62,PYG=NODESK?4:11,PAD=22,TITLE=26,G=48,M=24,RP=18,RT=36,RG=44;  // PX/PY＝マスの間隔・DW＝机（名札）の幅・CT＝マスの上端から席の基準点 y まで・PYG＝最終行の余り（🧍 机なしは詰める）
 var ISL_COL=['#f5c542','#39d353','#5ad1e6','#e66fd1','#f97316','#a78bfa','#94a3b8','#22c55e'];
 // ---------- ☕ 休憩室と小物（S22）。assets/props/<名前>.png があれば絵・無ければ矩形で仮描き（箱の大きさは README） ----------
 var PR=D.props||{};
@@ -850,14 +886,14 @@ function layoutIslands(islands,OX,OY){
  var SLOT={r:[2,1],l:[0,1],t:[1,0],b:[1,2],tr:[2,0],tl:[0,0],br:[2,2],bl:[0,2]}, ORDER=['r','l','t','b','tr','tl','br','bl'];
  var cells={}; for(var cx0=0;cx0<3;cx0++)for(var cy0=0;cy0<3;cy0++)cells[cx0+','+cy0]=[];
  islands.forEach(function(isl,i){var sl=SLOT[isl.slot]||SLOT[ORDER[i%ORDER.length]];var m=isl.tracks.length,cols=Math.min(m,Math.max(Math.ceil(Math.sqrt(m)),Math.ceil(m/2))),rows=Math.ceil(m/cols);
-  isl.cols=cols;isl.rows=rows;isl.w=isl.nw=(cols-1)*PX+120+PAD*2+30;isl.h=isl.nh=rows*PY-11+PAD*2+TITLE;cells[sl[0]+','+sl[1]].push(isl);});
+  isl.cols=cols;isl.rows=rows;isl.w=isl.nw=(cols-1)*PX+DW+PAD*2+30;isl.h=isl.nh=rows*PY-PYG+PAD*2+TITLE;cells[sl[0]+','+sl[1]].push(isl);});
  var LG=D.lounge?{lounge:true,name:D.lounge.name,w:420,h:230}:null; if(LG){var ls=SLOT[D.lounge.slot]||SLOT.tr;cells[ls[0]+','+ls[1]].push(LG);}  // ☕ 休憩室＝島の空きセル（既定 tr）。島と同居なら縦に積む
- var NS=SIDE.length, SHIFT=NS?65+(NS-1)*70:0, HUBW=NS?390+(NS-1)*140:260, HUBH=200, colW=[0,HUBW,0], rowH=[0,HUBH,0];  // 🪑 hub_side の小机の分だけ中央セルを広げ、ハブを左へずらす
+ var NS=SIDE.length, SG=NODESK?104:140, SHIFT=NS?(NODESK?52:65)+(NS-1)*SG/2:0, HUBW=NS?(NODESK?330:390)+(NS-1)*SG:260, HUBH=NODESK?150:200, colW=[0,HUBW,0], rowH=[0,HUBH,0];  // 🪑 hub_side の小机の分だけ中央セルを広げ、ハブを左へずらす
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var w=Math.max.apply(null,L.map(function(x){return x.w;})),h=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
   colW[c[0]]=Math.max(colW[c[0]],w);rowH[c[1]]=Math.max(rowH[c[1]],h);});
  var colX=[OX,OX+colW[0]+(colW[0]?G:0)], rowY=[OY,OY+rowH[0]+(rowH[0]?G:0)]; colX[2]=colX[1]+colW[1]+G; rowY[2]=rowY[1]+rowH[1]+G;
  var hx=colX[1]+colW[1]/2-SHIFT, hy=rowY[1]+rowH[1]/2+30;  // ハブの中心（🧲 の距離の基準）
- SIDE.forEach(function(n,k){pos[n]=[Math.round(hx+165+k*140),Math.round(hy)];});  // 小机＝ハブ（幅190）の右 10px から 140px 間隔
+ SIDE.forEach(function(n,k){pos[n]=[Math.round(hx+(NODESK?135:165)+k*SG),Math.round(hy)];});  // 小机＝ハブ（幅190）の右 10px から 140px 間隔
  if(D.hub_room||NS){var HR=D.hub_room||HUB;floors+='<rect x="'+colX[1]+'" y="'+rowY[1]+'" width="'+colW[1]+'" height="'+rowH[1]+'" rx="12" fill="#f5c542" fill-opacity="'+PAL.islOp+'" stroke="'+PAL.txt('#f5c542')+'" stroke-opacity="0.45" stroke-width="2"/><text x="'+(colX[1]+12)+'" y="'+(rowY[1]+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt('#f5c542')+'">'+esc(HR)+'</text><text x="'+(colX[1]+colW[1]-10)+'" y="'+(rowY[1]+18)+'" text-anchor="end" font-size="11" fill="'+PAL.txt('#f5c542')+'" fill-opacity="0.8">'+(1+NS)+'席</text>'+plant(colX[1]+colW[1]-36,rowY[1]+rowH[1]-55,0.7);}  // 🏯 ハブの部屋＝中央セルいっぱい（S25・hub_room の名前。小机があれば同じ部屋）
  Object.keys(cells).forEach(function(k){var L=cells[k];if(L.length===1){var c=k.split(',').map(Number);L[0].w=colW[c[0]];L[0].h=rowH[c[1]];}});  // セルを独占する島・休憩室は目一杯に広げる（席は中央に寄せる・S25）
  Object.keys(cells).forEach(function(k){var c=k.split(',').map(Number),L=cells[k];if(!L.length)return;var tot=L.reduce(function(a,x){return a+x.h;},0)+G*(L.length-1);
@@ -865,15 +901,15 @@ function layoutIslands(islands,OX,OY){
   L.forEach(function(isl){var x=c[0]===0?colX[0]+colW[0]-isl.w:c[0]===2?colX[2]:colX[1]+(colW[1]-isl.w)/2;if(isl.lounge){floors+=drawLounge(x,y,isl.w,isl.h,isl.name);y+=isl.h+G;return;}var col=ISL_COL[islands.indexOf(isl)%ISL_COL.length];
    floors+='<rect x="'+x+'" y="'+y+'" width="'+isl.w+'" height="'+isl.h+'" rx="12" fill="'+col+'" fill-opacity="'+PAL.islOp+'" stroke="'+PAL.txt(col)+'" stroke-opacity="0.45" stroke-width="2"/><text x="'+(x+12)+'" y="'+(y+18)+'" font-size="13" font-weight="600" fill="'+PAL.txt(col)+'">'+esc(isl.name)+'</text><text x="'+(x+isl.w-10)+'" y="'+(y+18)+'" text-anchor="end" font-size="11" fill="'+PAL.txt(col)+'" fill-opacity="0.8">'+isl.tracks.length+'席</text>';
    floors+=plant(x+isl.w-36,y+isl.h-55,0.7);  // 🪴 島の角の観葉植物（飾り・配置計算には影響しない）
-   var cellsOf=[],sx=(isl.w-isl.nw)/2,sy=(isl.h-isl.nh)/2;for(var k=0;k<isl.tracks.length;k++){var cc=k%isl.cols,rr=Math.floor(k/isl.cols);cellsOf.push([Math.round(x+sx+PAD+60+cc*PX),Math.round(y+sy+PAD+TITLE+62+rr*PY)]);}
+   var cellsOf=[],sx=(isl.w-isl.nw)/2,sy=(isl.h-isl.nh)/2;for(var k=0;k<isl.tracks.length;k++){var cc=k%isl.cols,rr=Math.floor(k/isl.cols);cellsOf.push([Math.round(x+sx+PAD+DW/2+cc*PX),Math.round(y+sy+PAD+TITLE+CT+rr*PY)]);}
    var names=isl.tracks.slice();if(MAGNET){cellsOf.sort(function(a,b){return Math.hypot(a[0]-hx,a[1]-hy)-Math.hypot(b[0]-hx,b[1]-hy);});names.sort(function(a,b){return liveRank(a)-liveRank(b);});}
    names.forEach(function(name,k){pos[name]=cellsOf[k];});
    y+=isl.h+G;});});
  return {w:(colW[2]?colX[2]+colW[2]:colX[1]+colW[1])-OX, h:(rowH[2]?rowY[2]+rowH[2]:rowY[1]+rowH[1])-OY, cx:hx, cy:hy};}
 // 本業以外の部屋: 島なし・席を格子に並べるだけ
 function layoutGrid(tracks,OX,OY){var m=tracks.length;if(!m)return {w:300,h:110,empty:true};var cols=Math.min(m,Math.max(2,Math.ceil(Math.sqrt(m)))),rows=Math.ceil(m/cols);
- tracks.forEach(function(name,k){var cc=k%cols,rr=Math.floor(k/cols);pos[name]=[Math.round(OX+PAD+60+cc*PX),Math.round(OY+PAD+62+rr*PY)];});
- return {w:(cols-1)*PX+120+PAD*2+30,h:rows*PY-11+PAD*2};}
+ tracks.forEach(function(name,k){var cc=k%cols,rr=Math.floor(k/cols);pos[name]=[Math.round(OX+PAD+DW/2+cc*PX),Math.round(OY+PAD+CT+rr*PY)];});
+ return {w:(cols-1)*PX+DW+PAD*2+30,h:rows*PY-PYG+PAD*2};}
 // 部屋＝壁（太枠）＋名札（部屋名・席数・在席）。本業の部屋は島レイアウト・他は格子
 function placeRoom(r,X,Y){var inner;
  if(r.main){inner=layoutIslands(r.islands||[],X+RP,Y+RT);CX=inner.cx;CY=inner.cy;hubVisible=true;}
@@ -904,7 +940,7 @@ var ts0=D.edges.length?Date.parse(D.edges[0].ts):0, ts1=D.edges.length?Date.pars
 var NEW_MS=15*60000, fresh=[], flows='';  // 🔔 直近 15 分の矢印は流れる破線＝同じ席ペアは同じ曲線に重なるので動きで新着を見せる（S23）
 D.edges.forEach(function(e,i){var A=pos[e.frm]||doorOf(e.frm),B=pos[e.to]||doorOf(e.to);if(!A||!B||(!pos[e.frm]&&!pos[e.to]))return;var x1=A[0],y1=A[1]+20,x2=B[0],y2=B[1]+20;
  var mx=(x1+x2)/2,my=(y1+y2)/2,dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ox=-dy/L*28,oy=dx/L*28;
- if(pos[e.to]){var cx=mx+ox,cy=my+oy,vx=x2-cx,vy=y2-cy,vl=Math.hypot(vx,vy)||1,hw=e.to===HUB?95:60,hh=e.to===HUB?26:20,tt=Math.min(Math.abs(vx)>1e-6?hw*vl/Math.abs(vx):1e9,Math.abs(vy)>1e-6?hh*vl/Math.abs(vy):1e9)+5;if(tt<vl){x2=Math.round(x2-vx/vl*tt);y2=Math.round(y2-vy/vl*tt);}}  // 矢じりは机の手前で止める（机の下に隠れないように・S23）
+ if(pos[e.to]){var cx=mx+ox,cy=my+oy,vx=x2-cx,vy=y2-cy,vl=Math.hypot(vx,vy)||1,hw=NODESK?(e.to===HUB?44:26):e.to===HUB?95:60,hh=NODESK?30:e.to===HUB?26:20,tt=Math.min(Math.abs(vx)>1e-6?hw*vl/Math.abs(vx):1e9,Math.abs(vy)>1e-6?hh*vl/Math.abs(vy):1e9)+5;if(tt<vl){x2=Math.round(x2-vx/vl*tt);y2=Math.round(y2-vy/vl*tt);}}  // 矢じりは机の手前で止める（机の下に隠れないように・S23）
  var age=Date.now()-Date.parse(e.ts), isNew=!!(e.ok&&!e.removed&&age<NEW_MS), d='M'+x1+','+y1+' Q'+(mx+ox)+','+(my+oy)+' '+x2+','+y2;
  if(isNew){fresh.push([i,NEW_MS-age]);flows+=ARW==='env'?'<g id="f'+i+'" class="plane"><polygon points="-11,-5 11,0 -11,5 -7,0" fill="#fff" stroke="#333"/><animateMotion dur="2.4s" repeatCount="indefinite" rotate="auto"><mpath href="#p'+i+'"/></animateMotion></g>':'<path id="f'+i+'" class="flow" d="'+d+'"/>';}  // 同じ曲線に古い実線が重なっていても白い破線なら見える／封筒モードは紙飛行機が線の上を飛ぶ（線自体は隠す）
  var col=e.to===HUB?'var(--gold)':e.frm===HUB?'var(--cyan)':'var(--mag)'; if(!e.ok)col='var(--red)';
@@ -924,7 +960,7 @@ if(SOFA&&AWAY.length){var onS=AWAY.filter(function(t){return awayAt[t.name]>=0;}
 var HS=["....HHHH....","...HHHHHH...","...HSSSSH...","...SSSSSS...","...SESSES...","...SSSSSS...","....SSSS....","..GGGGGGGG..",".GGGGGGGGGG.",".G.GGGGGG.G.",".S.GGGGGG.S.","...GGGGGG...","...KKKKKK...","...KK..KK...","...KK..KK...","...BB..BB..."];
 var HP={H:'#111',S:'#f2c9a0',E:'#222',G:'#2e9e6b',K:'#444',B:'#222'};
 function hsprite(x,y){if(SP.human)return img(SP.human,x,y,null);var s='',sc=3;HS.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+HP[c]+'"/>';});});return s;}
-function hpos(track){var p=pos[track];if(p){var w=track===HUB?190:120;return [p[0]+w/2+6,p[1]-50];}var d=doorOf(track);return d?[d[0]-190,d[1]-50]:null;}  // 隠した部屋ならドアの前
+function hpos(track){var p=pos[track];if(p){if(NODESK)return [p[0]+(track===HUB?64:36),p[1]-28];var w=track===HUB?190:120;return [p[0]+w/2+6,p[1]-50];}var d=doorOf(track);return d?[d[0]-190,d[1]-50]:null;}  // 隠した部屋ならドアの前
 // ☕ 休憩（S22）: 最後の発話から break_after_min 分で人間は休憩室へ（話しかけると席へ戻る・戻る席の点線枠は残す）。しきい値をまたぐ時刻に自前で再読込
 var BREAK_MIN=(D.lounge&&D.lounge.break_after_min)||20, mins=D.human?Math.max(0,Math.round((Date.now()-D.human.ts*1000)/60000)):0, onBreak=!!(D.human&&LOUNGE&&mins>=BREAK_MIN);
 var hp=D.human?(onBreak?LOUNGE.spot:hpos(D.human.track)):null;
@@ -966,7 +1002,7 @@ if(bbMode!=='off'){var near=!!(D.human&&!onBreak);
   var big=t.name===HUB,w=big?190:120,bb=null,bi=0,single=t.occupied_by.length===1;t.occupied_by.slice(0,big?3:2).forEach(function(s,i){var b=sayFor(t,s,single);if(b&&(!bb||b.ts>bb.ts)){bb=b;bi=i;}});if(!bb)return;
   var agem=(Date.now()-bb.ts)/60000,mine=bb.kind==='👤'&&near&&D.human.track===t.name&&(D.human.s==null||D.human.s===t.occupied_by[bi].s);  // 人間が隣で同じ言葉を言う時は席側に出さない
   if(mine||!(bbMode==='all'||agem<=120))return;if(seen(t.name,bb.ts)){HID++;return;}
-  svg+=say(p[0]-w/2+32+bi*44,p[1]-64,bb.kind,bb.text,agem,SAYC[bb.kind]||'#888',(near&&D.human.track===t.name)?-40:0,{n:t.name,ts:bb.ts},bb.big);});
+  var q=occAt(p[0],p[1],big,Math.min(t.occupied_by.length,big?3:2),bi);svg+=say(q[0]+18,q[1]-(NODESK?22:2),bb.kind,bb.text,agem,SAYC[bb.kind]||'#888',(near&&D.human.track===t.name)?-40:0,{n:t.name,ts:bb.ts},bb.big);});
  if(hp&&D.human.text&&(bbMode==='all'||mins<=120)){if(seen('__human',D.human.ts*1000))HID++;else svg+=say(hp[0]+18,hp[1]-24,'👤',D.human.text,mins,'#2e9e6b',30,{n:'__human',ts:D.human.ts*1000});}}
 Object.keys(tints).forEach(function(id){svg+='<filter id="'+id+'" x="0" y="0" width="1" height="1"><feFlood flood-color="'+tints[id]+'" result="c"/><feComposite in="c" in2="SourceAlpha" operator="in" result="m"/><feBlend in="m" in2="SourceGraphic" mode="multiply"/></filter>';});
 svg+='</svg>';
@@ -1114,7 +1150,8 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<i class="sw" style="background:#d4a017"></i>Haiku</span>'
               '<span>｜ <i class="sw" style="background:#2e9e6b"></i>👤 人間＝最後に話しかけた席の横（吹き出し=経過）'
               '<i class="sw" style="background:#7c6cf0"></i>🗨 席の吹き出し＝最新の出来事（指示／返事／📨）</span>'
-              '<span>｜ 🧩 分身＝サブエージェント（作業中は机の上に小さく立つ・今日終わった分は 🧩n・席カードに一覧）</span>'
+              '<span>｜ 🧩 分身＝サブエージェント（作業中は机の上〔🧍 机なしでは右横〕に小さく立つ・今日終わった分は 🧩n・席カードに一覧）</span>'
+              '<span>｜ 🧍 机なし＝机を省き立ち姿＋頭上の名札（枠＝モデル色・左の ●＝状態）で詰める（席が増えた時用・ヘッダのボタン）</span>'
               '<span>｜ 💤 離席中＝プロセスは無いが今日動いた席（主は休憩室のソファ・席は点線枠）</span>'
               '<span>｜ 🏠 退社＝最後の発話が文頭「退社」の席（復帰日まで主は不在・「退社 次 10/20」で復帰日指定・既定は次の平日。人間の最後の発話が退社なら 👤 も帰宅）</span>'
               '<span>｜ ▶ 再生＝今日の 📨 の流れ＋👤 の席移動（空きは休憩室経由・再生中は再読込を保留）</span>'
