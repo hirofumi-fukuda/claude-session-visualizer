@@ -555,7 +555,8 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 #card .vt{display:inline-flex;flex-direction:column;align-items:center;gap:1px;padding:2px 4px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:10px;cursor:pointer} #card .vt.on{border:2px solid #8b5cf6} #card .vt img{width:27px;height:36px;image-rendering:pixelated}
 #card span,#ptool span{color:var(--muted);font-size:11px} #card select,#ptool select{font:inherit;font-size:12px;background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:999px;padding:2px 8px}
 footer{flex:none;padding:6px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}
-#rbar{display:none;flex-basis:100%;flex-wrap:wrap;align-items:center;gap:4px 12px;min-width:0} header.playing #rbar{display:flex} header.playing .legend{display:none}
+#rbar{display:none;flex-basis:100%;flex-wrap:wrap;align-items:center;gap:4px 12px;min-width:0} header.playing #rbar{display:flex} header.playing #legw{display:none}
+#legw{flex-basis:100%} header:not(.leg) #legw{display:none} #ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--ink2)}
 #rclk{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--gold);white-space:nowrap;line-height:1.2;min-width:3.2em} #rcap{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 #rcnt{color:var(--muted);font-size:11.5px;white-space:nowrap;font-variant-numeric:tabular-nums} #rtrk{flex-basis:100%;height:3px;background:var(--wash);border-radius:2px;overflow:hidden} #rprog{height:100%;width:0;background:var(--gold);transition:width .3s linear}
 """
@@ -638,6 +639,8 @@ var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
 function subsOf(t){var o=[];(t.occupied_by||[]).forEach(function(s){((s.live&&s.live.subagents)||[]).forEach(function(a){o.push(a);});});o.sort(function(a,b){return b.ts-a.ts;});return o;}
 function subTip(a){return '🧩 '+(a.desc||'（説明なし）')+'\n'+(a.type||'')+(a.shape?'・'+a.shape:'')+'・'+(a.start_t?a.start_t+'〜':'')+(a.state==='busy'?'作業中（最後の動き '+a.t+'）':a.state==='done'?a.t+' 報告済み':a.t+' で止まった（報告の印なし）');}
 // 📨 やり取りの見せ方（S24・個人PC 競馬場の移植）: env＝封筒（未読）・紙飛行機（送信直後 15 分）・くしゃ紙（不達）で見せ、線は行・封筒クリックの時だけ／line＝従来の常設の線。ヘッダの「〰 線」で切替（localStorage）
+(function(){var H=document.querySelector('header'),b=document.getElementById('legb'),on=false;try{on=localStorage.getItem('csv-office-legend')==='1';}catch(e){}  // ❔ 凡例＝既定は畳む（S25 10/22）
+ function ap(){H.classList.toggle('leg',on);b.textContent=on?'❔ 凡例を閉じる':'❔ 凡例';}ap();b.onclick=function(){on=!on;try{localStorage.setItem('csv-office-legend',on?'1':'0');}catch(e){}ap();};})();
 var ARW='env'; try{if(localStorage.getItem('csv-office-arrows')==='line')ARW='line';}catch(e){}
 var unreadBy={},lastUn={},failBy={},lastFail={}; D.edges.forEach(function(e,i){if(e.ok&&!e.removed&&e.read===false){unreadBy[e.to]=(unreadBy[e.to]||0)+1;lastUn[e.to]=i;}if(!e.ok&&!e.removed){failBy[e.frm]=(failBy[e.frm]||0)+1;lastFail[e.frm]=i;}});
 function envelope(x,y){return '<rect x="'+x+'" y="'+y+'" width="16" height="11" fill="#fff8e1" stroke="#b8860b"/><polyline points="'+x+','+y+' '+(x+8)+','+(y+6)+' '+(x+16)+','+y+'" fill="none" stroke="#b8860b"/>';}
@@ -744,21 +747,30 @@ function whiteboard(bx,by,bw,bhMax,band){var c=D.counts,d=new Date(),date=(d.get
   s+=board(220,80)+'<text x="'+(bx+14)+'" y="'+(by+26)+'"'+F+' fill="#1d4ed8">'+date+'</text>';
   s+='<text x="'+(bx+14)+'" y="'+(by+44)+'"'+F+' fill="#111">在席 '+c.live+'人 ／ 未読 <tspan fill="'+(c.unread?'#dc2626':'#111')+'">'+c.unread+'</tspan>通</text>';
   s+='<text x="'+(bx+14)+'" y="'+(by+62)+'"'+F+' fill="#111">📨 '+c.edges+'通 /'+D.window_hours+'h'+(c.failed?' ／ <tspan fill="#dc2626">不達 '+c.failed+'</tspan>':'')+'</text>';return s;}
- var fs=14,LH=19,maxw=bw-28,lines=[];  // 板の字は机名より大きく（画面全体が縮むので）
+ var fs=14,LH=19,split=!!(band&&!BOARD.missing&&bw>=560),LW=split?Math.round(bw*0.56):bw,maxw=LW-28,lines=[],rlines=[];  // 板の字は机名より大きく（画面全体が縮むので）。split＝右列に ⏰ 今日の時刻つき予定（S25 10/22 ふくちゃん・右半分が空いていた）
  if(BOARD.missing)lines.push({t:'📓 今日の日誌はまだ（業務ハブを起動すると作られる）',col:'#6b7280'});
  else{var top=BOARD.top||[],pend=top.filter(function(t){return !t.done;}),done=top.filter(function(t){return t.done;});
-  pend.concat(done).slice(0,3).forEach(function(t){lines.push({t:(t.mark||'・')+' '+t.t,col:t.done?'#9ca3af':'#111',strike:t.done,tip:t.t});});
+  pend.concat(done).slice(0,4).forEach(function(t){lines.push({t:(t.mark||'・')+' '+t.t,col:t.done?'#9ca3af':'#111',strike:t.done,tip:t.t});});
   if(!top.length)lines.push({t:'（🔴 TOP の見出しなし）',col:'#9ca3af'});
   var ev=band?null:evLine();if(ev)lines.push({t:ev.text,alts:ev.alts,col:'#b45309',id:'wbev'});
   var wt=band?null:BOARD.waiting;if(wt&&wt.n){var ur=(wt.items||[]).slice(0,wt.urgent||0);  // 帯（BAND）の時は ⏰ は 🕐 時計・返信待ちは 📟 電光掲示板へ／🔴 だけ名前・他は件数（S24・items は 🔴 が先頭）
    var wal=[];for(var k=ur.length;k>=1;k--)wal.push('⏸ 返信待ち '+wt.n+'件：🔴 '+ur.slice(0,k).join('・')+(wt.n-k?' ほか'+(wt.n-k)+'件':''));wal.push('⏸ 返信待ち '+wt.n+'件'+(wt.urgent?'（🔴'+wt.urgent+'）':''));  // 入りきらなければ名前を後ろから減らす
    lines.push({t:wal[0],alts:wal,col:'#111',tip:'返信待ち（こちらボール外）\n'+(wt.items||[]).join('\n')});}}
- var Hh=Math.min(bhMax,44+lines.length*LH+10),y0=by+24;
+ if(split){var evs=BOARD.events||[],now=d.getHours()*60+d.getMinutes(),fi=evs.length;  // 右列＝時刻順・4件まで。過ぎた分から落とし、いま／次が残るように
+  for(var q=0;q<evs.length;q++){var a2=hm2m(evs[q].hm),b2=hm2m(evs[q].to);if(a2==null)continue;if(a2>now||(b2!=null&&now<b2)){fi=q;break;}}
+  var st=Math.max(0,Math.min(fi,evs.length-4));evs.slice(st,st+4).forEach(function(e){var a=hm2m(e.hm),b=hm2m(e.to),cur=a!=null&&a<=now&&b!=null&&now<b,past=!cur&&a!=null&&a<=now;
+   rlines.push({t:(cur?'▶ ':'')+e.hm+(e.to?'〜'+e.to:'')+' '+e.label,col:past?'#9ca3af':cur?'#b45309':'#111',tip:e.hm+(e.to?'〜'+e.to:'')+' '+e.label});});
+  if(!evs.length)rlines.push({t:'（時刻つきの予定なし）',col:'#9ca3af'});}
+ var Hh=Math.min(bhMax,44+Math.max(lines.length,rlines.length)*LH+10),y0=by+24;
  s+='<a href="daily.html" target="_blank" rel="noopener" style="cursor:pointer"><title>📓 日誌を開く（daily.html）</title>'+board(bw,Hh);
  s+='<text x="'+(bx+14)+'" y="'+y0+'"'+WBF+' font-size="15" font-weight="700" fill="#1d4ed8">'+date+' 今日</text>';
  s+='<text x="'+(bx+bw-14)+'" y="'+y0+'" text-anchor="end"'+WBF+' font-size="13" fill="#111">在席 '+c.live+'人 ／ 未読 <tspan fill="'+(c.unread?'#dc2626':'#111')+'"'+(c.unread?' font-weight="700"':'')+'>'+c.unread+'</tspan>通 ／ 不達 <tspan fill="'+(c.failed?'#dc2626':'#111')+'"'+(c.failed?' font-weight="700"':'')+'>'+c.failed+'</tspan> ／ 📨 '+c.edges+'通/'+D.window_hours+'h</text>';
  s+=R(bx+12,y0+6,bw-24,2,'#1d4ed8',' fill-opacity=".45"');
- var y=y0+10+LH;lines.forEach(function(L){if(y>by+Hh-8)return;s+='<text'+(L.id?' id="'+L.id+'"':'')+' x="'+(bx+14)+'" y="'+y+'"'+WBF+' font-size="'+fs+'" fill="'+L.col+'"'+(L.strike?' text-decoration="line-through"':'')+'>'+(L.tip?'<title>'+esc(L.tip)+'</title>':'')+esc(L.alts?pick(L.alts,maxw,fs):fit(L.t,maxw,fs))+'</text>';y+=LH;});
+ function col(ls,x0,mw){var y=y0+10+LH;ls.forEach(function(L){if(y>by+Hh-8)return;s+='<text'+(L.id?' id="'+L.id+'"':'')+' x="'+x0+'" y="'+y+'"'+WBF+' font-size="'+fs+'" fill="'+L.col+'"'+(L.strike?' text-decoration="line-through"':'')+'>'+(L.tip?'<title>'+esc(L.tip)+'</title>':'')+esc(L.alts?pick(L.alts,mw,fs):fit(L.t,mw,fs))+'</text>';y+=LH;});}
+ col(lines,bx+14,maxw);
+ if(split){var rx=bx+LW+10,rmw=bw-LW-10-14;s+=R(bx+LW,y0+12,1,Hh-(y0-by)-22,'#cbd5e1');  // 仕切り線＋右列
+  var cap='⏰ 今日の予定',statsT='在席 '+c.live+'人 ／ 未読 '+c.unread+'通 ／ 不達 '+c.failed+' ／ 📨 '+c.edges+'通/'+D.window_hours+'h';if(twb(cap,13)+twb(statsT,13)+24<=rmw)s+='<text x="'+rx+'" y="'+y0+'"'+WBF+' font-size="13" fill="#1d4ed8">'+cap+'</text>';
+  col(rlines,rx,rmw);}
  s+='</a>';WB={maxw:maxw,fs:fs,h:Hh};
  var ev0=evLine();if(ev0){setInterval(function(){var el=document.getElementById('wbev'),e=evLine();if(el&&e)el.textContent=pick(e.alts,WB.maxw,WB.fs);},30000);  // 「あと n分」は30秒ごとに書き直す
   if(ev0.until!=null){var left=(ev0.until-(d.getHours()*60+d.getMinutes()))*60000-d.getSeconds()*1000;if(left>0)setTimeout(softReload,Math.min(left+1500,2e9));}}  // 次のイベント境界で描き直し
@@ -870,7 +882,7 @@ function placeRoom(r,X,Y){var inner;
  walls+='<rect x="'+X+'" y="'+Y+'" width="'+w+'" height="'+h+'" rx="16" fill="'+PAL.wall+'" fill-opacity="'+PAL.wallOp+'" stroke="'+PAL.wallStroke+'" stroke-opacity="'+PAL.wallStrokeOp+'" stroke-width="'+PAL.wallW+'"/><text x="'+(X+16)+'" y="'+(Y+25)+'" font-size="16" font-weight="700" fill="'+PAL.roomTxt+'">'+esc(r.name)+'</text><text x="'+(X+w-14)+'" y="'+(Y+25)+'" text-anchor="end" font-size="12" fill="'+PAL.roomSub+'" fill-opacity="0.85">'+esc(roomCount(r))+'</text>';
  if(inner.empty)walls+='<text x="'+(X+w/2)+'" y="'+(Y+RT+62)+'" text-anchor="middle" font-size="13" fill="'+PAL.emptyTxt+'">空室（この時間幅にセッションなし）</text>';
  return {w:w,h:h};}
-var BAND=!!(ROOMS.length&&BOARD), BAND_H=112, BAND_G=16;  // 🧾📟 帯＝部屋がある画面で daily の板があれば（高さ＝板3行ぶん・建物との間は詰める＝図の縮みを抑える）
+var BAND=!!(ROOMS.length&&BOARD), BAND_H=131, BAND_G=16;  // 🧾📟 帯＝部屋がある画面で daily の板があれば（高さ＝板4行ぶん〔S25 10/22 3→4・凡例を畳んで浮いた高さで相殺〕・建物との間は詰める＝図の縮みを抑える）
 if(ROOMS.length){hubVisible=false;
  // 1つ目の部屋を左に・残りは右に縦積み（本業が横長なので）。絞り込み中は shown だけ。BAND＝建物の上の帯（🧾 板＋📟 電光掲示板・S24 案A）の分だけ下げる
  var BY=BAND?M+BAND_H+BAND_G:M, r0=placeRoom(shown[0],M,BY), X2=M+r0.w+RG, ys=BY, sideW=0;
@@ -1107,8 +1119,11 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<span>｜ 🏠 退社＝最後の発話が文頭「退社」の席（復帰日まで主は不在・「退社 次 10/20」で復帰日指定・既定は次の平日。人間の最後の発話が退社なら 👤 も帰宅）</span>'
               '<span>｜ ▶ 再生＝今日の 📨 の流れ＋👤 の席移動（空きは休憩室経由・再生中は再読込を保留）</span>'
               '<span>｜ 📱 Remote Control オン（外出先から指示できる席）</span>'
-              '<span>｜ 🎨 <select id="spr" title="絵のテーマ（assets/sprites/<テーマ>/）"></select></span>'
-              '<span id="wsf" title="部屋（ワークスペース）で絞る・?ws=〈部屋名の一部〉でも指定可"></span></span>')
+              '</span>')
+    # 操作（絵テーマ・部屋の絞り込み・凡例の開閉）は凡例と分けて常時表示。凡例は既定で畳む（S25 10/22 ふくちゃん「常に見えてなくてもよい」＝縦の余白をオフィスに回す）
+    ctl = ('<div id="ctl"><button class="tgl" id="legb" type="button" title="アイコン・色の読み方（凡例）を開閉・この端末で記憶">❔ 凡例</button>'
+           '<span>🎨 <select id="spr" title="絵のテーマ（assets/sprites/<テーマ>/）"></select></span>'
+           '<span id="wsf" title="部屋（ワークスペース）で絞る・?ws=〈部屋名の一部〉でも指定可"></span></div>')
     js = (f"var D={json.dumps(D, ensure_ascii=False)},STAMP={json.dumps(stamp)},"
           f"POLL_MS={poll_ms},HUB={json.dumps(hub)};" + PAGE_JS)
     return f"""<!doctype html>
@@ -1122,8 +1137,9 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
 <div class="sub">いま <b id="clock"></b> ／ 生成 {now} <span id="beat" data-st="wait">🟡 watcher 確認中</span> ／ 席=トラック・人=稼働セッション・矢印=SendMessage（新しいほど濃い・15分以内は動く）・席にマウスで詳細・クリックで席カード</div></div>
 {tiles}
 <button class="tgl" id="play" type="button" title="今日の 📨 の流れと 👤 の席移動を時刻順に再生（再生中は自動更新を保留）">▶ 流れを再生</button>
+{ctl}
 <div class="navs">{nav_html("office")}<button class="tgl" id="tgl" type="button"></button></div>
-<div style="flex-basis:100%">{legend}</div>
+<div id="legw">{legend}</div>
 <div id="rbar" title="▶ 再生中のダイジェスト＝その時刻に何があったか"><b id="rclk"></b><span id="rcap"></span><span id="rcnt"></span><div id="rtrk"><div id="rprog"></div></div></div>
 </header>
 <main><div id="scene"></div><aside><div id="card"></div><h2><span title="行クリックで矢印を強調・本文を開閉">📨 やり取り</span><button class="tgl" id="bb" type="button" title="席の吹き出し（クリックで 2時間以内→全部→なし・Shift+クリックで ✕ で閉じたものを全部戻す）"></button><button class="tgl" id="ord" type="button"></button></h2><div id="log"></div></aside></main>
