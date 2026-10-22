@@ -27,6 +27,16 @@
   - もっと遡って確認: `python live_board.py candidates [--days N]` … 案件マップ済・停止中・未ピンを番号なし含め遡って全一覧（ボードの抑制＝最新Sのみ/短遡り を外した全表示）
   - ピンは `config.local.json` の `pinned_sessions[]` に保存。sid は `--resume` 跨ぎで安定（同一 jsonl に同一 sid で追記される）ので迷子にならない。「休眠 vs クローズ」はデータ上区別不能（どちらもプロセス死）＝区別は人の意図＝ピンが真実、候補は自動提示の補助網
   - ⚠️ ライブボードは**常駐watcherが起動時のコードをメモリ保持**するため、コード変更後は watcher を再起動しないと反映されない（`--watch` 起動時のみ多重watcher掃除が走る）
+- **watcher の再起動**（コード変更後・止まっていた時。`config.local.json` の変更は再起動不要＝次のループで読む）
+  - 止まっているかはオフィスのヘッダで分かる（🟢 watcher 稼働／🔴 watcher 停止＝`reports/watcher_beat.js` の鼓動が間隔の3倍途切れた時・タブ名にも 🔴）
+  - 再起動 A（ブラウザも開く）… `live_board.bat` をダブルクリック（最小化の窓で watcher 起動→ライブボード・日誌・オフィスの3タブを開く）
+  - 再起動 B（窓だけ・タブは開かない）… PowerShell で
+    ```powershell
+    Set-Location C:\source\git-h.fukuda1207\claude-session-visualizer
+    Start-Process cmd -ArgumentList '/c','python live_board.py --html --watch 10' -WindowStyle Minimized
+    ```
+  - どちらも起動時に古い watcher を自動で落とす（`_kill_stale_watchers`）ので、先に止める手間は要らない。止めるだけなら最小化の窓を閉じるか `Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like '*live_board.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId }`
+  - 生きているか確かめる: `Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like '*live_board.py*' } | Select-Object ProcessId, CreationDate`（1件が正常・0件なら止まっている）
 
 ## 定期自動メンテ（S9・タスクスケジューラ）
 
