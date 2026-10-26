@@ -29,3 +29,6 @@ dist/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# 🖼️ イラストのテーマ（素材の正本＝個人PC・人物似せ／二次創作を含むので git に載せない・10/26）
+assets/sprites/illust/

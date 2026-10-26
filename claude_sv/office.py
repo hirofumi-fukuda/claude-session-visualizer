@@ -296,6 +296,13 @@ def load_sprite_themes(sprite_dir: Path = SPRITE_DIR) -> dict:
     return out
 
 
+def smooth_themes(sprite_dir: Path = SPRITE_DIR) -> list:
+    """SMOOTH.txt を置いたテーマ＝ドットでない立ち絵（イラスト）。ページはにじませて縮め、色も乗せない（個人PC 競馬場の移植・10/26）。"""
+    if not sprite_dir.is_dir():
+        return []
+    return sorted(d.name for d in sprite_dir.iterdir() if d.is_dir() and (d / "SMOOTH.txt").exists())
+
+
 def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     """messages.collect の結果＋ラベル＋稼働 rows から、描画用の D を組む（JS 側は配置と描画だけ）。"""
     hub_disp = (cfg.get("office") or {}).get("hub", "業務ハブ")
@@ -480,6 +487,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(),
             "human_moves": moves, "human_name": hname, "replay_from": cut,  # 👤 今日の席移動と再生の始点（▶ 再生用・S23）
             "sprite_themes": load_sprite_themes(),
+            "sprite_smooth": smooth_themes(),  # 🖼️ イラストのテーマ名（SMOOTH.txt あり・10/26）
             "sprite_default": (cfg.get("office") or {}).get("sprite_theme", ""),  # 既定テーマ（プルダウン未選択時）
             "sprite_variants": (cfg.get("office") or {}).get("sprite_variants") or {},  # トラック名→種類名の固定割当（任意）
             "sprite_track_themes": (cfg.get("office") or {}).get("sprite_track_themes") or {},  # トラック名→テーマ名（席ごとの別テーマ・例: 業務ハブだけ ninja）
@@ -605,6 +613,7 @@ var SPR=["....AA......","....AA......","..MMMMMMMM..",".MMMMMMMMMM.",".MVVMMMMVV
 var SPAL={M:'#b8c0cc',V:'#5ad1e6',B:'#222'};  // コード内ドット絵の色（PNG が無い時だけ）。図の配色 PAL（L647）と名前が被って黒く描かれていたので改名（10/21）
 // 絵のテーマ: assets/sprites/ 直下（既定）か assets/sprites/<テーマ>/。選択は localStorage に残し、切替はページ再読込で反映
 var THEMES=D.sprite_themes||{}, SP=D.sprites||{}, tints={}, sprSel='';
+(D.sprite_smooth||[]).forEach(function(t){if(THEMES[t])THEMES[t].__smooth=1;});  // 🖼️ イラストのテーマ（10/26）＝下の img() でにじませて縮める・色は乗せない
 try{sprSel=localStorage.getItem('csv-sprite-theme')||'';}catch(e){}
 try{var sprQ=new URLSearchParams(location.search).get('spr');if(sprQ!==null)sprSel=sprQ;}catch(e){}  // ?spr=ninja で一時指定（スクショ・共有用）
 (function(){var sel=document.getElementById('spr');if(!sel)return;var E=function(v){return String(v).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});};var defT=D.sprite_default||'';var opts=[['','既定'+(defT&&THEMES[defT.split('/')[0]]?'＝'+defT:'（直下の絵／無ければコード内）')]];
@@ -613,7 +622,8 @@ try{var sprQ=new URLSearchParams(location.search).get('spr');if(sprQ!==null)sprS
  sel.innerHTML=opts.map(function(o){return '<option value="'+E(o[0])+'"'+(o[0]===sprSel?' selected':'')+'>'+E(o[1])+'</option>';}).join('');
  sel.onchange=function(){try{localStorage.setItem('csv-sprite-theme',sel.value);}catch(e){}location.reload();};
  var eff=sprSel||defT; if(eff){var parts=eff.split('/'),th=THEMES[parts[0]];if(th){SP={};Object.keys(th).forEach(function(k){SP[k]=th[k];});if(parts[1]&&th[parts[1]])SP.human=th[parts[1]];}}})();
-function img(href,x,y,filt){return '<image href="'+href+'" x="'+x+'" y="'+y+'" width="36" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"'+(filt?' filter="url(#'+filt+')"':'')+'/>';}
+// 🖼️ sm＝イラスト（10/26）: 絵は 108×120 なので枠を横に広げて（43×48・中心は同じ）なめらかに縮める。ドットは従来どおり 36×48 でくっきり
+function img(href,x,y,filt,sm){if(sm)return '<image href="'+href+'" x="'+(x-3.5)+'" y="'+y+'" width="43" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:auto"/>';return '<image href="'+href+'" x="'+x+'" y="'+y+'" width="36" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"'+(filt?' filter="url(#'+filt+')"':'')+'/>';}
 // テーマ内の「種類」＝ agent-<種類>[-<モデル>][-<ポーズ>].png の <種類>（モデル名・ポーズ名以外のトークン）。トラック名のハッシュで固定割当（config office.sprite_variants で上書き可）
 var MODELS={opus:1,sonnet:1,haiku:1,fable:1,unknown:1}, POSES={typing:1,idle:1,wait:1,rest:1,clone:1};  // rest＝💤 離席中（絵が無ければ idle 系に落ちる・S23）／clone＝🧩 影分身（印＋煙・無ければ主の絵に落ちる・10/21）
 function varsOf(M){if(M.__vars)return M.__vars;var vs={};Object.keys(M).forEach(function(k){var t=k.split('-');if(t[0]!=='agent')return;t.slice(1).forEach(function(w){if(!MODELS[w]&&!POSES[w])vs[w]=1;});});return (M.__vars=Object.keys(vs).sort());}
@@ -631,8 +641,8 @@ function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKe
  var direct=[],gray=[];
  if(v){direct.push('agent-'+v+'-'+mk+'-'+pose,'agent-'+v+'-'+mk);gray.push('agent-'+v+'-'+pose,'agent-'+v);}
  direct.push('agent-'+mk+'-'+pose,'agent-'+mk);gray.push('agent-'+pose,'agent');
- for(var i=0;i<direct.length;i++)if(M[direct[i]])return img(M[direct[i]],x,y,null);
- for(var j=0;j<gray.length;j++)if(M[gray[j]]){var id='tint'+shirt.replace('#','');tints[id]=shirt;return img(M[gray[j]],x,y,id);}
+ for(var i=0;i<direct.length;i++)if(M[direct[i]])return img(M[direct[i]],x,y,null,M.__smooth);
+ for(var j=0;j<gray.length;j++)if(M[gray[j]]){if(M.__smooth)return img(M[gray[j]],x,y,null,1);var id='tint'+shirt.replace('#','');tints[id]=shirt;return img(M[gray[j]],x,y,id);}  // イラストは色を乗せない（モデル色は名札で）
  var s='',sc=3;SPR.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;var col=(c==='T'||c==='A')?shirt:SPAL[c];s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+col+'"/>';});});return s;}
 var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
 // 🧩 サブエージェント（S25）: 席の稼働セッション全部の分身を新しい順に。state＝busy（jsonl が 90 秒以内に動いている）／done（報告済み）／stale（印が無く止まっている＝foreground 起動や途中で切れた）
@@ -959,7 +969,7 @@ if(SOFA&&AWAY.length){var onS=AWAY.filter(function(t){return awayAt[t.name]>=0;}
 // 人間＝最後に話しかけた席の横に1人（席には座らない・歩き回る）。前回位置を覚えておき、席が変われば歩いて移動する。
 var HS=["....HHHH....","...HHHHHH...","...HSSSSH...","...SSSSSS...","...SESSES...","...SSSSSS...","....SSSS....","..GGGGGGGG..",".GGGGGGGGGG.",".G.GGGGGG.G.",".S.GGGGGG.S.","...GGGGGG...","...KKKKKK...","...KK..KK...","...KK..KK...","...BB..BB..."];
 var HP={H:'#111',S:'#f2c9a0',E:'#222',G:'#2e9e6b',K:'#444',B:'#222'};
-function hsprite(x,y){if(SP.human)return img(SP.human,x,y,null);var s='',sc=3;HS.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+HP[c]+'"/>';});});return s;}
+function hsprite(x,y){if(SP.human)return img(SP.human,x,y,null,SP.__smooth);var s='',sc=3;HS.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+HP[c]+'"/>';});});return s;}
 function hpos(track){var p=pos[track];if(p){if(NODESK)return [p[0]+(track===HUB?64:36),p[1]-28];var w=track===HUB?190:120;return [p[0]+w/2+6,p[1]-50];}var d=doorOf(track);return d?[d[0]-190,d[1]-50]:null;}  // 隠した部屋ならドアの前
 // ☕ 休憩（S22）: 最後の発話から break_after_min 分で人間は休憩室へ（話しかけると席へ戻る・戻る席の点線枠は残す）。しきい値をまたぐ時刻に自前で再読込
 var BREAK_MIN=(D.lounge&&D.lounge.break_after_min)||20, mins=D.human?Math.max(0,Math.round((Date.now()-D.human.ts*1000)/60000)):0, onBreak=!!(D.human&&LOUNGE&&mins>=BREAK_MIN);
