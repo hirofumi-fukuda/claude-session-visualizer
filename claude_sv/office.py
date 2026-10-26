@@ -490,7 +490,8 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             "sprite_smooth": smooth_themes(),  # 🖼️ イラストのテーマ名（SMOOTH.txt あり・10/26）
             "sprite_default": (cfg.get("office") or {}).get("sprite_theme", ""),  # 既定テーマ（プルダウン未選択時）
             "sprite_variants": (cfg.get("office") or {}).get("sprite_variants") or {},  # トラック名→種類名の固定割当（任意）
-            "sprite_track_themes": (cfg.get("office") or {}).get("sprite_track_themes") or {},  # トラック名→テーマ名（席ごとの別テーマ・例: 業務ハブだけ ninja）
+            "sprite_track_themes": (cfg.get("office") or {}).get("sprite_track_themes") or {},
+            "human_sprite": (cfg.get("office") or {}).get("human_sprite") or "",  # 👤 人の絵を画面のテーマと無関係に固定（"テーマ/キー"・例: illust/human）  # トラック名→テーマ名（席ごとの別テーマ・例: 業務ハブだけ ninja）
             "sprite_tenant_themes": (cfg.get("office") or {}).get("sprite_tenant_themes") or {},  # 部屋名→テーマ名（副業の部屋ごとに別の絵・S22）
             "islands": islands, "rooms": rooms, "hub_side": hub_side,  # 🪑 ハブの右隣の小机（S22）
             "hub_room": str((cfg.get("office") or {}).get("hub_room") or ""),  # 🏯 ハブの部屋名（中央セルいっぱいの床・S25）
@@ -617,11 +618,13 @@ var THEMES=D.sprite_themes||{}, SP=D.sprites||{}, tints={}, sprSel='';
 try{sprSel=localStorage.getItem('csv-sprite-theme')||'';}catch(e){}
 try{var sprQ=new URLSearchParams(location.search).get('spr');if(sprQ!==null)sprSel=sprQ;}catch(e){}  // ?spr=ninja で一時指定（スクショ・共有用）
 (function(){var sel=document.getElementById('spr');if(!sel)return;var E=function(v){return String(v).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});};var defT=D.sprite_default||'';var opts=[['','既定'+(defT&&THEMES[defT.split('/')[0]]?'＝'+defT:'（直下の絵／無ければコード内）')]];
- Object.keys(THEMES).forEach(function(t){opts.push([t,t]);Object.keys(THEMES[t]).filter(function(k){return /^human-\d+$/.test(k);}).sort().forEach(function(k){opts.push([t+'/'+k,t+'（人間'+k.slice(6)+'）']);});});
+ Object.keys(THEMES).forEach(function(t){opts.push([t,t]);Object.keys(THEMES[t]).filter(function(k){return /^human-./.test(k);}).sort().forEach(function(k){opts.push([t+'/'+k,t+'（人間'+k.slice(6)+'）']);});});
  if(sprSel&&!opts.some(function(o){return o[0]===sprSel;}))sprSel='';
  sel.innerHTML=opts.map(function(o){return '<option value="'+E(o[0])+'"'+(o[0]===sprSel?' selected':'')+'>'+E(o[1])+'</option>';}).join('');
  sel.onchange=function(){try{localStorage.setItem('csv-sprite-theme',sel.value);}catch(e){}location.reload();};
- var eff=sprSel||defT; if(eff){var parts=eff.split('/'),th=THEMES[parts[0]];if(th){SP={};Object.keys(th).forEach(function(k){SP[k]=th[k];});if(parts[1]&&th[parts[1]])SP.human=th[parts[1]];}}})();
+ var eff=sprSel||defT; if(eff){var parts=eff.split('/'),th=THEMES[parts[0]];if(th){SP={};Object.keys(th).forEach(function(k){SP[k]=th[k];});if(parts[1]&&th[parts[1]])SP.human=th[parts[1]];}}
+ // 👤 config office.human_sprite で人の絵を固定（10/26）。?spr=テーマ/人の絵 で明示した時だけそちらが勝つ
+ var hf=String(D.human_sprite||'').split('/'),ht=THEMES[hf[0]],hk=hf[1]||'human';if(ht&&ht[hk]&&!(eff&&eff.indexOf('/')>0&&sprSel===eff)){SP.human=ht[hk];SP.__hsm=!!ht.__smooth;}})();
 // 🖼️ sm＝イラスト（10/26）: 絵は 108×120 なので枠を横に広げて（43×48・中心は同じ）なめらかに縮める。ドットは従来どおり 36×48 でくっきり
 function img(href,x,y,filt,sm){if(sm)return '<image href="'+href+'" x="'+(x-3.5)+'" y="'+y+'" width="43" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:auto"/>';return '<image href="'+href+'" x="'+x+'" y="'+y+'" width="36" height="48" preserveAspectRatio="xMidYMax meet" style="image-rendering:pixelated"'+(filt?' filter="url(#'+filt+')"':'')+'/>';}
 // テーマ内の「種類」＝ agent-<種類>[-<モデル>][-<ポーズ>].png の <種類>（モデル名・ポーズ名以外のトークン）。トラック名のハッシュで固定割当（config office.sprite_variants で上書き可）
@@ -971,7 +974,7 @@ if(SOFA&&AWAY.length){var onS=AWAY.filter(function(t){return awayAt[t.name]>=0;}
 // 人間＝最後に話しかけた席の横に1人（席には座らない・歩き回る）。前回位置を覚えておき、席が変われば歩いて移動する。
 var HS=["....HHHH....","...HHHHHH...","...HSSSSH...","...SSSSSS...","...SESSES...","...SSSSSS...","....SSSS....","..GGGGGGGG..",".GGGGGGGGGG.",".G.GGGGGG.G.",".S.GGGGGG.S.","...GGGGGG...","...KKKKKK...","...KK..KK...","...KK..KK...","...BB..BB..."];
 var HP={H:'#111',S:'#f2c9a0',E:'#222',G:'#2e9e6b',K:'#444',B:'#222'};
-function hsprite(x,y){if(SP.human)return img(SP.human,x,y,null,SP.__smooth);var s='',sc=3;HS.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+HP[c]+'"/>';});});return s;}
+function hsprite(x,y){if(SP.human)return img(SP.human,x,y,null,SP.__hsm!==undefined?SP.__hsm:SP.__smooth);var s='',sc=3;HS.forEach(function(row,r){row.split('').forEach(function(c,i){if(c==='.')return;s+='<rect x="'+(x+i*sc)+'" y="'+(y+r*sc)+'" width="'+sc+'" height="'+sc+'" fill="'+HP[c]+'"/>';});});return s;}
 function hpos(track){var p=pos[track];if(p){if(NODESK)return [p[0]+(track===HUB?64:36),p[1]-28];var w=track===HUB?190:120;return [p[0]+w/2+6,p[1]-50];}var d=doorOf(track);return d?[d[0]-190,d[1]-50]:null;}  // 隠した部屋ならドアの前
 // ☕ 休憩（S22）: 最後の発話から break_after_min 分で人間は休憩室へ（話しかけると席へ戻る・戻る席の点線枠は残す）。しきい値をまたぐ時刻に自前で再読込
 var BREAK_MIN=(D.lounge&&D.lounge.break_after_min)||20, mins=D.human?Math.max(0,Math.round((Date.now()-D.human.ts*1000)/60000)):0, onBreak=!!(D.human&&LOUNGE&&mins>=BREAK_MIN);
