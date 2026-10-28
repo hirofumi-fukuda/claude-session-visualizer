@@ -303,6 +303,44 @@ def smooth_themes(sprite_dir: Path = SPRITE_DIR) -> list:
     return sorted(d.name for d in sprite_dir.iterdir() if d.is_dir() and (d / "SMOOTH.txt").exists())
 
 
+REGISTRY_PATH = Path("~/.claude/skills/project-session/references/track-registry.md")
+SKILL_EXCLUDE = ("project-session", "task-completion-sync")  # どの席でも使う共通スキルは名刺に出さない
+
+
+def load_meishi(cfg: dict) -> dict:
+    """🪪 席の名刺（S25）: track-registry の「目的」「担当／やらないこと」列を _norm(正式名) → {p, r} で返す。
+    正式名の「└ 」「🔒」は落とし、別名は project_aliases で正名に寄せる。表が無い・列が無ければ {}。"""
+    path = Path((cfg.get("office") or {}).get("track_registry") or REGISTRY_PATH).expanduser()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    alias = {}
+    for canonical, aliases in (cfg.get("project_aliases") or {}).items():
+        for a in [canonical, *(aliases or [])]:
+            alias[_norm(a)] = canonical
+    cols, out = None, {}
+    for line in lines:
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if cols is None:
+            if cells and cells[0] == "正式名":
+                cols = {c: i for i, c in enumerate(cells)}
+                if "目的" not in cols:
+                    return {}
+            continue
+        if set(cells[0]) <= set("-: "):
+            continue
+        name = re.sub(r"^└\s*|\s*🔒\s*$", "", cells[0])
+        p = cells[cols["目的"]] if len(cells) > cols["目的"] else ""
+        r = cells[cols.get("担当／やらないこと", -1)] if 0 <= cols.get("担当／やらないこと", -1) < len(cells) else ""
+        if p or r:
+            key = _norm(alias.get(_norm(name), name))
+            out[key] = {"p": p, "r": r}
+    return out
+
+
 def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
     """messages.collect の結果＋ラベル＋稼働 rows から、描画用の D を組む（JS 側は配置と描画だけ）。"""
     hub_disp = (cfg.get("office") or {}).get("hub", "業務ハブ")
@@ -484,6 +522,24 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
             ts = [t["name"] for t in order if t["tenant"] == n]
             if ts or n != tc["other"]:
                 rooms.append({"name": n, "main": False, "tracks": ts})
+
+    # 🪪 席の名刺（S25）: 目的・担当（registry）＋ 🧰 直近のスキル（Skill 呼び出しの回数・共通スキルは除く）を席に付ける
+    meishi = load_meishi(cfg)
+    hub_keys = {_norm(h) for h in hubs}
+    excl = set((cfg.get("office") or {}).get("card_skill_exclude") or SKILL_EXCLUDE)
+    sk_by: dict = {}
+    for p, cnt in (res.get("skill_seats") or {}).items():
+        k = _norm(hub_disp) if _norm(p) in hub_keys else _norm(p)
+        acc = sk_by.setdefault(k, {})
+        for s, n in cnt.items():
+            if s not in excl:
+                acc[s] = acc.get(s, 0) + n
+    for t in [hub] + order:
+        keys = hub_keys | {_norm(hub_disp)} if t is hub else {_norm(t["name"])}
+        m = next((meishi[k] for k in keys if k in meishi), None)
+        sk = sorted(sk_by.get(_norm(t["name"]), {}).items(), key=lambda x: (-x[1], x[0]))
+        if m or sk:
+            t["meishi"] = dict(m or {}, sk=[[s, n] for s, n in sk])
     return {"hub": hub, "tracks": order, "edges": edges, "human": human, "sprites": load_sprites(),
             "human_moves": moves, "human_name": hname, "replay_from": cut,  # 👤 今日の席移動と再生の始点（▶ 再生用・S23）
             "sprite_themes": load_sprite_themes(),
@@ -505,7 +561,8 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
                        "live": sum(len(t["occupied_by"]) for t in order) + len(hub["occupied_by"]),
                        "away": sum(1 for t in [hub] + order if not t["live"] and t.get("away")),  # 💤 離席中の席数（S23）
                        "leave": sum(1 for t in [hub] + order if t.get("leave"))},  # 🏠 退社の席数（S23 ⑩）
-            "window_hours": (cfg.get("office") or {}).get("window_hours", 48)}
+            "window_hours": (cfg.get("office") or {}).get("window_hours", 48),
+            "skill_days": res.get("skill_days") or 0}  # 🧰 名刺のスキル集計の日数（S25）
 
 
 CSS = """
@@ -559,6 +616,7 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 #card .ch{display:flex;align-items:center;gap:8px} #card .ch b{font-size:14px} #card .ch .tgl{margin-left:auto;padding:0 8px}
 #card .cs{white-space:pre-wrap;word-break:break-word;color:var(--ink2);font-size:12px;margin:4px 0 2px}
 #card h3{font-size:12px;color:var(--muted);margin:8px 0 2px;font-weight:600}
+#card .mi{margin:6px 0 2px;padding:5px 8px;border-left:3px solid #8b5cf6;background:var(--wash);border-radius:0 6px 6px 0} #card .mp{color:var(--ink);font-weight:600} #card .mr{color:var(--ink2);font-size:12px;cursor:default}
 #card .lh{white-space:pre-wrap;word-break:break-word;background:var(--wash);border-radius:6px;padding:5px 8px;max-height:120px;overflow:auto}
 #card details{margin-top:8px} #card summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:600} #card .chr{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
 #card .vt{display:inline-flex;flex-direction:column;align-items:center;gap:1px;padding:2px 4px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--ink);font-size:10px;cursor:pointer} #card .vt.on{border:2px solid #8b5cf6} #card .vt img{width:27px;height:36px;image-rendering:pixelated}
@@ -1095,6 +1153,12 @@ renderLog();
  function jsonText(){return '"sprite_track_themes": '+JSON.stringify(TOVR,null,2)+',\n"sprite_variants": '+JSON.stringify(VOVR,null,2);}
  function thumb(M,v,mk){var ks=v?['agent-'+v+'-'+mk,'agent-'+v+'-'+mk+'-idle','agent-'+v,'agent-'+v+'-idle']:['agent-'+mk,'agent'];for(var i=0;i<ks.length;i++)if(M[ks[i]])return M[ks[i]];return '';}
  function hm(ms){var d=new Date(ms),p=function(n){return('0'+n).slice(-2);};return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());}
+ // 🪪 席の名刺（S25）: 🎯 目的／担当・やらない（registry・約40字で切って全文はホバー）／🧰 直近のスキル（上位5・全部はホバー）
+ function cut(s,n){s=String(s||'');return s.length>n?s.slice(0,n)+'…':s;}
+ function meishiHtml(mi){if(!mi)return '';var h='<div class="mi">';if(mi.p)h+='<div class="mp">🎯 '+esc(mi.p)+'</div>';
+  String(mi.r||'').split(/／(?=やらない)/).forEach(function(x){x=x.trim();if(x)h+='<div class="mr" title="'+esc(x)+'">'+(/^やらない/.test(x)?'🚫 ':'🛠 ')+esc(cut(x,40))+'</div>';});
+  var sk=mi.sk||[];if(sk.length){var all=sk.map(function(a){return a[0]+' ×'+a[1];});h+='<div class="mr" title="直近 '+D.skill_days+' 日の Skill 呼び出し（project-session 等の共通スキルは除く）\n'+esc(all.join('\n'))+'">🧰 '+esc(all.slice(0,5).join('・'))+(sk.length>5?' ほか'+(sk.length-5):'')+'</div>';}
+  return h+'</div>';}
  function charHtml(t){var nloc=Object.keys(CHL).length,curT=String(TOVR[CARD]||'').split('/')[0],M=mapFor(CARD),curV=VOVR[CARD]||'',autoV=variantFor(CARD,M),occ=(t.occupied_by||[])[0],mk=modelKey(occ&&occ.live?occ.live.model:'');
   var h='<details id="cd-ch"'+(CARDCH?' open':'')+'><summary>🧑‍🎨 キャラ（このブラウザだけ）</summary><div class="chr">';
   h+='<select id="cd-th" title="この席のテーマ（既定＝部屋か画面のテーマ）"><option value="">既定のテーマ</option>'+Object.keys(THEMES).map(function(k){return '<option'+(k===curT?' selected':'')+'>'+esc(k)+'</option>';}).join('')+'</select>';
@@ -1106,6 +1170,7 @@ renderLog();
   var cur=t.cur,tip=TIPS[CARD]||'',h='<div class="ch"><b>'+esc(CARD+nickOf(CARD))+(cur&&cur.s?' S'+cur.s:'')+'</b><button type="button" class="tgl" id="cd-x" title="閉じる（Esc）">✕</button></div>';
   h+='<div class="cs">'+esc(tip.split('\n').slice(1).join('\n'))+'</div>';
   renameIssues(t).forEach(function(r){h+='<div class="cs" style="color:#f87171">🏷 /rename まだ：'+esc(r.msg)+(r.s&&t!==D.hub?' → /rename '+esc(CARD.replace(/\s+/g,'')+'S'+r.s):'')+'</div>';});
+  h+=meishiHtml(t.meishi);
   var lh=null;(t.occupied_by||[]).forEach(function(s){var x=s.live&&s.live.last_human;if(x&&x.text&&(!lh||x.ts>lh.ts))lh={ts:x.ts,text:x.text};});
   if(D.human&&D.human.track===CARD&&D.human.text&&(!lh||D.human.ts>lh.ts))lh={ts:D.human.ts,text:D.human.text};
   if(lh)h+='<h3>👤 最後の指示（'+hm(lh.ts*1000)+'）</h3><div class="lh">'+esc(lh.text)+'</div>';

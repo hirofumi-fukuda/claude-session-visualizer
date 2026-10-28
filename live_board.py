@@ -38,7 +38,7 @@ from claude_sv.ledger import slug
 from claude_sv.mapping import ProjectMapper, load_config
 from claude_sv.modelbadge import MDL_CSS, model_badge
 from claude_sv.daily_view import write_daily
-from claude_sv.messages import human_text, collect as collect_messages, label_sessions, learned_user_names, load_registry, recent_html
+from claude_sv.messages import human_text, collect as collect_messages, collect_skills, label_sessions, learned_user_names, load_registry, recent_html
 from claude_sv.office import away_cutoff, leave_sids, write_beat, write_office
 from claude_sv.nav import nav_html
 from claude_sv.parser import _clean_user_text, _iter_text_items
@@ -1424,6 +1424,28 @@ def _cmd_candidates(cfg, claude_dir, days):
               + _pad("最終 " + r["last_age"], 13) + _trim(r["title"], 46))
 
 
+def _skill_seats(cfg, claude_dir, res, known):
+    """🪪 席の名刺の 🧰（S25）: 直近 office.skill_days（既定 30）日の Skill 呼び出しを案件（席）ごとに数えて res に足す。
+    sid → 案件は ⑤ と同じ label_sessions（/rename 名は両 cache の学習分を合わせる）。失敗しても名刺が出ないだけ。"""
+    try:
+        days = (cfg.get("office") or {}).get("skill_days", 30)
+        sk = collect_skills(claude_dir, REPO_ROOT / "cache" / "skills_cache.json", days)
+        names = dict(sk["user_names"], **(res.get("user_names") or {}))
+        labels = label_sessions(set(sk["skills"]), claude_dir, ProjectMapper(cfg),
+                                cfg.get("workspace_labels"), known, names)
+        seats = {}
+        for sid, hits in sk["skills"].items():
+            p = (labels.get(sid) or {}).get("project")
+            if not p or p == "—":
+                continue
+            acc = seats.setdefault(p, {})
+            for _, name in hits:
+                acc[name] = acc.get(name, 0) + 1
+        res["skill_seats"], res["skill_days"] = seats, days
+    except Exception as e:  # noqa: BLE001
+        print(f"skills error: {e!r}")
+
+
 def _messages(cfg, rows):
     """セッション間メッセージ（S21）: jsonl と稼働台帳から送受信を突合し、ボード用 HTML と
     オフィス図用の素材（edges・labels）を返す。失敗してもボードは止めない（空で返す）。"""
@@ -1445,6 +1467,7 @@ def _messages(cfg, rows):
         for sid in extra - res["sids"]:
             if not (labels.get(sid) or {}).get("project"):
                 labels.pop(sid, None)  # 案件に当たらない離席セッションは席にしない（未分類のノイズ防止）
+        _skill_seats(cfg, claude_dir, res, known)
         return recent_html(res["edges"], labels, cfg, limit=12, esc=html_mod.escape), res, labels
     except Exception as e:  # noqa: BLE001
         print(f"messages error: {e!r}")

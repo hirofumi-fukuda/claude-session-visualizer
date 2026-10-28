@@ -419,6 +419,95 @@ def collect(claude_dir: Path, cache_path: Path, window_hours: float = 48,
             "recent": recent, "user_names": dict(cache.get("user_names") or {}), "humans": humans}
 
 
+# ---------------------------------------------------------------- 🪪 席の名刺: スキルの使用回数（S25）
+
+SKILLS_CACHE_VERSION = 1
+
+
+def _scan_skills(path: Path, state: dict) -> dict:
+    """jsonl を前回オフセットから読み足し、Skill の tool_use（時刻・名前）と /rename 名を state に積む。"""
+    size = path.stat().st_size
+    off = state.get("offset", 0)
+    if size < off:
+        state, off = {"offset": 0, "skills": []}, 0
+    if size == off:
+        return state
+    with open(path, "rb") as f:
+        f.seek(off)
+        chunk = f.read()
+    end = chunk.rfind(b"\n")
+    if end < 0:
+        return state
+    state["offset"] = off + end + 1
+    skills = state.setdefault("skills", [])
+    for line in chunk[:end + 1].decode("utf-8", errors="replace").splitlines():
+        if '"name":"Skill"' not in line and '"custom-title"' not in line and '"agent-name"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        t = rec.get("type")
+        if t in ("custom-title", "agent-name"):
+            name = (rec.get("agentName") if t == "agent-name" else rec.get("customTitle")) or ""
+            if name.strip():
+                state["rename"] = name.strip()
+            continue
+        if t != "assistant" or rec.get("isSidechain"):
+            continue
+        for it in (rec.get("message") or {}).get("content") or []:
+            if isinstance(it, dict) and it.get("type") == "tool_use" and it.get("name") == "Skill":
+                sk = ((it.get("input") or {}).get("skill") or "").strip()
+                if sk:
+                    skills.append([int(_epoch(rec.get("timestamp") or "")), sk])
+    return state
+
+
+def collect_skills(claude_dir: Path, cache_path: Path, days: float = 30) -> dict:
+    """直近 days 日に更新された jsonl の Skill 呼び出しを sid ごとに返す（席の名刺の 🧰・S25）。
+
+    戻り値: {"skills": {sid: [[epoch, skill名], ...]}（窓内のみ）, "user_names": {sid: /rename 名}}
+    メッセージ用の cache とは窓（48h と 30 日）が違うので別ファイルで差分読みする。
+    """
+    try:
+        with open(cache_path, encoding="utf-8") as f:
+            cache = json.load(f)
+        if cache.get("version") != SKILLS_CACHE_VERSION:
+            raise ValueError
+    except (OSError, ValueError):
+        cache = {"version": SKILLS_CACHE_VERSION, "files": {}}
+    files = cache["files"]
+    cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+    seen = set()
+    projects_dir = claude_dir / "projects"
+    for ws_dir in projects_dir.iterdir() if projects_dir.is_dir() else []:
+        if not ws_dir.is_dir():
+            continue
+        for jsonl in ws_dir.glob("*.jsonl"):
+            if jsonl.stem.startswith("agent-"):
+                continue
+            try:
+                if jsonl.stat().st_mtime < cutoff:
+                    continue
+                key = str(jsonl)
+                seen.add(key)
+                files[key] = _scan_skills(jsonl, files.get(key) or {"offset": 0, "skills": []})
+            except OSError:
+                continue
+    for key in [k for k in files if k not in seen]:
+        files.pop(key)
+    _save_cache(cache_path, cache)
+    out, names = {}, {}
+    for key, st in files.items():
+        sid = Path(key).stem
+        if st.get("rename"):
+            names[sid] = st["rename"]
+        hits = [x for x in st.get("skills") or [] if x[0] >= cutoff]
+        if hits:
+            out[sid] = hits
+    return {"skills": out, "user_names": names}
+
+
 def _first_line(body: str, limit: int = 120) -> str:
     for ln in (body or "").splitlines():
         ln = ln.strip()
