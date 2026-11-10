@@ -574,7 +574,7 @@ CSS = """
 html,body{height:100%} body{margin:0;height:100vh;overflow:hidden;display:flex;flex-direction:column;background:var(--plane);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","Yu Gothic UI",Meiryo,sans-serif;font-size:13px;line-height:1.5}
 header{flex:none;padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 header h1{font-size:16px;margin:0;font-weight:600} .sub{color:var(--muted);font-size:11.5px}
-#beat{border:1px solid var(--border);border-radius:8px;padding:0 6px;white-space:nowrap} #beat[data-st=live]{color:#2e9e6b} #beat[data-st=dead]{color:var(--red);border-color:var(--red);font-weight:600}
+#beat{border:1px solid var(--border);border-radius:8px;padding:0 6px;white-space:nowrap} #beat[data-st=live]{color:#2e9e6b} #beat[data-st=dead]{color:var(--red);border-color:var(--red);font-weight:600} #hold:empty{display:none} #hold{border:1px solid #ea580c;color:#ea580c;border-radius:8px;padding:0 6px;white-space:nowrap;font-weight:600}
 .navs{margin-left:auto;display:flex;gap:6px;align-items:center}
 .tgl{background:none;border:1px solid var(--border);color:var(--ink2);border-radius:999px;padding:3px 11px;font-size:12px;cursor:pointer;text-decoration:none;font-family:inherit}
 .tgl:hover{background:var(--wash);color:var(--ink)} .tgl.cur{background:var(--wash);color:var(--ink);cursor:default}
@@ -650,7 +650,7 @@ function pull(name){var sc=document.createElement('script');sc.src=name+'?t='+Da
 setInterval(function(){pull('office_stamp.js');pull('watcher_beat.js');},POLL_MS);
 // 🟢/🔴 watcher 生死（S25）: watcher は変化が無くても毎ループ watcher_beat.js に時刻を書く。ページは stamp と一緒に読み、
 // 間隔の 3 倍（最低 30 秒）止まったら 🔴。ファイルが無い＝beat を書かない古い watcher か未起動。再読込なしで変わる（タブ名にも出す）
-var beatAt=0,beatSec=10,beatErr=false,beatEl=document.getElementById('beat'),TITLE0=document.title;
+var beatAt=0,beatSec=10,beatErr=false,beatEl=document.getElementById('beat'),holdEl=document.getElementById('hold'),TITLE0=document.title;
 window.__watcherBeat=function(ts,sec){beatAt=ts*1000;if(sec)beatSec=sec;beatErr=false;};
 pull('watcher_beat.js');
 function hms(ms){var d=new Date(ms),p=function(n){return('0'+n).slice(-2);};return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
@@ -659,8 +659,13 @@ function beatTick(){if(!beatEl)return;var age=Date.now()-beatAt,lim=Math.max(30,
  else if(!beatAt){st='dead';tx='🔴 watcher 停止？';tip='watcher_beat.js が無い＝live_board.py --html --watch が動いていないか、beat を書かない古い版';}
  else if(age<lim){st='live';tx='🟢 watcher 稼働（'+hms(beatAt)+'）';tip='最後の beat ＝'+hms(beatAt)+'・'+beatSec+'秒ごと';}
  else{st='dead';tx='🔴 watcher 停止（最終 '+hms(beatAt)+'）';tip='beat が '+Math.round(age/1000)+'秒 止まっている。python live_board.py --html --watch '+beatSec+' で再起動';}
- if(beatEl.dataset.st!==st){beatEl.dataset.st=st;document.title=(st==='dead'?'🔴 ':'')+TITLE0;}
- beatEl.textContent=tx;beatEl.title=tip;}
+ beatEl.dataset.st=st;beatEl.textContent=tx;beatEl.title=tip;
+ // 🟠 再読込の保留を見える化（11/10・配置モードがオンのまま残り、watcher は 🟢 なのに古い絵が出続けた）。配置モードは LP_TTL で自動解除
+ var hd='',ht='';if(LPE){var left=LP_TTL-(Date.now()-LPE_AT);if(left<=0){try{localStorage.setItem('csv-office-propedit','0');}catch(e){}location.reload();return;}
+  hd='🟠 小物配置モード中＝自動更新停止（あと '+Math.ceil(left/60000)+' 分で自動解除）';ht='🪑 小物配置ボタンで今すぐ戻せる';}
+ else if(window.csvReloadAfter){hd='🟠 新しい版あり・更新保留中';ht=window.csvPlaying?'▶ 再生の終わりに読み直す':'右欄からマウスを出すと読み直す（最長 2 分）';}
+ if(holdEl&&holdEl.textContent!==hd){holdEl.textContent=hd;holdEl.title=ht;}
+ var ttl=(st==='dead'?'🔴 ':hd?'🟠 ':'')+TITLE0;if(document.title!==ttl)document.title=ttl;}
 setInterval(beatTick,1000);
 
 // ---------- 配置図 ----------
@@ -815,7 +820,7 @@ function doorOf(name){var rn=trackRoom[name];return (rn&&door[rn])||null;}
  h+='<button type="button" id="magnet" class="tgl wsb'+(MAGNET?' on':'')+'" title="稼働中の席を島の中でハブ側のマスから詰める（クリックで切替）">🧲 ハブ寄せ</button>';
  h+='<button type="button" id="nodesk" class="tgl wsb'+(NODESK?' on':'')+'" title="机を省いて立ち姿＋頭上の名札だけで詰めて並べる（席が増えて図が縮む時用・クリックで切替）">🧍 机なし</button>';
  h+='<button type="button" id="arwmode" class="tgl wsb'+(ARW==='line'?' on':'')+'" title="オン＝やり取りを矢印の線で常に出す（従来）／オフ＝封筒・紙飛行機・くしゃ紙で見せ、線はクリックした時だけ">〰 線</button>';
- if(D.lounge)h+='<button type="button" id="propedit" class="tgl wsb'+(LPE?' on':'')+'" title="休憩室の小物をドラッグで動かす（このブラウザだけ・config へは 📋 JSON をコピー）。配置モード中は自動更新を保留">🪑 小物配置</button>';
+ if(D.lounge)h+='<button type="button" id="propedit" class="tgl wsb'+(LPE?' on':'')+'" title="休憩室の小物をドラッグで動かす（このブラウザだけ・config へは 📋 JSON をコピー）。配置モード中は自動更新を保留（最後の操作から 30 分で自動解除）">🪑 小物配置</button>';
  el.innerHTML=h; el.querySelectorAll('.wsb[data-ws]').forEach(function(b){b.onclick=function(){var v=b.dataset.ws;try{localStorage.setItem('csv-office-ws',v);}catch(e){}var u=new URL(location.href);if(v)u.searchParams.set('ws',v);else u.searchParams.delete('ws');location.href=u.toString();};});
  var mb=document.getElementById('magnet');if(mb)mb.onclick=function(){try{localStorage.setItem('csv-office-magnet',MAGNET?'0':'1');}catch(e){}location.reload();};
  var nb=document.getElementById('nodesk');if(nb)nb.onclick=function(){try{localStorage.setItem('csv-office-nodesk',NODESK?'0':'1');}catch(e){}location.reload();};
@@ -828,8 +833,8 @@ var ISL_COL=['#f5c542','#39d353','#5ad1e6','#e66fd1','#f97316','#a78bfa','#94a3b
 var PR=D.props||{};
 // 🪑 小物の配置（S24・個人PC C を休憩室だけに絞って移植）: config office.lounge_props＝{id: {kind,x,y,scale,hide}}（休憩室の左上からの px）。
 // このブラウザでドラッグした分（localStorage csv-office-props）が config より優先。config へ戻すのは配置モードの「📋 JSON をコピー」→ office に貼る
-var LPC=D.lounge_props||{},LPL={},LPE=false,LGB=null,LPBOX={sofa:[120,56],coffee:[90,80],vending:[60,104],printer:[176,100]};
-try{LPL=JSON.parse(localStorage.getItem('csv-office-props')||'{}')||{};LPE=localStorage.getItem('csv-office-propedit')==='1';}catch(e){LPL={};}
+var LPC=D.lounge_props||{},LPL={},LPE=false,LPE_AT=0,LP_TTL=30*60000,LGB=null,LPBOX={sofa:[120,56],coffee:[90,80],vending:[60,104],printer:[176,100]};
+try{LPL=JSON.parse(localStorage.getItem('csv-office-props')||'{}')||{};LPE_AT=+localStorage.getItem('csv-office-propedit')||0;LPE=LPE_AT>0&&Date.now()-LPE_AT<LP_TTL;}catch(e){LPL={};}  // 値＝オンにした時刻（ドラッグで延長）。30 分で切れる＝開き直しても残り続けない（11/10・旧値 '1' は切れ扱い）
 function lpOf(id){return LPL[id]||LPC[id]||null;}
 function lpWrap(id,px,py,w,h,inner){return '<g class="lp" data-id="'+esc(id)+'" data-x="'+Math.round(px-LGB.x)+'" data-y="'+Math.round(py-LGB.y)+'">'+inner+(LPE?'<rect x="'+px+'" y="'+py+'" width="'+w+'" height="'+h+'" fill="#fff" fill-opacity=".01" stroke="#f59e0b" stroke-dasharray="4 3" stroke-width="1.5" style="cursor:move"/><text x="'+(px+2)+'" y="'+(py-3)+'" font-size="10" fill="#f59e0b">'+esc(id)+'</text>':'')+'</g>';}
 function R(x,y,w,h,f,ex){return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="'+f+'"'+(ex||'')+'/>';}
@@ -1129,12 +1134,12 @@ document.getElementById('play').onclick=function(){if(playing||!RTL.length)retur
 ord.onclick=function(){desc=!desc;try{localStorage.setItem('csv-log-desc',desc?'1':'0');}catch(e){}renderLog();};
 renderLog();
 // 🪑 配置モード（S24）: 休憩室の小物をドラッグ＝このブラウザに保存して読み直す・Shift+クリック＝隠す。左下の道具箱＝📋 JSON をコピー／＋ 小物／↺ 戻す
-(function(){var pe=document.getElementById('propedit');if(pe)pe.onclick=function(){try{localStorage.setItem('csv-office-propedit',LPE?'0':'1');}catch(e){}location.reload();};
+(function(){var pe=document.getElementById('propedit');if(pe)pe.onclick=function(){try{localStorage.setItem('csv-office-propedit',LPE?'0':String(Date.now()));}catch(e){}location.reload();};
  if(!LPE||!LGB)return;
- function store(){try{localStorage.setItem('csv-office-props',JSON.stringify(LPL));}catch(e){}location.reload();}
+ function store(){try{localStorage.setItem('csv-office-props',JSON.stringify(LPL));localStorage.setItem('csv-office-propedit',String(Date.now()));}catch(e){}location.reload();}
  function jsonText(){var m={};Object.keys(LPC).forEach(function(k){m[k]=LPC[k];});Object.keys(LPL).forEach(function(k){m[k]=LPL[k];});return '"lounge_props": '+JSON.stringify(m,null,2);}
  var nloc=Object.keys(LPL).length,tb=document.createElement('div');tb.id='ptool';
- tb.innerHTML='<b>🪑 小物配置</b><button type="button" class="tgl" id="pt-js" title="config.local.json の office に貼る文面">📋 JSON をコピー</button><select id="pt-add" title="assets/props/ の絵から 1 つ足す（休憩室の真ん中に出る）"><option value="">＋ 小物</option>'+Object.keys(PR).map(function(k){return '<option>'+esc(k)+'</option>';}).join('')+'</select>'+(nloc?'<button type="button" class="tgl" id="pt-rs" title="このブラウザで変えた分を捨てて config の配置に戻す">↺ 戻す（'+nloc+'）</button>':'')+'<span>ドラッグ＝移動／Shift+クリック＝隠す／自動更新は保留中</span>';
+ tb.innerHTML='<b>🪑 小物配置</b><button type="button" class="tgl" id="pt-js" title="config.local.json の office に貼る文面">📋 JSON をコピー</button><select id="pt-add" title="assets/props/ の絵から 1 つ足す（休憩室の真ん中に出る）"><option value="">＋ 小物</option>'+Object.keys(PR).map(function(k){return '<option>'+esc(k)+'</option>';}).join('')+'</select>'+(nloc?'<button type="button" class="tgl" id="pt-rs" title="このブラウザで変えた分を捨てて config の配置に戻す">↺ 戻す（'+nloc+'）</button>':'')+'<span>ドラッグ＝移動／Shift+クリック＝隠す／自動更新は保留中（最後の操作から 30 分で自動解除）</span>';
  document.body.appendChild(tb);
  document.getElementById('pt-js').onclick=function(){var t=jsonText();if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){alert('コピーした（config.local.json の office に貼って watcher を再起動）');},function(){prompt('コピーして config.local.json の office に貼る',t);});else prompt('コピーして config.local.json の office に貼る',t);};
  document.getElementById('pt-add').onchange=function(){var k=this.value;if(!k)return;var id=k,n=2;while(lpOf(id))id=k+'-'+(n++);var P=PR[k];LPL[id]={kind:k,x:Math.round(LGB.w/2-P.w/2),y:Math.round(LGB.h/2-P.h/2)};store();};
@@ -1251,7 +1256,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
 <style>{CSS}</style></head>
 <body>
 <header><div><h1>🏢 バーチャルオフィス</h1>
-<div class="sub">いま <b id="clock"></b> ／ 生成 {now} <span id="beat" data-st="wait">🟡 watcher 確認中</span> ／ 席=トラック・人=稼働セッション・矢印=SendMessage（新しいほど濃い・15分以内は動く）・席にマウスで詳細・クリックで席カード</div></div>
+<div class="sub">いま <b id="clock"></b> ／ 生成 {now} <span id="beat" data-st="wait">🟡 watcher 確認中</span> <span id="hold"></span> ／ 席=トラック・人=稼働セッション・矢印=SendMessage（新しいほど濃い・15分以内は動く）・席にマウスで詳細・クリックで席カード</div></div>
 {tiles}
 <button class="tgl" id="play" type="button" title="今日の 📨 の流れと 👤 の席移動を時刻順に再生（再生中は自動更新を保留）">▶ 流れを再生</button>
 {ctl}
