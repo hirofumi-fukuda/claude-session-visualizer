@@ -646,6 +646,12 @@ body.vcards #magnet,body.vcards #nodesk,body.vcards #arwmode,body.vcards #proped
 .sc-pan h4{margin:0 0 4px;font-size:12px;color:var(--muted);font-weight:600;display:flex;justify-content:space-between;gap:8px} .sc-pan h4 a{color:inherit}
 .sc-pan ul{margin:0;padding:0;list-style:none} .sc-pan li{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .sc-pan li.dn{color:var(--muted);text-decoration:line-through}
 .sc-pan .ev{color:var(--gold);font-weight:600;white-space:normal} .sc-pan .wt{white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical} .sc-pan .ng{color:var(--red)}
+/* 📨 相手チップ（その席と 48h 内にやりとりした相手・送った→／受けた←／両方⇄）と、選んだ席から相手カードへの線（#clinks） */
+body.vcards #cards{position:relative} #clinks{position:absolute;left:0;top:0;pointer-events:none;z-index:5;overflow:visible}
+.sc-pes{display:flex;flex-wrap:wrap;gap:3px 5px} .sc-pe{font-size:11.5px;border:1px solid var(--pc,var(--border));color:var(--pc,var(--ink2));border-radius:999px;padding:0 7px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer} .sc-pe:hover{background:var(--wash)} .sc-pe i{font-style:normal;color:var(--muted);font-size:10.5px}
+.sc-pe.ou,.peer.p-ou{--pc:#3b82f6} .sc-pe.in,.peer.p-in{--pc:#d4a017} .sc-pe.bo,.peer.p-bo{--pc:#8b5cf6} .sc-pe.ng,.peer.p-ng{--pc:#e5533b} .sc-pe.more{cursor:default;color:var(--muted)}
+#cards .peer{outline:2px dashed var(--pc);outline-offset:1px}
+.sc-rc{font-size:11px;font-weight:700;color:#fff;background:#0ea5e9;border-radius:4px;padding:0 5px;line-height:1.5}
 .sc-empty{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px} .sc-empty .desk{border:1px dashed var(--border);border-radius:999px;padding:2px 9px;cursor:pointer;color:var(--ink2)} .sc-empty .desk:hover{background:var(--wash)}
 /* 📱 縦画面・狭い画面: 右欄を下に回して横幅を全部使う（地図のままでも横が広がる） */
 @media (orientation:portrait),(max-width:900px){main{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,auto)} aside{height:auto;max-height:32vh;border-left:0;border-top:1px solid var(--border)} header{padding:8px 12px;gap:8px} .tiles{flex-wrap:wrap} .sub .exp{display:none}}
@@ -1115,7 +1121,22 @@ if(bbMode!=='off'){var near=!!(D.human&&!onBreak);
   var q=occAt(p[0],p[1],big,Math.min(t.occupied_by.length,big?3:2),bi);svg+=say(q[0]+18,q[1]-(NODESK?22:2),bb.kind,bb.text,agem,SAYC[bb.kind]||'#888',(near&&D.human.track===t.name)?-40:0,{n:t.name,ts:bb.ts},bb.big);});
  if(hp&&D.human.text&&(bbMode==='all'||mins<=120)){if(seen('__human',D.human.ts*1000))HID++;else svg+=say(hp[0]+18,hp[1]-24,'👤',D.human.text,mins,'#2e9e6b',30,{n:'__human',ts:D.human.ts*1000});}}
 // 🃏 席カード（S25 11/24）: 状態順（🔴 許可待ち→🟡 待機中→🟢 作業中→💤 離席・🏠 退社）に並べ、空席はチップに畳む。部屋の絞り込みはそのまま効く
-var cardsHtml='';
+var cardsHtml='',CPEERS={};
+function peerCls(q){return q.fail?'ng':q.out&&q.inn?'bo':q.out?'ou':'in';}
+// 🔗 選んだ席から相手のカードへ線（送った＝青→・受けた＝金←・両方＝紫⇄・不達あり＝赤）。全部の線は引かない＝絡まって読めない
+function cardLinks(n){var box=document.getElementById('cards');if(!box)return;var old=document.getElementById('clinks');if(old)old.remove();
+ box.querySelectorAll('.peer').forEach(function(c){c.classList.remove('peer','p-ou','p-in','p-bo','p-ng');});
+ var m=n&&CPEERS[n];if(!m)return;function el(k){return box.querySelector('.desk[data-track="'+CSS.escape(k)+'"]');}
+ var src=el(n);if(!src)return;var br=box.getBoundingClientRect(),COL={ou:'#3b82f6',in:'#d4a017',bo:'#8b5cf6',ng:'#e5533b'};
+ function rc(e){var r=e.getBoundingClientRect();return {x:r.left-br.left+r.width/2,y:r.top-br.top+r.height/2,w:r.width/2,h:r.height/2};}
+ function edge(c,tx,ty){var dx=tx-c.x,dy=ty-c.y,k=Math.min(dx?c.w/Math.abs(dx):1e9,dy?c.h/Math.abs(dy):1e9);k=Math.min(k,1);return {x:c.x+dx*k,y:c.y+dy*k};}
+ var a=rc(src),s='<svg id="clinks" width="'+box.scrollWidth+'" height="'+box.scrollHeight+'"><defs>';
+ Object.keys(COL).forEach(function(c){s+='<marker id="ca-'+c+'" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="'+COL[c]+'"/></marker>';});s+='</defs>';
+ Object.keys(m).forEach(function(k){var t=el(k);if(!t||t===src)return;var q=m[k],cls=peerCls(q);t.classList.add('peer','p-'+cls);
+  var b=rc(t),dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy)||1,off=Math.min(50,len*.15),cx=(a.x+b.x)/2-dy/len*off,cy=(a.y+b.y)/2+dx/len*off,p0=edge(a,cx,cy),p1=edge(b,cx,cy),mk='url(#ca-'+cls+')';
+  s+='<path d="M'+p0.x.toFixed(1)+' '+p0.y.toFixed(1)+' Q'+cx.toFixed(1)+' '+cy.toFixed(1)+' '+p1.x.toFixed(1)+' '+p1.y.toFixed(1)+'" stroke="'+COL[cls]+'" stroke-width="'+Math.min(6,2+Math.log2(q.out+q.inn)).toFixed(1)+'" fill="none" stroke-linecap="round" opacity=".65"'+(q.out?' marker-end="'+mk+'"':'')+(q.inn?' marker-start="'+mk+'"':'')+'/>';});
+ box.insertAdjacentHTML('beforeend',s+'</svg>');}
+if(VIEW==='cards'){var clT=0;addEventListener('resize',function(){clearTimeout(clT);clT=setTimeout(function(){cardLinks(CARD);},150);});}
 if(VIEW==='cards')cardsHtml=(function(){
  var shownN={};shown.forEach(function(r){shownN[r.name]=1;});
  function inView(n){return !ROOMS.length||(trackRoom[n]?!!shownN[trackRoom[n]]:!wsSel);}
@@ -1127,15 +1148,26 @@ if(VIEW==='cards')cardsHtml=(function(){
   var occ=t.occupied_by||[],bb=null,single=occ.length===1;occ.forEach(function(s){var b=sayFor(t,s,single);if(b&&(!bb||b.ts>bb.ts))bb=b;});
   return {t:t,i:i,away:away,leave:leave,bb:bb,last:bb?bb.ts:0,st:live?stOf(t,true):leave?'leave':away?'away':'empty'};});
  all.sort(function(a,b){return (RK[a.st]-RK[b.st])||(a.st==='idle'?b.last-a.last:0)||(a.i-b.i);});
+ var PE={};D.edges.forEach(function(e){if(e.removed||!e.frm||!e.to||e.frm===e.to)return;var ts=Date.parse(e.ts)||0;  // 📨 席ごとの相手＝{相手:{out,inn,last,fail}}
+  function add(a,b,dir){var m=PE[a]=PE[a]||{},q=m[b]=m[b]||{out:0,inn:0,last:0,fail:0};q[dir]++;if(ts>q.last)q.last=ts;if(!e.ok)q.fail++;}
+  add(e.frm,e.to,'out');add(e.to,e.frm,'inn');});
+ CPEERS=PE;
+ function hm(ms){var d=new Date(ms);return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);}
+ function peerChips(nm){var m=PE[nm];if(!m)return '';var ks=Object.keys(m).sort(function(a,b){return m[b].last-m[a].last;}),h='';
+  ks.slice(0,4).forEach(function(k){var q=m[k],n=q.out+q.inn,dir=q.out&&q.inn?'⇄':q.out?'送':'受',cls=peerCls(q),old=Date.now()-q.last>86400000;
+   h+='<span class="sc-pe '+cls+'" data-peer="'+esc(k)+'" title="'+esc(k+'：送った '+q.out+'通・受けた '+q.inn+'通'+(q.fail?'・不達 '+q.fail+'通':'')+'（最後 '+ago(q.last)+'）＝押すと相手の席へ')+'">'+dir+' '+esc(k)+(n>1?' ×'+n:'')+' <i>'+(old?ago(q.last):hm(q.last))+'</i></span>';});
+  if(ks.length>4)h+='<span class="sc-pe more" title="'+esc(ks.slice(4).join('・'))+'">ほか '+(ks.length-4)+'</span>';
+  return '<div class="sc-pes">'+h+'</div>';}
  function card(o){var t=o.t,nm=t.name,st=o.st,occ=t.occupied_by||[],h='',pics='',stl='<b>'+LAB[st]+'</b>',tip=TIPS[nm]||deskTip(t,t.cur,!!t.live,o.away,false,o.leave);
   if(st==='away'){pics=pic(o.away[0].model,'away',nm);stl+=' 最後 '+esc(o.away[0].t);var m0=mshort(o.away[0].model);if(m0)stl+='<span class="sc-m" style="border-color:'+MODEL_COL(o.away[0].model)+'">'+m0+'</span>';}
   else if(st==='leave'){pics=pic(o.leave.model,'idle',nm);stl+=(o.leave.until_t?' 次 '+esc(o.leave.until_t):'');}
-  else{occ.slice(0,3).forEach(function(s){pics+=pic(s.live.model,s.live.status,nm);});var ms={};occ.forEach(function(s){var k=mshort(s.live.model);if(k)ms[k]=s.live.model;});Object.keys(ms).forEach(function(k){stl+='<span class="sc-m" style="border-color:'+MODEL_COL(ms[k])+'">'+k+'</span>';});if(occ.length>1)stl+=' 👥'+occ.length;if(occ.some(function(s){return s.live.rc;}))stl+=' 📱';}
+  else{occ.slice(0,3).forEach(function(s){pics+=pic(s.live.model,s.live.status,nm);});var ms={};occ.forEach(function(s){var k=mshort(s.live.model);if(k)ms[k]=s.live.model;});Object.keys(ms).forEach(function(k){stl+='<span class="sc-m" style="border-color:'+MODEL_COL(ms[k])+'">'+k+'</span>';});if(occ.length>1)stl+=' 👥'+occ.length;if(occ.some(function(s){return s.live.rc;}))stl+='<span class="sc-rc" title="Remote Control オン＝外出先（スマホ・claude.ai）から指示できる席">📱 RC</span>';}
   var cur=t.cur,sn=cur&&cur.s?' <span class="sc-s">S'+cur.s+'</span>':'',rm=(shown.length>1&&trackRoom[nm])?'<span class="sc-room">'+esc(trackRoom[nm])+'</span>':'';
   h+='<div class="scard desk s-'+st+(nm===CARD?' on':'')+'" data-track="'+esc(nm)+'" title="'+esc(tip)+'"><div class="sc-top"><div class="sc-pics">'+pics+'</div><div class="sc-id"><div class="sc-name">'+esc(nm+nickOf(nm))+sn+rm+'</div><div class="sc-st">'+stl+'</div></div></div>';
   var bb=o.bb;
   if(bb)h+='<div class="sc-say">'+esc(bb.kind+' '+cleanText(bb.text))+' <span class="ago">'+ago(bb.ts)+'</span></div>';
   else if(st==='leave'&&o.leave.text)h+='<div class="sc-say">🏠 '+esc(cleanText(o.leave.text))+(o.leave.t?' <span class="ago">'+esc(o.leave.t)+'</span>':'')+'</div>';
+  h+=peerChips(nm);
   var bd=[],un=unreadBy[nm],fl=failBy[nm];
   if(un){var ue=D.edges[lastUn[nm]];bd.push('<span class="un">📨 未読 '+un+'（'+esc(ue.frm)+' '+ago(Date.parse(ue.ts))+'）</span>');}
   if(fl)bd.push('<span class="ng">❌ 不達 '+fl+'</span>');
@@ -1159,7 +1191,7 @@ if(VIEW==='cards')cardsHtml=(function(){
    tl.forEach(function(x){p1+='<li'+(x.done?' class="dn"':'')+' title="'+esc(x.t)+'">'+esc((x.mark||'・')+' '+x.t)+'</li>';});if(!top.length)p1+='<li class="dn" style="text-decoration:none">（🔴 TOP の見出しなし）</li>';}
   var et=evTxt();p1+='<li class="ev" id="cbev">'+esc(et)+'</li></ul></div>';bar+=p1;
   setInterval(function(){var el=document.getElementById('cbev');if(el)el.textContent=evTxt();},30000);}  // 「あと n分」は30秒ごとに書き直す
- var es=D.edges.filter(function(e){return !e.removed;}).slice(-3).reverse(),wt=BOARD&&BOARD.waiting,p2='<div class="sc-pan"><h4><span>📟 いまの動き</span><span>📨 '+D.counts.edges+'通/'+D.window_hours+'h</span></h4><ul>';
+ var es=D.edges.filter(function(e){return !e.removed;}).slice(-3).reverse(),wt=BOARD&&BOARD.waiting,p2='<div class="sc-pan"><h4><span>📟 いまの動き</span><span>'+(function(){var n=all.filter(function(o){return (o.t.occupied_by||[]).some(function(s){return s.live&&s.live.rc;});}).length;return n?'<span class="sc-rc" title="Remote Control オンの席の数">📱 RC '+n+'席</span> ':'';})()+'📨 '+D.counts.edges+'通/'+D.window_hours+'h</span></h4><ul>';
  if(es.length)es.forEach(function(e){var tx=(e.ok?'📨 ':'❌ ')+(e.t||'').slice(-5)+' '+e.frm+' → '+e.to+(e.summary?'「'+e.summary+'」':'');p2+='<li'+(e.ok?'':' class="ng"')+' title="'+esc(tx)+'">'+esc(tx)+'</li>';});
  else p2+='<li class="dn" style="text-decoration:none">📨 新着なし（'+D.window_hours+'h）</li>';
  if(wt&&wt.n){var wi=wt.items||[],u=wt.urgent||0;p2+='<li class="wt" title="'+esc('返信待ち（こちらボール外）\n'+wi.join('\n'))+'">⏸ 返信待ち '+wt.n+'件：'+(u?'<b class="ng">🔴 '+esc(wi.slice(0,u).join('・'))+'</b>'+(wi.length>u?'・':''):'')+esc(wi.slice(u).join('・'))+'</li>';}
@@ -1168,7 +1200,9 @@ if(VIEW==='cards')cardsHtml=(function(){
  return '<div id="cards"><div class="sc-bar">'+bar+'</div>'+out+'</div>';})();
 Object.keys(tints).forEach(function(id){svg+='<filter id="'+id+'" x="0" y="0" width="1" height="1"><feFlood flood-color="'+tints[id]+'" result="c"/><feComposite in="c" in2="SourceAlpha" operator="in" result="m"/><feBlend in="m" in2="SourceGraphic" mode="multiply"/></filter>';});
 svg+='</svg>';
-document.getElementById('scene').innerHTML=svg+cardsHtml;if(clockFn)tick();  // 🕐 帯の時計は差し込んだ直後に1回埋める
+document.getElementById('scene').innerHTML=svg+cardsHtml;if(clockFn)tick();
+if(VIEW==='cards'){document.querySelectorAll('#cards .sc-pe[data-peer]').forEach(function(c){c.addEventListener('click',function(ev){ev.stopPropagation();var t=document.querySelector('#cards .desk[data-track="'+CSS.escape(c.dataset.peer)+'"]');if(!t)return;t.scrollIntoView({block:'center',behavior:'smooth'});t.click();});});  // 相手チップ＝相手の席へ飛んで選ぶ
+ if(CARD)requestAnimationFrame(function(){cardLinks(CARD);});}  // 🕐 帯の時計は差し込んだ直後に1回埋める
 // 🪟 休憩室の窓: 時刻で昼（6-16時）・夕（17-18時）・夜。毎秒の tick から呼ばれ、時が変わった時だけ描き直す
 skyFn=(function(){var last=-1;return function(d){var h=d.getHours();if(h===last||!WIN)return;last=h;var sky=document.getElementById('winsky'),sun=document.getElementById('winsun'),st=document.getElementById('winstars');if(!sky||!sun||!st)return;
  var day=h>=6&&h<17,eve=h>=17&&h<19,f=day?(h-6)/10:eve?(h-17):0.78;
@@ -1238,7 +1272,7 @@ renderLog();
 // キャラはこのブラウザに保存して読み直す（csv-office-chars）。config へ戻すのは「📋 JSON をコピー」→ office の sprite_track_themes／sprite_variants に貼る。名指しした種類は名指しの席だけに付く（ハッシュの配り直しで他の席の絵が変わることがある）
 (function(){var box=document.getElementById('card');if(!box)return;
  function store(){try{localStorage.setItem('csv-office-chars',JSON.stringify(CHL));}catch(e){}location.reload();}
- function setCard(n){CARD=n;try{if(n)localStorage.setItem('csv-office-card',n);else localStorage.removeItem('csv-office-card');}catch(e){}document.querySelectorAll('#scene .chsel').forEach(function(r){r.classList.toggle('on',r.parentNode.dataset.track===n);});document.querySelectorAll('#cards .desk').forEach(function(c){c.classList.toggle('on',c.dataset.track===n);});render();if(n)box.parentNode.scrollTop=0;}
+ function setCard(n){CARD=n;try{if(n)localStorage.setItem('csv-office-card',n);else localStorage.removeItem('csv-office-card');}catch(e){}document.querySelectorAll('#scene .chsel').forEach(function(r){r.classList.toggle('on',r.parentNode.dataset.track===n);});document.querySelectorAll('#cards .desk').forEach(function(c){c.classList.toggle('on',c.dataset.track===n);});render();if(VIEW==='cards')requestAnimationFrame(function(){cardLinks(n);});if(n)box.parentNode.scrollTop=0;}
  function jsonText(){return '"sprite_track_themes": '+JSON.stringify(TOVR,null,2)+',\n"sprite_variants": '+JSON.stringify(VOVR,null,2);}
  function thumb(M,v,mk){var ks=v?['agent-'+v+'-'+mk,'agent-'+v+'-'+mk+'-idle','agent-'+v,'agent-'+v+'-idle']:['agent-'+mk,'agent'];for(var i=0;i<ks.length;i++)if(M[ks[i]])return M[ks[i]];return '';}
  function hm(ms){var d=new Date(ms),p=function(n){return('0'+n).slice(-2);};return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());}
