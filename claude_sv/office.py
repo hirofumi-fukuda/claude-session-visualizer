@@ -640,6 +640,12 @@ body.vcards #magnet,body.vcards #nodesk,body.vcards #arwmode,body.vcards #proped
 .sc-say{font-size:12.5px;line-height:1.45;background:var(--wash);border-radius:6px;padding:4px 7px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word} .sc-say .ago{color:var(--muted);font-size:11px}
 .sc-bd{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:12px;color:var(--ink2)} .sc-bd span{white-space:nowrap} .sc-bd .un{color:var(--gold);font-weight:600} .sc-bd .ng{color:var(--red);font-weight:600}
 .sc-sec{grid-column:1/-1;color:var(--muted);font-size:12px;font-weight:600;margin:4px 0 -4px;border-bottom:1px solid var(--border)}
+/* 🧾📟 カード表示の上の帯: 地図の 🧾 ホワイトボード（daily の TOP・⏰）と 📟 電光掲示板（新着・返信待ち）の中身を HTML で＝縦でも読める字の大きさ */
+.sc-bar{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+.sc-pan{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:13px;line-height:1.5;min-width:0}
+.sc-pan h4{margin:0 0 4px;font-size:12px;color:var(--muted);font-weight:600;display:flex;justify-content:space-between;gap:8px} .sc-pan h4 a{color:inherit}
+.sc-pan ul{margin:0;padding:0;list-style:none} .sc-pan li{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .sc-pan li.dn{color:var(--muted);text-decoration:line-through}
+.sc-pan .ev{color:var(--gold);font-weight:600;white-space:normal} .sc-pan .wt{white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical} .sc-pan .ng{color:var(--red)}
 .sc-empty{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px} .sc-empty .desk{border:1px dashed var(--border);border-radius:999px;padding:2px 9px;cursor:pointer;color:var(--ink2)} .sc-empty .desk:hover{background:var(--wash)}
 /* 📱 縦画面・狭い画面: 右欄を下に回して横幅を全部使う（地図のままでも横が広がる） */
 @media (orientation:portrait),(max-width:900px){main{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,auto)} aside{height:auto;max-height:32vh;border-left:0;border-top:1px solid var(--border)} header{padding:8px 12px;gap:8px} .tiles{flex-wrap:wrap} .sub .exp{display:none}}
@@ -1143,7 +1149,23 @@ if(VIEW==='cards')cardsHtml=(function(){
   out+=card(o);});
  if(emp.length)out+='<div class="sc-sec">⚪ 空席 '+emp.length+'</div><div class="sc-empty">'+emp.map(function(o){var nm=o.t.name;return '<span class="desk'+(nm===CARD?' on':'')+'" data-track="'+esc(nm)+'" title="'+esc(TIPS[nm]||deskTip(o.t,o.t.cur,false,null,false,null))+'">'+esc(nm+nickOf(nm))+'</span>';}).join('')+'</div>';
  if(!out)out='<div class="sc-sec">席なし（この絞り込みに席がない）</div>';
- return '<div id="cards">'+out+'</div>';})();
+ // 🧾📟 上の帯: 板（daily の TOP・⏰ 次の予定・定時まで）と掲示板（📨 新着・⏸ 返信待ち）。🏠💤・🏷 はカード側にあるので出さない
+ var bar='',d0=new Date();
+ function evTxt(){var d=new Date(),e=evLine(),end=hm2m(D.day_end),r=end==null?null:end-(d.getHours()*60+d.getMinutes()),t=e?e.alts[0]:'';
+  if(r!=null)t+=(t?' ／ ':'')+(r>0?'定時 '+D.day_end+' まで あと '+Math.floor(r/60)+':'+('0'+r%60).slice(-2):'定時 '+D.day_end+' を過ぎた');return t;}
+ if(BOARD){var p1='<div class="sc-pan"><h4><a href="daily.html" target="_blank" rel="noopener" title="📓 日誌を開く（daily.html）">🧾 '+(d0.getMonth()+1)+'/'+d0.getDate()+'（'+WD[d0.getDay()]+'） 今日</a></h4><ul>';
+  if(BOARD.missing)p1+='<li class="dn" style="text-decoration:none">📓 今日の日誌はまだ（業務ハブを起動すると作られる）</li>';
+  else{var top=BOARD.top||[],tl=top.filter(function(x){return !x.done;}).concat(top.filter(function(x){return x.done;})).slice(0,4);
+   tl.forEach(function(x){p1+='<li'+(x.done?' class="dn"':'')+' title="'+esc(x.t)+'">'+esc((x.mark||'・')+' '+x.t)+'</li>';});if(!top.length)p1+='<li class="dn" style="text-decoration:none">（🔴 TOP の見出しなし）</li>';}
+  var et=evTxt();p1+='<li class="ev" id="cbev">'+esc(et)+'</li></ul></div>';bar+=p1;
+  setInterval(function(){var el=document.getElementById('cbev');if(el)el.textContent=evTxt();},30000);}  // 「あと n分」は30秒ごとに書き直す
+ var es=D.edges.filter(function(e){return !e.removed;}).slice(-3).reverse(),wt=BOARD&&BOARD.waiting,p2='<div class="sc-pan"><h4><span>📟 いまの動き</span><span>📨 '+D.counts.edges+'通/'+D.window_hours+'h</span></h4><ul>';
+ if(es.length)es.forEach(function(e){var tx=(e.ok?'📨 ':'❌ ')+(e.t||'').slice(-5)+' '+e.frm+' → '+e.to+(e.summary?'「'+e.summary+'」':'');p2+='<li'+(e.ok?'':' class="ng"')+' title="'+esc(tx)+'">'+esc(tx)+'</li>';});
+ else p2+='<li class="dn" style="text-decoration:none">📨 新着なし（'+D.window_hours+'h）</li>';
+ if(wt&&wt.n){var wi=wt.items||[],u=wt.urgent||0;p2+='<li class="wt" title="'+esc('返信待ち（こちらボール外）\n'+wi.join('\n'))+'">⏸ 返信待ち '+wt.n+'件：'+(u?'<b class="ng">🔴 '+esc(wi.slice(0,u).join('・'))+'</b>'+(wi.length>u?'・':''):'')+esc(wi.slice(u).join('・'))+'</li>';}
+ else if(BOARD)p2+='<li>⏸ 返信待ちなし</li>';
+ bar+=p2+'</ul></div>';
+ return '<div id="cards"><div class="sc-bar">'+bar+'</div>'+out+'</div>';})();
 Object.keys(tints).forEach(function(id){svg+='<filter id="'+id+'" x="0" y="0" width="1" height="1"><feFlood flood-color="'+tints[id]+'" result="c"/><feComposite in="c" in2="SourceAlpha" operator="in" result="m"/><feBlend in="m" in2="SourceGraphic" mode="multiply"/></filter>';});
 svg+='</svg>';
 document.getElementById('scene').innerHTML=svg+cardsHtml;if(clockFn)tick();  // 🕐 帯の時計は差し込んだ直後に1回埋める
