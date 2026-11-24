@@ -1116,17 +1116,18 @@ if(VIEW==='cards')cardsHtml=(function(){
  function ago(ms){var m=Math.max(0,Math.round((Date.now()-ms)/60000));return m<1?'たった今':m<60?m+'分前':m<1440?Math.floor(m/60)+'時間前':Math.floor(m/1440)+'日前';}
  function mshort(m){var k=modelKey(m);return k==='unknown'?'':k;}
  function pic(model,status,track){return '<svg viewBox="-4 0 44 48">'+sprite(0,0,MODEL_COL(model),model,status,track)+'</svg>';}
- var RK={perm:0,idle:1,busy:2,away:3,leave:4,empty:5},LAB={perm:'🔴 許可待ち',idle:'🟡 待機中',busy:'🟢 作業中',away:'💤 離席中',leave:'🏠 退社',empty:'⚪ 空席'};
+ var RK={perm:0,busy:1,idle:2,away:3,leave:4,empty:5},LAB={perm:'🔴 許可待ち',idle:'🟡 待機中',busy:'🟢 作業中',away:'💤 離席中',leave:'🏠 退社',empty:'⚪ 空席'};
  var all=[D.hub].concat(D.tracks).filter(function(t){return t&&inView(t.name);}).map(function(t,i){var live=t.live&&(t.occupied_by||[]).length,away=(!live&&t.away&&t.away.length)?t.away:null,leave=(!live&&t.leave)?t.leave:null;
-  return {t:t,i:i,away:away,leave:leave,st:live?stOf(t,true):leave?'leave':away?'away':'empty'};});
- all.sort(function(a,b){return (RK[a.st]-RK[b.st])||(a.i-b.i);});
+  var occ=t.occupied_by||[],bb=null,single=occ.length===1;occ.forEach(function(s){var b=sayFor(t,s,single);if(b&&(!bb||b.ts>bb.ts))bb=b;});
+  return {t:t,i:i,away:away,leave:leave,bb:bb,last:bb?bb.ts:0,st:live?stOf(t,true):leave?'leave':away?'away':'empty'};});
+ all.sort(function(a,b){return (RK[a.st]-RK[b.st])||(a.st==='idle'?b.last-a.last:0)||(a.i-b.i);});
  function card(o){var t=o.t,nm=t.name,st=o.st,occ=t.occupied_by||[],h='',pics='',stl='<b>'+LAB[st]+'</b>',tip=TIPS[nm]||deskTip(t,t.cur,!!t.live,o.away,false,o.leave);
   if(st==='away'){pics=pic(o.away[0].model,'away',nm);stl+=' 最後 '+esc(o.away[0].t);var m0=mshort(o.away[0].model);if(m0)stl+='<span class="sc-m" style="border-color:'+MODEL_COL(o.away[0].model)+'">'+m0+'</span>';}
   else if(st==='leave'){pics=pic(o.leave.model,'idle',nm);stl+=(o.leave.until_t?' 次 '+esc(o.leave.until_t):'');}
   else{occ.slice(0,3).forEach(function(s){pics+=pic(s.live.model,s.live.status,nm);});var ms={};occ.forEach(function(s){var k=mshort(s.live.model);if(k)ms[k]=s.live.model;});Object.keys(ms).forEach(function(k){stl+='<span class="sc-m" style="border-color:'+MODEL_COL(ms[k])+'">'+k+'</span>';});if(occ.length>1)stl+=' 👥'+occ.length;if(occ.some(function(s){return s.live.rc;}))stl+=' 📱';}
   var cur=t.cur,sn=cur&&cur.s?' <span class="sc-s">S'+cur.s+'</span>':'',rm=(shown.length>1&&trackRoom[nm])?'<span class="sc-room">'+esc(trackRoom[nm])+'</span>':'';
   h+='<div class="scard desk s-'+st+(nm===CARD?' on':'')+'" data-track="'+esc(nm)+'" title="'+esc(tip)+'"><div class="sc-top"><div class="sc-pics">'+pics+'</div><div class="sc-id"><div class="sc-name">'+esc(nm+nickOf(nm))+sn+rm+'</div><div class="sc-st">'+stl+'</div></div></div>';
-  var bb=null,single=occ.length===1;occ.forEach(function(s){var b=sayFor(t,s,single);if(b&&(!bb||b.ts>bb.ts))bb=b;});
+  var bb=o.bb;
   if(bb)h+='<div class="sc-say">'+esc(bb.kind+' '+cleanText(bb.text))+' <span class="ago">'+ago(bb.ts)+'</span></div>';
   else if(st==='leave'&&o.leave.text)h+='<div class="sc-say">🏠 '+esc(cleanText(o.leave.text))+(o.leave.t?' <span class="ago">'+esc(o.leave.t)+'</span>':'')+'</div>';
   var bd=[],un=unreadBy[nm],fl=failBy[nm];
