@@ -19,6 +19,8 @@ break_after_min 分で人間のスプライトが休憩室へ歩く（話しか�
 🪪 nicknames（S25）: cfg.office.nicknames＝席名→呼び名（例 業務ハブ→ハブ・会議サポート→店長〔10/21 までシノ〕）。名札・ツールチップ・席カードに「席名（呼び名）」。
    宛先＝セッション名は変えない（正本＝~/.claude/agent-ops.md ⑥ の表・config は名札用のコピー）。
 📱 Remote Control（S22）: 稼働台帳 sessions/<pid>.json に bridgeSessionId があれば RC オン＝席の右上に 📱（外出先から指示できる席・ハブ 10/15 発見）。
+🩺 窓の健康（S25 3.6）: 圧縮 30 回・記録 100MB のどちらか以上で ⚠＝机の前面の左（🧍 机なしは足元の左）・席カード・名刺に理由と「新しい窓に替え時かも」。
+   数えるのは live_board の _peek_health（前回位置から先だけ読む）。
 🎨 配色（S22）: 図もページのテーマ（☀/☾・localStorage csv-theme＝他ページと共通）に追従。light＝明るいオフィス（白い壁・淡いタイル床・ベージュのカーペット）。オフィスは保存値が無ければ light・?theme=light|dark で一時上書き（保存しない・スクショ用）。
 🧾 ホワイトボード（S23・ハブ提案 10/15）: 休憩室の壁いっぱいに今日の daily の要点＝🔴 TOP 見出し3行・⏰ 次の時刻固定イベント・⏸ 返信待ち（件数と相手）・
 端に在席/未読/不達。中身は daily_view.load_board（機械的に取れる分だけ・新しい記録場所は作らない）。クリックで 📓 日誌。幅か高さが足りない時は S22 の小さい板。
@@ -373,6 +375,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
                      "last_reply": r.get("last_reply"),  # 🗨 最後の返事（吹き出し・席カード・S25）
                      "ask": r.get("wait_kind") == "ask",  # ❓ 質問中（待機中の内訳・3.1・11/27）
                      "subagents": r.get("subagents") or [],  # 🧩 今日のサブエージェント（机のちび分身・席カード・S25）
+                     "health": r.get("health"),  # 🩺 窓の健康（圧縮回数・記録 MB・warn＝替え時の理由・3.6）
                      "ws": r.get("ws") or "", "ws_key": r.get("ws_key") or "", "cwd": r.get("cwd") or ""}
         if sid not in labels and r.get("project") and r["project"] != "—":
             labels[sid] = {"project": r["project"], "s": r.get("session_no"),
@@ -653,6 +656,7 @@ body.vcards #cards{position:relative} #clinks{position:absolute;left:0;top:0;poi
 .sc-pe.m-un,.peer.p-un{--pc:#f97316} .sc-pe.m-rd,.peer.p-rd{--pc:#3b82f6} .sc-pe.m-rp,.peer.p-rp{--pc:#94a3b8} .sc-pe.m-ng,.peer.p-ng{--pc:#e5533b} .sc-pe.more{cursor:default;color:var(--muted)}
 #cards .peer{outline:2px dashed var(--pc);outline-offset:1px}
 .sc-rc{font-size:11px;font-weight:700;color:#fff;background:#0ea5e9;border-radius:4px;padding:0 5px;line-height:1.5}
+.sc-hw{font-size:11px;font-weight:700;color:#fff;background:#d97706;border-radius:4px;padding:0 5px;line-height:1.5;cursor:help}
 .sc-empty{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px} .sc-empty .desk{border:1px dashed var(--border);border-radius:999px;padding:2px 9px;cursor:pointer;color:var(--ink2)} .sc-empty .desk:hover{background:var(--wash)}
 /* 📱 縦画面・狭い画面: 右欄を下に回して横幅を全部使う（地図のままでも横が広がる） */
 @media (orientation:portrait),(max-width:900px){main{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,auto)} aside{height:auto;max-height:32vh;border-left:0;border-top:1px solid var(--border)} header{padding:8px 12px;gap:8px} .tiles{flex-wrap:wrap} .sub .exp{display:none}}
@@ -744,6 +748,8 @@ function sprite(x,y,shirt,model,status,track){var M=mapFor(track||''),mk=modelKe
 var SCR={busy:'#39d353',idle:'#4aa3ff',perm:'#e5533b',empty:'#555'};
 // 🧩 サブエージェント（S25）: 席の稼働セッション全部の分身を新しい順に。state＝busy（jsonl が 90 秒以内に動いている）／done（報告済み）／stale（印が無く止まっている＝foreground 起動や途中で切れた）
 function subsOf(t){var o=[];(t.occupied_by||[]).forEach(function(s){((s.live&&s.live.subagents)||[]).forEach(function(a){o.push(a);});});o.sort(function(a,b){return b.ts-a.ts;});return o;}
+function hwOf(t){var w=[];(t.occupied_by||[]).forEach(function(s){var h=s.live&&s.live.health;if(h&&h.warn&&h.warn.length)w.push(h.warn.join('・'));});return w;}  // 🩺 窓の替え時（S25 3.6）＝在席ごとの理由
+function hwTip(w){return '🩺 窓の健康：'+w.join(' ／ ')+' → 新しい窓に替え時かも';}
 function subTip(a){return '🧩 '+(a.desc||'（説明なし）')+'\n'+(a.type||'')+(a.shape?'・'+a.shape:'')+'・'+(a.start_t?a.start_t+'〜':'')+(a.state==='busy'?'作業中（最後の動き '+a.t+'）':a.state==='done'?a.t+' 報告済み':a.t+' で止まった（報告の印なし）');}
 // 📨 やり取りの見せ方（S24・個人PC 競馬場の移植）: env＝封筒（未読）・紙飛行機（送信直後 15 分）・くしゃ紙（不達）で見せ、線は行・封筒クリックの時だけ／line＝従来の常設の線。ヘッダの「〰 線」で切替（localStorage）
 (function(){var H=document.querySelector('header'),b=document.getElementById('legb'),on=false;try{on=localStorage.getItem('csv-office-legend')==='1';}catch(e){}  // ❔ 凡例＝既定は畳む（S25 10/22）
@@ -788,6 +794,7 @@ function desk(x,y,t,big){if(NODESK)return stand(x,y,t,big);var w=big?190:120,h=b
  if(!live){if(away&&!onSofa){g+='<g opacity="0.45">'+sprite(x-w/2+14,y-62+sinkY(t.name),MODEL_COL(away[0].model),away[0].model,'away',t.name)+'</g>';}  // ソファから溢れた離席者は席に半透明で残す
   else{g+='<rect x="'+(x-14)+'" y="'+(y-30)+'" width="28" height="22" fill="'+PAL.chair+'"/><rect x="'+(x-14)+'" y="'+(y-8)+'" width="28" height="6" fill="'+PAL.chair2+'"/>';}}
  g+='<rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="#8b5a2b"/><rect x="'+(x-w/2)+'" y="'+y+'" width="'+w+'" height="8" fill="#b57a3e"/>';
+ var hw=live?hwOf(t):[];if(hw.length)g+='<text x="'+(x-w/2+4)+'" y="'+(y+h-7)+'" font-size="14" style="cursor:help"><title>'+esc(hwTip(hw))+'</title>⚠️</text>';  // 🩺 窓の替え時（S25 3.6）
  var nm=big?2:1;for(var i=0;i<nm;i++){var mx=x-(nm-1)*22+i*44-16;g+='<rect x="'+mx+'" y="'+(y+10)+'" width="32" height="22" fill="#111"/><rect x="'+(mx+2)+'" y="'+(y+12)+'" width="28" height="18" fill="'+SCR[st]+'"/>';if(st==='busy')g+='<rect class="cur" x="'+(mx+6)+'" y="'+(y+22)+'" width="4" height="4" fill="#fff"/>';}
  // 🧩 分身は机の後（天板の上に立つ）に描く。transform 属性は外側の g に置く＝.typing の CSS アニメ（transform）が属性を上書きして原点に飛ぶため内側に分ける（10/21 テストで発覚）
  // 見た目＝デザイナー案「c 弱」（ふくちゃん 10/21 決定）: clone ポーズ（印＋足元の煙・絵が無ければ主の絵）× 倍率 0.67（1 ドット 2px・足元は y+34）× 不透明度 0.8。間隔 18（大机は 3 体目がモニターに被るので 16）
@@ -818,6 +825,7 @@ function stand(x,y,t,big){var w=big?150:96,cur=t.cur,live=t.live,away=(!live&&t.
  var occ=live?t.occupied_by.slice(0,big?3:2):[],n=occ.length,rx=x+(n?(n-1)*20:0);  // rx＝いちばん右の主の中心
  occ.forEach(function(s,i){var q=occAt(x,y,big,n,i);g+='<g class="'+(s.live.status==='busy'?'typing':s.live.status==='perm'?'perm':'')+'">'+sprite(q[0],q[1],MODEL_COL(s.live.model),s.live.model,s.live.status,t.name)+'</g>';});
  if(live&&t.occupied_by.some(function(s){return s.live.rc;}))g+='<text x="'+(x+w/2+2)+'" y="'+(y-48)+'" font-size="12">📱</text>';
+ var hw=live?hwOf(t):[];if(hw.length)g+='<text x="'+(x-w/2+2)+'" y="'+(y-6)+'" font-size="12" style="cursor:help"><title>'+esc(hwTip(hw))+'</title>⚠️</text>';  // 🩺 窓の替え時（S25 3.6）
  var subs=subsOf(t),sb=subs.filter(function(a){return a.state==='busy';}),sd=subs.length-sb.length;
  if(sd)g+='<text x="'+(x-w/2+2)+'" y="'+(y+9)+'" font-size="11" fill="'+PAL.propTxt+'"><title>'+esc('🧩 今日終わった分身 '+sd+'件（席カードに一覧）')+'</title>🧩'+sd+'</text>';
  if(!live){if(away&&!onSofa)g+='<g opacity="0.45">'+sprite(x-18,y-40,MODEL_COL(away[0].model),away[0].model,'away',t.name)+'</g>';
@@ -1186,7 +1194,7 @@ if(VIEW==='cards')cardsHtml=(function(){
  function card(o){var t=o.t,nm=t.name,st=o.st,occ=t.occupied_by||[],h='',pics='',stl='<b>'+LAB[st==='idle'&&o.ask?'ask':st]+'</b>',tip=TIPS[nm]||deskTip(t,t.cur,!!t.live,o.away,false,o.leave);
   if(st==='away'){pics=pic(o.away[0].model,'away',nm);stl+=' 最後 '+esc(o.away[0].t);var m0=mshort(o.away[0].model);if(m0)stl+='<span class="sc-m" style="border-color:'+MODEL_COL(o.away[0].model)+'">'+m0+'</span>';}
   else if(st==='leave'){pics=pic(o.leave.model,'idle',nm);stl+=(o.leave.until_t?' 次 '+esc(o.leave.until_t):'');}
-  else{occ.slice(0,3).forEach(function(s){pics+=pic(s.live.model,s.live.status,nm);});var ms={};occ.forEach(function(s){var k=mshort(s.live.model);if(k)ms[k]=s.live.model;});Object.keys(ms).forEach(function(k){stl+='<span class="sc-m" style="border-color:'+MODEL_COL(ms[k])+'">'+k+'</span>';});if(occ.length>1)stl+=' 👥'+occ.length;if(occ.some(function(s){return s.live.rc;}))stl+='<span class="sc-rc" title="Remote Control オン＝外出先（スマホ・claude.ai）から指示できる席">📱 RC</span>';}
+  else{occ.slice(0,3).forEach(function(s){pics+=pic(s.live.model,s.live.status,nm);});var ms={};occ.forEach(function(s){var k=mshort(s.live.model);if(k)ms[k]=s.live.model;});Object.keys(ms).forEach(function(k){stl+='<span class="sc-m" style="border-color:'+MODEL_COL(ms[k])+'">'+k+'</span>';});if(occ.length>1)stl+=' 👥'+occ.length;if(occ.some(function(s){return s.live.rc;}))stl+='<span class="sc-rc" title="Remote Control オン＝外出先（スマホ・claude.ai）から指示できる席">📱 RC</span>';var hw=hwOf(t);if(hw.length)stl+='<span class="sc-hw" title="'+esc(hwTip(hw))+'">⚠ 替え時</span>';}
   var cur=t.cur,sn=cur&&cur.s?' <span class="sc-s">S'+cur.s+'</span>':'',rm=(shown.length>1&&trackRoom[nm])?'<span class="sc-room">'+esc(trackRoom[nm])+'</span>':'';
   h+='<div class="scard desk s-'+st+(nm===CARD?' on':'')+'" data-track="'+esc(nm)+'" title="'+esc(tip)+'"><div class="sc-top"><div class="sc-pics">'+pics+'</div><div class="sc-id"><div class="sc-name">'+esc(nm+nickOf(nm))+sn+rm+'</div><div class="sc-st">'+stl+'</div></div></div>';
   var bb=o.bb;
@@ -1321,6 +1329,7 @@ renderLog();
   h+='<div class="cs">'+esc(tip.split('\n').slice(1).join('\n'))+'</div>';
   renameIssues(t).forEach(function(r){h+='<div class="cs" style="color:#f87171">🏷 /rename まだ：'+esc(r.msg)+(r.s&&t!==D.hub?' → /rename '+esc(CARD.replace(/\s+/g,'')+'S'+r.s):'')+'</div>';});
   h+=meishiHtml(t.meishi);
+  var hw=hwOf(t);if(hw.length)h+='<div class="cs" style="color:#d97706">'+esc(hwTip(hw))+'</div>';  // 🩺 S25 3.6
   var lh=null;(t.occupied_by||[]).forEach(function(s){var x=s.live&&s.live.last_human;if(x&&x.text&&(!lh||x.ts>lh.ts))lh={ts:x.ts,text:x.text};});
   if(D.human&&D.human.track===CARD&&D.human.text&&(!lh||D.human.ts>lh.ts))lh={ts:D.human.ts,text:D.human.text};
   if(lh)h+='<h3>👤 最後の指示（'+hm(lh.ts*1000)+'）</h3><div class="lh">'+esc(lh.text)+'</div>';
@@ -1386,6 +1395,7 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
               '<span>｜ 🏠 退社＝最後の発話が文頭「退社」の席（復帰日まで主は不在・「退社 次 10/20」で復帰日指定・既定は次の平日。人間の最後の発話が退社なら 👤 も帰宅）</span>'
               '<span>｜ ▶ 再生＝今日の 📨 の流れ＋👤 の席移動（空きは休憩室経由・再生中は再読込を保留）</span>'
               '<span>｜ 📱 Remote Control オン（外出先から指示できる席）</span>'
+              '<span>｜ ⚠ 窓の替え時＝圧縮 30 回・記録 100MB のどちらか以上（重い窓＝新しい窓で続きを・理由はホバー）</span>'
               '</span>')
     # 操作（絵テーマ・部屋の絞り込み・凡例の開閉）は凡例と分けて常時表示。凡例は既定で畳む（S25 10/22 ふくちゃん「常に見えてなくてもよい」＝縦の余白をオフィスに回す）
     ctl = ('<div id="ctl"><button class="tgl" id="legb" type="button" title="アイコン・色の読み方（凡例）を開閉・この端末で記憶">❔ 凡例</button>'

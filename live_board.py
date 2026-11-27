@@ -575,6 +575,47 @@ def _scan_last_reply(chunk: str):
     return None
 
 
+# 🩺 窓の健康（S25 3.6）＝どちらか以上で ⚠「新しい窓に替え時かも」。持ち帰り票は 圧縮 3 回／40MB／7 日だが、会社の席は
+# 1 つの窓を何週間も使う運用で 15 席中 14 席が当たった（11/27 実測: 圧縮 0〜117 回・1〜233MB・0〜49 日）＝重い窓だけに絞り日数は見ない
+HEALTH_COMPACT, HEALTH_MB = 30, 100
+_HEALTH_CACHE: dict = {}  # transcript path → [読んだ位置, 圧縮回数]。毎回は前回位置から先だけ読む
+_HEALTH_CHUNK = 8 << 20
+_COMPACT_MARK = b'"isCompactSummary":true'  # 圧縮の要約行の印（文字列の中に書かれた分は \" にエスケープされるので当たらない）
+
+
+def _peek_health(transcript: Path):
+    """🩺 窓の健康（S25 3.6）: 圧縮回数・記録サイズ（MB）。閾値以上の項目は warn に入る。
+
+    初回だけ全体を読む（数十 MB でも 1 回）・以後は前回位置から先だけ・ファイルが縮んだら数え直す。
+    値は整数＝毎 tick の書き換えを起こさない。
+    """
+    key = str(transcript)
+    try:
+        st = transcript.stat()
+    except OSError:
+        return None
+    c = _HEALTH_CACHE.get(key)
+    if c is None or st.st_size < c[0]:
+        c = _HEALTH_CACHE[key] = [0, 0]
+    try:
+        with open(transcript, "rb") as f:
+            while True:
+                f.seek(c[0])
+                buf = f.read(_HEALTH_CHUNK)
+                cut = buf.rfind(b"\n") + 1
+                if not cut and len(buf) == _HEALTH_CHUNK:
+                    cut = len(buf)  # 8MB を超える 1 行（まず無い）
+                c[1] += buf.count(_COMPACT_MARK, 0, cut)
+                c[0] += cut
+                if len(buf) < _HEALTH_CHUNK:
+                    break  # 末尾まで来た（最後の改行より後ろの書きかけは次回）
+    except OSError:
+        pass
+    mb = int(st.st_size / 1048576)
+    warn = ([f"圧縮 {c[1]} 回"] if c[1] >= HEALTH_COMPACT else []) + ([f"記録 {mb}MB"] if mb >= HEALTH_MB else [])
+    return {"compact": c[1], "mb": mb, "warn": warn}
+
+
 _SUBAGENT_CACHE: dict = {}  # agent jsonl path → (size, mtime, info)。stat が変わらなければ読み直さない
 _SUBAGENT_BUSY_SEC = 90  # 終了の印が無く、jsonl がこの秒数以内に書かれていれば稼働中
 
@@ -864,6 +905,7 @@ def build_rows():
             "last_human": _peek_last_human(transcript),  # 人間の最終発話（オフィス図の人間位置）
             "last_reply": last_reply,  # 🗨 エージェントの最後の返事（席の吹き出し・S25）
             "subagents": _peek_subagents(transcript, sid, now_epoch, _today_epoch()),  # 🧩 今日のサブエージェント（机のちび分身・S25）
+            "health": _peek_health(transcript),  # 🩺 窓の健康（圧縮回数・記録サイズ＝替え時の ⚠・S25 3.6）
             "pid": rec.get("pid") or "",
             "sid": sid,   # タブ復元スナップショット用（claude-wt/restore_tabs.ps1）
             "cwd": cwd,
@@ -1026,6 +1068,7 @@ tr.new td{background:var(--newrow)}
 .wait{color:var(--muted);font-size:11px;margin-left:5px}
 .wait.long{color:var(--ink);font-weight:600}
 .nb{margin-right:4px}
+.hw{color:#d97706;font-weight:700;margin-right:5px;cursor:help}
 .pj{font-weight:600;white-space:nowrap}
 /* 案件名→エージェントカウンターの台帳ページ（生成済みのときだけリンクになる） */
 .pj a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--border)}
@@ -1136,6 +1179,8 @@ def _live_rows_html(rows):
             wait = f'<span class="{cls}">{_dur(r["wait_sec"])}</span>'
         newbadge = '<span class="nb">🆕</span>' if r.get("is_new") else ''  # 新着＝未確認の目印
         pin = '📌' if r.get("pinned") else ''  # 稼働中のピン済み
+        hw = (r.get("health") or {}).get("warn")  # 🩺 窓の替え時（S25 3.6）
+        hwb = f'<span class="hw" title="{esc("🩺 " + "・".join(hw) + " → 新しい窓に替え時かも")}">⚠</span>' if hw else ''
         out.append(
             f'<tr class="{"new" if r.get("is_new") else ""}" style="--rail:{color}">'
             f'<td>{newbadge}<span class="badge">{icon} {label}</span>{wait}</td>'
@@ -1143,7 +1188,7 @@ def _live_rows_html(rows):
             f'<td class="sn">{esc(r["s_no"])}</td>'
             f'<td class="up">{esc(r["updated"])}</td><td class="ws">{esc(r["ws"])}</td>'
             f'<td>{model_badge(r.get("model"))}</td>'
-            f'<td class="title">{esc(_trim(r["title"], 90))}</td></tr>')
+            f'<td class="title">{hwb}{esc(_trim(r["title"], 90))}</td></tr>')
     return "".join(out)
 
 
