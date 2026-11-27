@@ -650,24 +650,40 @@ def display_name(label: dict | None, fallback: str, cfg: dict) -> str:
     return f"{pj} S{label['s']}" if label.get("s") else pj
 
 
+REPLY_SEC = 2 * 3600  # ↩ 返事あり＝2 時間以内の逆向きの連絡（それより後は新しい用件・ハブの一斉連絡とみなす・office と同じ）
+
+
 def recent_html(edges, labels, cfg, limit=10, esc=None) -> str:
     """ライブボード用「📨 最近のやり取り」テーブル（新しい順・limit 件）。CSS はボード側の table 流用。"""
     import html as html_mod
     esc = esc or html_mod.escape
     if not edges:
         return ('<div class="empty">なし — 直近のセッション間メッセージ（SendMessage）はない</div>')
+    replied, seen = set(), {}  # ↩ 返事あり（S25 3.4）＝その連絡より後 REPLY_SEC 以内に逆向きの連絡がある
+    for i in range(len(edges) - 1, -1, -1):
+        e = edges[i]
+        if e["frm"] and e["to"]:
+            t = _epoch(e["ts"])
+            r = seen.get((e["to"], e["frm"]))
+            if r is not None and r - t <= REPLY_SEC:
+                replied.add(i)
+            if e["ok"] is not False and not e["removed"]:
+                seen[(e["frm"], e["to"])] = t
     out = []
-    for e in list(reversed(edges))[:limit]:
+    for i in range(len(edges) - 1, max(-1, len(edges) - 1 - limit), -1):
+        e = edges[i]
         frm = display_name(labels.get(e["frm"]), e["frm_label"], cfg)
         to = display_name(labels.get(e["to"]), e["to_label"], cfg)
         if e["ok"] is False:
             badge, rail = '<span class="badge">❌ 不達</span>', "#d03b3b"
         elif e["removed"]:
             badge, rail = '<span class="badge">🗑 破棄</span>', "#898781"
-        elif e["read"]:
-            badge, rail = '<span class="badge">✅ 既読</span>', "#0ca30c"
         elif e["read"] is False:
             badge, rail = '<span class="badge">📨 未読</span>', "#e0a800"
+        elif i in replied:
+            badge, rail = '<span class="badge">↩ 返事あり</span>', "#94a3b8"
+        elif e["read"]:
+            badge, rail = '<span class="badge">✅ 既読</span>', "#0ca30c"
         else:
             badge, rail = '<span class="badge">📤 送信</span>', "#3987e5"
         text = e["summary"] or e["preview"]

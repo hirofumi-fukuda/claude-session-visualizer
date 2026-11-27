@@ -590,7 +590,7 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 .row{padding:5px 6px;border-left:3px solid transparent;cursor:pointer;line-height:1.35;border-radius:0 6px 6px 0}
 .row:hover,.row.hl{background:var(--wash);border-left-color:var(--gold)}
 .row .t{color:var(--muted);margin-right:6px;font-variant-numeric:tabular-nums}.row .who{color:var(--cyan)}
-.row .un{color:var(--gold);font-weight:600}.row .ng{color:var(--red);font-weight:600}.row .rm{color:var(--muted)}
+.row .un{color:var(--gold);font-weight:600}.row .ng{color:var(--red);font-weight:600}.row .rm{color:var(--muted)}.row .rp{color:#94a3b8}
 .row .sm{color:var(--ink2)} .row .mbd{display:none;white-space:pre-wrap;word-break:break-word;margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--wash);color:var(--ink);font-size:12px;max-height:320px;overflow:auto;cursor:text} .row.open .mbd{display:block}
 .row .mor{color:var(--muted);font-size:11px;margin-left:4px}
 .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11.5px;color:var(--ink2)}
@@ -598,9 +598,9 @@ aside h2{font-size:12.5px;margin:4px 0 8px;color:var(--muted);font-weight:600;di
 .tiles{display:flex;gap:8px} .tile{border:1px solid var(--border);border-radius:8px;padding:2px 10px;font-size:12px;color:var(--ink2)}
 .tile b{color:var(--ink);font-size:14px;margin-right:3px} .tile.warn b{color:var(--gold)} .tile.bad b{color:var(--red)}
 .edge{fill:none;stroke-width:3;cursor:pointer} .edge.hl{stroke-width:5;filter:drop-shadow(0 0 4px #fff)} :root[data-theme="light"] .edge.hl{filter:drop-shadow(0 0 3px rgba(0,0,0,.45))}
-.arw-env .edge{visibility:hidden;pointer-events:none} .arw-env .edge.hl{visibility:visible} .plane{pointer-events:none}
+.arw-env .edge,.arw-line .edge{visibility:hidden;pointer-events:none} .arw-env .edge.hl,.arw-line .edge.hl{visibility:visible} .plane{pointer-events:none}
 .envs{cursor:pointer} @keyframes sway{0%,100%{transform:rotate(-6deg)}50%{transform:rotate(6deg)}} .envs.fresh{animation:sway 1.2s ease-in-out infinite;transform-box:fill-box;transform-origin:50% 100%}
-.edge.ng{stroke-dasharray:6 5} .edge.rm{stroke-dasharray:2 4} .flow{fill:none;stroke:#fff;stroke-width:2;stroke-dasharray:6 11;animation:flow 1s linear infinite;pointer-events:none} @keyframes flow{to{stroke-dashoffset:-17}}
+.edge.ng{stroke-dasharray:6 5} .edge.rm{stroke-dasharray:2 4} .pedge{cursor:pointer} .pedge path{fill:none;stroke-width:3} .pedge.ng path{stroke-dasharray:6 5} .pedge:hover path{stroke-width:5} .pedge text{font-size:11px;font-weight:700;text-anchor:middle;paint-order:stroke;stroke:var(--scene);stroke-width:3px;stroke-linejoin:round;pointer-events:none} .flow{fill:none;stroke:#fff;stroke-width:2;stroke-dasharray:6 11;animation:flow 1s linear infinite;pointer-events:none} @keyframes flow{to{stroke-dashoffset:-17}}
 @keyframes blink{50%{opacity:0}} .cur{animation:blink 1s step-end infinite}
 @keyframes type{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}} .typing{animation:type .5s steps(2) infinite}
 @keyframes alert{50%{opacity:.35}} .perm{animation:alert .8s ease-in-out infinite}
@@ -650,7 +650,7 @@ body.vcards #magnet,body.vcards #nodesk,body.vcards #arwmode,body.vcards #proped
 /* 📨 相手チップ（その席と 48h 内にやりとりした相手・送った→／受けた←／両方⇄）と、選んだ席から相手カードへの線（#clinks） */
 body.vcards #cards{position:relative} #clinks{position:absolute;left:0;top:0;pointer-events:none;z-index:5;overflow:visible}
 .sc-pes{display:flex;flex-wrap:wrap;gap:3px 5px} .sc-pe{font-size:11.5px;border:1px solid var(--pc,var(--border));color:var(--pc,var(--ink2));border-radius:999px;padding:0 7px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer} .sc-pe:hover{background:var(--wash)} .sc-pe i{font-style:normal;color:var(--muted);font-size:10.5px}
-.sc-pe.ou,.peer.p-ou{--pc:#3b82f6} .sc-pe.in,.peer.p-in{--pc:#d4a017} .sc-pe.bo,.peer.p-bo{--pc:#8b5cf6} .sc-pe.ng,.peer.p-ng{--pc:#e5533b} .sc-pe.more{cursor:default;color:var(--muted)}
+.sc-pe.m-un,.peer.p-un{--pc:#f97316} .sc-pe.m-rd,.peer.p-rd{--pc:#3b82f6} .sc-pe.m-rp,.peer.p-rp{--pc:#94a3b8} .sc-pe.m-ng,.peer.p-ng{--pc:#e5533b} .sc-pe.more{cursor:default;color:var(--muted)}
 #cards .peer{outline:2px dashed var(--pc);outline-offset:1px}
 .sc-rc{font-size:11px;font-weight:700;color:#fff;background:#0ea5e9;border-radius:4px;padding:0 5px;line-height:1.5}
 .sc-empty{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px} .sc-empty .desk{border:1px dashed var(--border);border-radius:999px;padding:2px 9px;cursor:pointer;color:var(--ink2)} .sc-empty .desk:hover{background:var(--wash)}
@@ -750,6 +750,18 @@ function subTip(a){return '🧩 '+(a.desc||'（説明なし）')+'\n'+(a.type||'
  function ap(){H.classList.toggle('leg',on);b.textContent=on?'❔ 凡例を閉じる':'❔ 凡例';}ap();b.onclick=function(){on=!on;try{localStorage.setItem('csv-office-legend',on?'1':'0');}catch(e){}ap();};})();
 var ARW='env'; try{if(localStorage.getItem('csv-office-arrows')==='line')ARW='line';}catch(e){}
 var unreadBy={},lastUn={},failBy={},lastFail={}; D.edges.forEach(function(e,i){if(e.ok&&!e.removed&&e.read===false){unreadBy[e.to]=(unreadBy[e.to]||0)+1;lastUn[e.to]=i;}if(!e.ok&&!e.removed){failBy[e.frm]=(failBy[e.frm]||0)+1;lastFail[e.frm]=i;}});
+// 📨 返事あり・組ごとのまとめ（S25 3.4・管制画面の取り込み②）: 1通ごとの状態 MST＝ng 届かず／rm 破棄／un 未読／rp 返事あり（その連絡より後 2 時間以内に逆向きの連絡がある＝それより後は新しい用件・ハブの一斉連絡とみなす）／rd 既読・返事なし。
+// 組（席の2者・向きは問わない）PAIRS＝最後の1通で色を決める。最後の1通が直前の逆向きの1通（2 時間以内）への返事なら rp（往復済み）。〰 線モードの線・席カードの 📨 チップと線・ログの行で使う
+var MSC={ng:'#e5533b',un:'#f97316',rd:'#3b82f6',rp:'#94a3b8'},MSL={ng:'届かず',un:'未読',rd:'既読・返事なし',rp:'返事あり',rm:'破棄'};
+var RPW=2*3600e3;function pairKey(a,b){return a<b?a+'\u0001'+b:b+'\u0001'+a;}
+var MST=[],PAIRS={};(function(){var seen={};
+ for(var i=D.edges.length-1;i>=0;i--){var e=D.edges[i],t=Date.parse(e.ts)||0,r=seen[e.to+'\u0001'+e.frm];MST[i]=!e.ok?'ng':e.removed?'rm':e.read===false?'un':(r!=null&&r-t<=RPW)?'rp':'rd';if(e.ok&&!e.removed)seen[e.frm+'\u0001'+e.to]=t;}
+ D.edges.forEach(function(e,i){if(e.removed||!e.frm||!e.to||e.frm===e.to)return;var k=pairKey(e.frm,e.to),P=PAIRS[k];
+  if(!P){var ab=e.frm<e.to;P=PAIRS[k]={a:ab?e.frm:e.to,b:ab?e.to:e.frm,n:0,ab:0,ba:0,li:-1,pv:-1,last:0};}
+  P.n++;if(e.frm===P.a)P.ab++;else P.ba++;P.pv=P.li;P.li=i;P.last=Date.parse(e.ts)||0;});
+ Object.keys(PAIRS).forEach(function(k){var P=PAIRS[k],L=D.edges[P.li],pv=P.pv>=0?D.edges[P.pv]:null;
+  P.st=!L.ok?'ng':L.read===false?'un':(pv&&pv.frm===L.to&&pv.ok&&pv.read!==false&&P.last-(Date.parse(pv.ts)||0)<=RPW)?'rp':'rd';});})();
+function mstHtml(i){var s=MST[i];return s==='ng'?' <span class="ng">❌不達</span>':s==='rm'?' <span class="rm">🗑破棄</span>':s==='un'?' <span class="un">📨未読</span>':s==='rp'?' <span class="rp">↩返事あり</span>':'';}
 function envelope(x,y){return '<rect x="'+x+'" y="'+y+'" width="16" height="11" fill="#fff8e1" stroke="#b8860b"/><polyline points="'+x+','+y+' '+(x+8)+','+(y+6)+' '+(x+16)+','+y+'" fill="none" stroke="#b8860b"/>';}
 // 🎨 図の配色（S22）: ページのテーマ（☀/☾）に追従。light＝明るいオフィス（白い壁・淡いタイル床・ベージュのカーペット・島名は濃い色）／dark＝従来
 var LIGHT=document.documentElement.dataset.theme==='light';
@@ -857,7 +869,7 @@ function doorOf(name){var rn=trackRoom[name];return (rn&&door[rn])||null;}
  if(ROOMS.length)[['','🏢 全館']].concat(ROOMS.map(function(r){return [r.name,r.name];})).forEach(function(o){var on=o[0]===''?!wsSel:(shown.length===1&&shown[0].name===o[0]);h+='<button type="button" class="tgl wsb'+(on?' on':'')+'" data-ws="'+esc(o[0])+'">'+esc(o[1])+'</button>';});
  h+='<button type="button" id="magnet" class="tgl wsb'+(MAGNET?' on':'')+'" title="稼働中の席を島の中でハブ側のマスから詰める（クリックで切替）">🧲 ハブ寄せ</button>';
  h+='<button type="button" id="nodesk" class="tgl wsb'+(NODESK?' on':'')+'" title="机を省いて立ち姿＋頭上の名札だけで詰めて並べる（席が増えて図が縮む時用・クリックで切替）">🧍 机なし</button>';
- h+='<button type="button" id="arwmode" class="tgl wsb'+(ARW==='line'?' on':'')+'" title="オン＝やり取りを矢印の線で常に出す（従来）／オフ＝封筒・紙飛行機・くしゃ紙で見せ、線はクリックした時だけ">〰 線</button>';
+ h+='<button type="button" id="arwmode" class="tgl wsb'+(ARW==='line'?' on':'')+'" title="オン＝やり取りを組ごとに1本の線で常に出す（色＝最後の1通：橙 未読／青 既読・返事なし／灰 返事あり＝2時間以内の返事で往復済み／赤の破線 届かず・線の上に最後の時刻 ×通数）／オフ＝封筒・紙飛行機・くしゃ紙で見せ、線はクリックした時だけ">〰 線</button>';
  if(D.lounge)h+='<button type="button" id="propedit" class="tgl wsb'+(LPE?' on':'')+'" title="休憩室の小物をドラッグで動かす（このブラウザだけ・config へは 📋 JSON をコピー）。配置モード中は自動更新を保留（最後の操作から 30 分で自動解除）">🪑 小物配置</button>';
  el.innerHTML=h; el.querySelectorAll('.wsb[data-ws]').forEach(function(b){b.onclick=function(){var v=b.dataset.ws;try{localStorage.setItem('csv-office-ws',v);}catch(e){}var u=new URL(location.href);if(v)u.searchParams.set('ws',v);else u.searchParams.delete('ws');location.href=u.toString();};});
  var mb=document.getElementById('magnet');if(mb)mb.onclick=function(){try{localStorage.setItem('csv-office-magnet',MAGNET?'0':'1');}catch(e){}location.reload();};
@@ -1052,15 +1064,27 @@ if(ROOMS.length){hubVisible=false;
  D.tracks.forEach(function(t,i){var a=-Math.PI/2+i*2*Math.PI/Math.max(n,1);pos[t.name]=[Math.round(CX+RX*Math.cos(a)),Math.round(CY+RY*Math.sin(a))];});
 }
 if(hubVisible)pos[HUB]=[CX,CY];
-var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="'+PAL.tileA+'"/><rect width="20" height="20" fill="'+PAL.tileB+'"/><rect x="20" y="20" width="20" height="20" fill="'+PAL.tileB+'"/>'+(PAL.grid?'<path d="M0,0.5 H40 M0.5,0 V40" stroke="'+PAL.grid+'" stroke-width="1" fill="none"/>':'')+'</pattern><pattern id="carpet" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="16" height="16" fill="'+PAL.carpetA+'"/><rect x="2" y="2" width="4" height="4" fill="'+PAL.carpetB+'"/><rect x="10" y="10" width="4" height="4" fill="'+PAL.carpetB+'"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>'+walls+floors;
+var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet"><defs><pattern id="tile" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="'+PAL.tileA+'"/><rect width="20" height="20" fill="'+PAL.tileB+'"/><rect x="20" y="20" width="20" height="20" fill="'+PAL.tileB+'"/>'+(PAL.grid?'<path d="M0,0.5 H40 M0.5,0 V40" stroke="'+PAL.grid+'" stroke-width="1" fill="none"/>':'')+'</pattern><pattern id="carpet" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="16" height="16" fill="'+PAL.carpetA+'"/><rect x="2" y="2" width="4" height="4" fill="'+PAL.carpetB+'"/><rect x="10" y="10" width="4" height="4" fill="'+PAL.carpetB+'"/></pattern><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker><marker id="ah2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs><rect width="'+W+'" height="'+H+'" fill="url(#tile)"/>'+walls+floors;
 var ts0=D.edges.length?Date.parse(D.edges[0].ts):0, ts1=D.edges.length?Date.parse(D.edges[D.edges.length-1].ts):1;
+// 〰 線モード（S25 3.4）＝組ごとに1本（色＝最後の1通・双方向なら両端に矢じり・線の上に最後の時刻 ×通数）。1通ずつの線は隠し、行・線のクリックで出す
+var PG={},plines='';
+if(ARW==='line'){function hmS(ms){var d=new Date(ms);return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);}
+ Object.keys(PAIRS).forEach(function(k){var P=PAIRS[k],A=pos[P.a]||doorOf(P.a),B=pos[P.b]||doorOf(P.b);if(!A||!B||(!pos[P.a]&&!pos[P.b]))return;
+  var x1=A[0],y1=A[1]+20,x2=B[0],y2=B[1]+20,mx=(x1+x2)/2,my=(y1+y2)/2,dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,cx=Math.round(mx-dy/L*28),cy=Math.round(my+dx/L*28);
+  function trim(x,y,nm){var vx=x-cx,vy=y-cy,vl=Math.hypot(vx,vy)||1,hw=NODESK?(nm===HUB?44:26):nm===HUB?95:60,hh=NODESK?30:nm===HUB?26:20,tt=Math.min(Math.abs(vx)>1e-6?hw*vl/Math.abs(vx):1e9,Math.abs(vy)>1e-6?hh*vl/Math.abs(vy):1e9)+5;return tt<vl?[Math.round(x-vx/vl*tt),Math.round(y-vy/vl*tt)]:[x,y];}  // 矢じりは机の手前で止める
+  var q;if(pos[P.b]&&P.ab){q=trim(x2,y2,P.b);x2=q[0];y2=q[1];}if(pos[P.a]&&P.ba){q=trim(x1,y1,P.a);x1=q[0];y1=q[1];}
+  var g=PG[k]={d:'M'+x1+','+y1+' Q'+cx+','+cy+' '+x2+','+y2},lx=Math.round((x1+2*cx+x2)/4),ly=Math.round((y1+2*cy+y2)/4),col=MSC[P.st],Le=D.edges[P.li],op=(0.4+0.6*((P.last-ts0)/((ts1-ts0)||1))).toFixed(2);
+  plines+='<g class="pedge'+(P.st==='ng'?' ng':'')+'" data-i="'+P.li+'" opacity="'+op+'"><path d="'+g.d+'" stroke="'+col+'"'+(P.ab?' marker-end="url(#ah)"':'')+(P.ba?' marker-start="url(#ah2)"':'')+'/>'
+   +'<text x="'+lx+'" y="'+(ly-5)+'" fill="'+col+'">'+hmS(P.last)+(P.n>1?' ×'+P.n:'')+'</text>'
+   +'<title>'+esc(P.a+' ⇄ '+P.b+'：'+P.n+'通（'+P.a+'→ '+P.ab+'・'+P.b+'→ '+P.ba+'）\n最後 '+Le.t+' '+Le.frm+' → '+Le.to+'＝'+MSL[P.st]+(Le.summary?'\n'+Le.summary:'')+'\n（クリックでその1通の線とログの行）')+'</title></g>';});}
+svg+=plines;
 var NEW_MS=15*60000, fresh=[], flows='';  // 🔔 直近 15 分の矢印は流れる破線＝同じ席ペアは同じ曲線に重なるので動きで新着を見せる（S23）
 D.edges.forEach(function(e,i){var A=pos[e.frm]||doorOf(e.frm),B=pos[e.to]||doorOf(e.to);if(!A||!B||(!pos[e.frm]&&!pos[e.to]))return;var x1=A[0],y1=A[1]+20,x2=B[0],y2=B[1]+20;
  var mx=(x1+x2)/2,my=(y1+y2)/2,dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ox=-dy/L*28,oy=dx/L*28;
  if(pos[e.to]){var cx=mx+ox,cy=my+oy,vx=x2-cx,vy=y2-cy,vl=Math.hypot(vx,vy)||1,hw=NODESK?(e.to===HUB?44:26):e.to===HUB?95:60,hh=NODESK?30:e.to===HUB?26:20,tt=Math.min(Math.abs(vx)>1e-6?hw*vl/Math.abs(vx):1e9,Math.abs(vy)>1e-6?hh*vl/Math.abs(vy):1e9)+5;if(tt<vl){x2=Math.round(x2-vx/vl*tt);y2=Math.round(y2-vy/vl*tt);}}  // 矢じりは机の手前で止める（机の下に隠れないように・S23）
  var age=Date.now()-Date.parse(e.ts), isNew=!!(e.ok&&!e.removed&&age<NEW_MS), d='M'+x1+','+y1+' Q'+(mx+ox)+','+(my+oy)+' '+x2+','+y2;
- if(isNew){fresh.push([i,NEW_MS-age]);flows+=ARW==='env'?'<g id="f'+i+'" class="plane"><polygon points="-11,-5 11,0 -11,5 -7,0" fill="#fff" stroke="#333"/><animateMotion dur="2.4s" repeatCount="indefinite" rotate="auto"><mpath href="#p'+i+'"/></animateMotion></g>':'<path id="f'+i+'" class="flow" d="'+d+'"/>';}  // 同じ曲線に古い実線が重なっていても白い破線なら見える／封筒モードは紙飛行機が線の上を飛ぶ（線自体は隠す）
- var col=e.to===HUB?'var(--gold)':e.frm===HUB?'var(--cyan)':'var(--mag)'; if(!e.ok)col='var(--red)';
+ if(isNew){fresh.push([i,NEW_MS-age]);flows+=ARW==='env'?'<g id="f'+i+'" class="plane"><polygon points="-11,-5 11,0 -11,5 -7,0" fill="#fff" stroke="#333"/><animateMotion dur="2.4s" repeatCount="indefinite" rotate="auto"><mpath href="#p'+i+'"/></animateMotion></g>':'<path id="f'+i+'" class="flow" d="'+((PG[pairKey(e.frm,e.to)]||{}).d||d)+'"/>';}  // 同じ曲線に古い実線が重なっていても白い破線なら見える／封筒モードは紙飛行機が線の上を飛ぶ（線自体は隠す）
+ var col=MSC[MST[i]]||'var(--muted)';  // 色＝その1通の状態（S25 3.4・旧＝ハブとの向きで金／青緑／紫）
  var rec=(Date.parse(e.ts)-ts0)/((ts1-ts0)||1), op=(0.25+0.75*rec).toFixed(2);
  svg+='<path id="p'+i+'" class="edge'+(e.ok?'':' ng')+(e.removed?' rm':'')+(isNew?' new':'')+'" data-i="'+i+'" d="'+d+'" stroke="'+col+'" opacity="'+op+'" marker-end="url(#ah)"><title>'+esc(e.t+' '+e.frm+' → '+e.to+'\n'+e.summary+(e.preview&&e.preview!==e.summary?'\n'+e.preview:''))+'</title></path>';
  svg+='<g id="env'+i+'" opacity="0"><rect x="-8" y="-6" width="16" height="12" fill="#fff" stroke="#333"/><polyline points="-8,-6 0,2 8,-6" fill="none" stroke="#333"/><animateMotion id="am'+i+'" dur="0.9s" begin="indefinite" fill="remove"><mpath href="#p'+i+'"/></animateMotion></g>';});
@@ -1123,19 +1147,19 @@ if(bbMode!=='off'){var near=!!(D.human&&!onBreak);
  if(hp&&D.human.text&&(bbMode==='all'||mins<=120)){if(seen('__human',D.human.ts*1000))HID++;else svg+=say(hp[0]+18,hp[1]-24,'👤',D.human.text,mins,'#2e9e6b',30,{n:'__human',ts:D.human.ts*1000});}}
 // 🃏 席カード（S25 11/24）: 状態順（🔴 許可待ち→🟡 待機中→🟢 作業中→💤 離席・🏠 退社）に並べ、空席はチップに畳む。部屋の絞り込みはそのまま効く
 var cardsHtml='',CPEERS={};
-function peerCls(q){return q.fail?'ng':q.out&&q.inn?'bo':q.out?'ou':'in';}
+function peerCls(a,b){var P=PAIRS[pairKey(a,b)];return P?P.st:'rd';}  // 色＝その組の最後の1通（S25 3.4・旧＝向きで青／金／紫）
 // 🔗 選んだ席から相手のカードへ線（送った＝青→・受けた＝金←・両方＝紫⇄・不達あり＝赤）。全部の線は引かない＝絡まって読めない
 function cardLinks(n){var box=document.getElementById('cards');if(!box)return;var old=document.getElementById('clinks');if(old)old.remove();
- box.querySelectorAll('.peer').forEach(function(c){c.classList.remove('peer','p-ou','p-in','p-bo','p-ng');});
+ box.querySelectorAll('.peer').forEach(function(c){c.classList.remove('peer','p-un','p-rd','p-rp','p-ng');});
  var m=n&&CPEERS[n];if(!m)return;function el(k){return box.querySelector('.desk[data-track="'+CSS.escape(k)+'"]');}
- var src=el(n);if(!src)return;var br=box.getBoundingClientRect(),COL={ou:'#3b82f6',in:'#d4a017',bo:'#8b5cf6',ng:'#e5533b'};
+ var src=el(n);if(!src)return;var br=box.getBoundingClientRect(),COL=MSC;
  function rc(e){var r=e.getBoundingClientRect();return {x:r.left-br.left+r.width/2,y:r.top-br.top+r.height/2,w:r.width/2,h:r.height/2};}
  function edge(c,tx,ty){var dx=tx-c.x,dy=ty-c.y,k=Math.min(dx?c.w/Math.abs(dx):1e9,dy?c.h/Math.abs(dy):1e9);k=Math.min(k,1);return {x:c.x+dx*k,y:c.y+dy*k};}
  var a=rc(src),s='<svg id="clinks" width="'+box.scrollWidth+'" height="'+box.scrollHeight+'"><defs>';
  Object.keys(COL).forEach(function(c){s+='<marker id="ca-'+c+'" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="'+COL[c]+'"/></marker>';});s+='</defs>';
- Object.keys(m).forEach(function(k){var t=el(k);if(!t||t===src)return;var q=m[k],cls=peerCls(q);t.classList.add('peer','p-'+cls);
+ Object.keys(m).forEach(function(k){var t=el(k);if(!t||t===src)return;var q=m[k],cls=peerCls(n,k);t.classList.add('peer','p-'+cls);
   var b=rc(t),dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy)||1,off=Math.min(50,len*.15),cx=(a.x+b.x)/2-dy/len*off,cy=(a.y+b.y)/2+dx/len*off,p0=edge(a,cx,cy),p1=edge(b,cx,cy),mk='url(#ca-'+cls+')';
-  s+='<path d="M'+p0.x.toFixed(1)+' '+p0.y.toFixed(1)+' Q'+cx.toFixed(1)+' '+cy.toFixed(1)+' '+p1.x.toFixed(1)+' '+p1.y.toFixed(1)+'" stroke="'+COL[cls]+'" stroke-width="'+Math.min(6,2+Math.log2(q.out+q.inn)).toFixed(1)+'" fill="none" stroke-linecap="round" opacity=".65"'+(q.out?' marker-end="'+mk+'"':'')+(q.inn?' marker-start="'+mk+'"':'')+'/>';});
+  s+='<path d="M'+p0.x.toFixed(1)+' '+p0.y.toFixed(1)+' Q'+cx.toFixed(1)+' '+cy.toFixed(1)+' '+p1.x.toFixed(1)+' '+p1.y.toFixed(1)+'" stroke="'+COL[cls]+'" stroke-width="'+Math.min(6,2+Math.log2(q.out+q.inn)).toFixed(1)+'" fill="none" stroke-linecap="round" opacity=".65"'+(cls==='ng'?' stroke-dasharray="7 6"':'')+(q.out?' marker-end="'+mk+'"':'')+(q.inn?' marker-start="'+mk+'"':'')+'/>';});
  box.insertAdjacentHTML('beforeend',s+'</svg>');}
 if(VIEW==='cards'){var clT=0;addEventListener('resize',function(){clearTimeout(clT);clT=setTimeout(function(){cardLinks(CARD);},150);});}
 if(VIEW==='cards')cardsHtml=(function(){
@@ -1155,8 +1179,8 @@ if(VIEW==='cards')cardsHtml=(function(){
  CPEERS=PE;
  function hm(ms){var d=new Date(ms);return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);}
  function peerChips(nm){var m=PE[nm];if(!m)return '';var ks=Object.keys(m).sort(function(a,b){return m[b].last-m[a].last;}),h='';
-  ks.slice(0,4).forEach(function(k){var q=m[k],n=q.out+q.inn,dir=q.out&&q.inn?'⇄':q.out?'送':'受',cls=peerCls(q),old=Date.now()-q.last>86400000;
-   h+='<span class="sc-pe '+cls+'" data-peer="'+esc(k)+'" title="'+esc(k+'：送った '+q.out+'通・受けた '+q.inn+'通'+(q.fail?'・不達 '+q.fail+'通':'')+'（最後 '+ago(q.last)+'）＝押すと相手の席へ')+'">'+dir+' '+esc(k)+(n>1?' ×'+n:'')+' <i>'+(old?ago(q.last):hm(q.last))+'</i></span>';});
+  ks.slice(0,4).forEach(function(k){var q=m[k],n=q.out+q.inn,dir=q.out&&q.inn?'⇄':q.out?'送':'受',pst=peerCls(nm,k),cls='m-'+pst,old=Date.now()-q.last>86400000;
+   h+='<span class="sc-pe '+cls+'" data-peer="'+esc(k)+'" title="'+esc(k+'：送った '+q.out+'通・受けた '+q.inn+'通'+(q.fail?'・不達 '+q.fail+'通':'')+'（最後 '+ago(q.last)+'＝'+MSL[pst]+'）＝押すと相手の席へ')+'">'+dir+' '+esc(k)+(n>1?' ×'+n:'')+' <i>'+(old?ago(q.last):hm(q.last))+'</i></span>';});
   if(ks.length>4)h+='<span class="sc-pe more" title="'+esc(ks.slice(4).join('・'))+'">ほか '+(ks.length-4)+'</span>';
   return '<div class="sc-pes">'+h+'</div>';}
  function card(o){var t=o.t,nm=t.name,st=o.st,occ=t.occupied_by||[],h='',pics='',stl='<b>'+LAB[st==='idle'&&o.ask?'ask':st]+'</b>',tip=TIPS[nm]||deskTip(t,t.cur,!!t.live,o.away,false,o.leave);
@@ -1219,14 +1243,15 @@ function renderLog(){log.innerHTML='';var lastDay='';
  var idx=D.edges.map(function(_,i){return i;}); if(desc)idx.reverse();
  idx.forEach(function(i){var e=D.edges[i];if(e.day!==lastDay){lastDay=e.day;var d=document.createElement('div');d.className='day';d.textContent=e.day;log.appendChild(d);}
   var r=document.createElement('div');r.className='row';r.dataset.i=i;
-  var st=!e.ok?' <span class="ng">❌不達</span>':e.removed?' <span class="rm">🗑破棄</span>':e.read===false?' <span class="un">📨未読</span>':'';
+  var st=mstHtml(i);
   r.innerHTML='<span class="t">'+e.t.slice(6)+'</span><span class="who">'+esc(e.frm+(e.frm_s?' S'+e.frm_s:''))+'</span> → <span class="who">'+esc(e.to+(e.to_s?' S'+e.to_s:''))+'</span>'+st+'<br><span class="sm">'+esc(e.summary)+'</span>'+(e.body?'<span class="mor">▸ 本文</span><div class="mbd">'+esc(e.body)+'</div>':'');
   r.title=e.body?'クリックで本文を開閉':e.preview; r.onclick=function(ev){if(ev.target.closest('.mbd'))return;hl(i);if(e.body){var o=r.classList.toggle('open');r.querySelector('.mor').textContent=o?'▾ 本文':'▸ 本文';}}; log.appendChild(r);});  // 📨 本文を読む（S24・個人PC H）
  ord.textContent=desc?'⇅ 最新が上':'⇅ 最新が下'; log.scrollTop=desc?0:log.scrollHeight;}
 function hl(i){document.querySelectorAll('.hl').forEach(function(x){x.classList.remove('hl');});var p=document.getElementById('p'+i),r=document.querySelector('.row[data-i="'+i+'"]');if(p){p.classList.add('hl');p.parentNode.appendChild(p);}if(r){r.classList.add('hl');r.scrollIntoView({block:'nearest'});}}
 document.querySelectorAll('.edge').forEach(function(p){p.onclick=function(){hl(+p.dataset.i);};});
+document.querySelectorAll('#scene .pedge').forEach(function(g){g.addEventListener('click',function(ev){ev.stopPropagation();hl(+g.dataset.i);});});  // 組の線＝最後の1通を出す（S25 3.4）
 document.querySelectorAll('#scene .envs').forEach(function(g){g.addEventListener('click',function(ev){ev.stopPropagation();hl(+g.dataset.e);});});  // 封筒・くしゃ紙＝その線を出す（席カードは開かない）
-var scn=document.getElementById('scene');scn.classList.toggle('arw-env',ARW==='env');scn.addEventListener('click',function(ev){if(ARW==='env'&&!ev.target.closest('.envs,.edge'))document.querySelectorAll('#scene .edge.hl').forEach(function(x){x.classList.remove('hl');});});  // 封筒モードは空いた所のクリックで線を消す
+var scn=document.getElementById('scene');scn.classList.toggle('arw-env',ARW==='env');scn.classList.toggle('arw-line',ARW==='line');scn.addEventListener('click',function(ev){if(!ev.target.closest('.envs,.edge,.pedge'))document.querySelectorAll('#scene .edge.hl').forEach(function(x){x.classList.remove('hl');});});  // 封筒モードは空いた所のクリックで線を消す
 fresh.forEach(function(f){setTimeout(function(){var p=document.getElementById('p'+f[0]);if(p)p.classList.remove('new');var q=document.getElementById('f'+f[0]);if(q)q.remove();},f[1]);});  // 15 分たったら破線を止める（再読込なしでも）
 // 👤 再生にふくちゃん（S23）: ▶ で 📨 の流れと今日の人間の席移動（D.human_moves・同じ席が続く分は畳み済み・空きは ☕ 経由）を時刻順に混ぜて再生。
 // 再生中は在席の 👤 を隠し、終わったら戻す。項目が多い時は 1 歩を縮める（50 件超で最短 0.5 秒）
@@ -1304,7 +1329,7 @@ renderLog();
   var subs=subsOf(t);if(subs.length){h+='<h3>🧩 今日の分身（'+subs.length+'）</h3>';subs.slice(0,8).forEach(function(a){h+='<div class="row" title="'+esc(subTip(a))+'"><span class="t">'+esc((a.start_t||a.t)+(a.state==='busy'?'〜':''))+'</span>'+(a.state==='busy'?'🟢 作業中':a.state==='done'?'✅ 報告済み':'⏹ 止まった？')+' <span class="who">'+esc(a.type||'')+'</span><br><span class="sm">'+esc(a.desc||'（説明なし）')+'</span></div>';});if(subs.length>8)h+='<div class="cs">ほか '+(subs.length-8)+' 件</div>';}  // 🧩 S25
   var es=[];D.edges.forEach(function(e,i){if(e.frm===CARD||e.to===CARD)es.push(i);});
   h+='<h3>📨 この席のやり取り'+(es.length?'（'+es.length+' 件'+(es.length>6?'・新しい 6 件':'')+'）':'（直近 '+D.window_hours+'h になし）')+'</h3>';
-  es.slice(-6).reverse().forEach(function(i){var e=D.edges[i],st=!e.ok?' <span class="ng">❌不達</span>':e.removed?' <span class="rm">🗑破棄</span>':e.read===false?' <span class="un">📨未読</span>':'';
+  es.slice(-6).reverse().forEach(function(i){var e=D.edges[i],st=mstHtml(i);
    h+='<div class="row" data-ci="'+i+'" title="'+(e.body?'クリックで本文を開閉':'')+'"><span class="t">'+esc(e.t.slice(6))+'</span>'+(e.frm===CARD?'→ <span class="who">'+esc(e.to+(e.to_s?' S'+e.to_s:''))+'</span>':'← <span class="who">'+esc(e.frm+(e.frm_s?' S'+e.frm_s:''))+'</span>')+st+'<br><span class="sm">'+esc(e.summary)+'</span>'+(e.body?'<span class="mor">▸ 本文</span><div class="mbd">'+esc(e.body)+'</div>':'')+'</div>';});
   if(Object.keys(THEMES).length)h+=charHtml(t);
   box.innerHTML=h;
@@ -1340,11 +1365,11 @@ def render_office(D: dict, cfg: dict, stamp: str, poll_ms: int) -> str:
              f'<span class="tile"><b>{c["edges"]}</b>通 /{D["window_hours"]}h</span>'
              f'<span class="tile{" warn" if c["unread"] else ""}"><b>{c["unread"]}</b>未読</span>'
              f'<span class="tile{" bad" if c["failed"] else ""}"><b>{c["failed"]}</b>不達</span></div>')
-    legend = ('<span class="legend"><span>✉ 封筒＝未読（揺れる＝15分以内）・✈ 紙飛行機＝送信直後・✖ くしゃ紙＝不達（線は行・封筒クリックで出る／〰 線 で常設）｜</span>'
-              '<span><i class="sw" style="background:var(--gold)"></i>→ハブ</span>'
-              '<span><i class="sw" style="background:var(--cyan)"></i>ハブ→</span>'
-              '<span><i class="sw" style="background:var(--mag)"></i>トラック間</span>'
-              '<span><i class="sw" style="background:var(--red)"></i>不達（破線）</span>'
+    legend = ('<span class="legend"><span>✉ 封筒＝未読（揺れる＝15分以内）・✈ 紙飛行機＝送信直後・✖ くしゃ紙＝不達（線は行・封筒クリックで出る／〰 線 で組ごとに1本を常設・線の上に最後の時刻 ×通数）｜</span>'
+              '<span>線の色＝最後の1通 <i class="sw" style="background:#f97316"></i>未読</span>'
+              '<span><i class="sw" style="background:#3b82f6"></i>既読・返事なし</span>'
+              '<span><i class="sw" style="background:#94a3b8"></i>返事あり（2時間以内）</span>'
+              '<span><i class="sw" style="background:#e5533b"></i>届かず（破線）</span>'
               '<span>｜ 画面 <i class="sw" style="background:#39d353"></i>作業中 '
               '<i class="sw" style="background:#4aa3ff"></i>待機 '
               '<i class="sw" style="background:#e5533b"></i>許可待ち '
