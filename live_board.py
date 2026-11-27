@@ -52,6 +52,7 @@ STATE_LABELS = {
     "waiting_permission": "🔴 許可待ち",
 }
 STATE_ORDER = {"waiting_permission": 0, "waiting_input": 1, "working": 2}
+WAIT_KIND_LABELS = {"ask": "❓ 質問中", "done": "📄 報告済み"}  # 待機中の内訳（3.1・11/27）
 
 
 def resolve_state(now_epoch, mtime, hook_state, hook_ts_epoch, fresh_sec):
@@ -494,6 +495,37 @@ def _reply_gist(text: str) -> str:
     return cand[:120]
 
 
+_ASK_HEAD = ("要判断", "❓", "未回答")  # この語で始まる行があれば ❓ 質問中（L1 の「▸ 要判断」・L4 の「未回答:」）
+_ASK_SKIP_END = ()  # 締めの決まり文句＝問いとして数えない語尾（会社側は今は無し。L2「で合ってる？」は本物の問いなので数える）
+
+
+def _reply_asks(text: str) -> bool:
+    """最後の返事が「ふくちゃんに問うている」か（3.1 ❓ 質問中／📄 報告済み の判定・11/27）。
+
+    ①飾りを剥がした行頭が 要判断／❓／未回答 ②表（| 始まり）とコードブロックを除いた最後の 3 行のどれかが「？」で終わる
+    → True。L4 の表は毎回持ち越しの行が並ぶので見ない（数えると ❓ が抜けなくなる）。
+    """
+    lines, fence = [], False
+    for raw in text.splitlines():
+        t = raw.strip()
+        if t.startswith("```"):
+            fence = not fence
+            continue
+        if fence or not t or t.startswith("|"):
+            continue
+        t = re.sub(r"^(?:[#>\-\*•▸\s]|\d+\.\s)+", "", t).replace("**", "").replace("`", "").strip()
+        if not t:
+            continue
+        if t.startswith(_ASK_HEAD):
+            return True
+        lines.append(t)
+    for t in lines[-3:]:
+        t = re.sub(r"\s*[（(][^（）()]*[）)]$", "", t).rstrip("」』 　")  # 文末の括弧書き（推奨＝A 等）は外して見る
+        if t.endswith(("？", "?")) and not (_ASK_SKIP_END and t.endswith(_ASK_SKIP_END)):
+            return True
+    return False
+
+
 def _peek_last_reply(transcript: Path, tail_bytes=None):
     """末尾から読んで「エージェントの最後の返事（text ブロック）」の時刻(epoch)と要旨を返す（無ければ None・S25 🗨）。
 
@@ -534,11 +566,12 @@ def _scan_last_reply(chunk: str):
             continue
         content = (rec.get("message") or {}).get("content")
         texts = [x.get("text") or "" for x in content if isinstance(x, dict) and x.get("type") == "text"] if isinstance(content, list) else [content if isinstance(content, str) else ""]
-        gist = _reply_gist("\n".join(t for t in texts if t))
+        full = "\n".join(t for t in texts if t)
+        gist = _reply_gist(full)
         if gist:
             ts = _ts_epoch(rec.get("timestamp"))
             if ts:
-                return {"ts": ts, "text": gist}
+                return {"ts": ts, "text": gist, "ask": _reply_asks(full)}  # ask＝❓ 質問中の材料（3.1）
     return None
 
 
@@ -809,8 +842,13 @@ def build_rows():
         # 「Base directory for this skill:...」等）が残り得るためフォールバックに降格（S10）。
         title = (summary["first_user_text"] or st.get("title") or rec.get("name")
                  or (Path(cwd).name if cwd else "?"))
+        last_reply = _peek_last_reply(transcript)
+        # 🟡 待機中を ❓ 質問中（ask）／📄 報告済み（done）に割る（3.1・11/27）。返事が読めない待機は done 扱い
+        wait_kind = (("ask" if (last_reply or {}).get("ask") else "done")
+                     if state == "waiting_input" else None)
         rows.append({
             "state": state,
+            "wait_kind": wait_kind,
             "project": summary["project"] or "—",
             "session_no": summary.get("session_no"),
             "s_no": f"S{summary['session_no']}" if summary.get("session_no") is not None else "",
@@ -824,7 +862,7 @@ def build_rows():
             "ws_key": ws,  # encoded ws dir（office のテナント＝部屋の判定に使う・S22）
             "model": _peek_model(transcript),  # 委託の engine 表記と対（誰が働いているか）
             "last_human": _peek_last_human(transcript),  # 人間の最終発話（オフィス図の人間位置）
-            "last_reply": _peek_last_reply(transcript),  # 🗨 エージェントの最後の返事（席の吹き出し・S25）
+            "last_reply": last_reply,  # 🗨 エージェントの最後の返事（席の吹き出し・S25）
             "subagents": _peek_subagents(transcript, sid, now_epoch, _today_epoch()),  # 🧩 今日のサブエージェント（机のちび分身・S25）
             "pid": rec.get("pid") or "",
             "sid": sid,   # タブ復元スナップショット用（claude-wt/restore_tabs.ps1）
@@ -832,7 +870,7 @@ def build_rows():
         })
     # 待ち状態（🔴許可待ち→🟡確認待ち）を最上部に固定し、各グループ内は更新の新しい順。
     # 作業中も新しい順＝いま動いているセッションが上に来る（見逃し防止と「今どれ」を両立）。
-    rows.sort(key=lambda r: (STATE_ORDER.get(r["state"], 9), -r["updated_epoch"]))
+    rows.sort(key=lambda r: (STATE_ORDER.get(r["state"], 9), r.get("wait_kind") == "done", -r["updated_epoch"]))  # 待機中は ❓ が先
 
     # 休眠セッション（プロセス停止中）の再開予定／再開候補（S7）
     live_sids = set(agents.keys())  # プロセスが生きているものは休眠から除外（幽霊含め再開提案しない）
@@ -870,7 +908,7 @@ def render(rows, skipped=0, pinned_rows=None, suggest_unnum=None, suggest_num=No
               + _pad("WS", 16) + _pad("model", 13) + _pad("pid", 7) + "タイトル")
         print("-" * 128)
         for r in rows:
-            state = STATE_LABELS.get(r["state"], "⚪ 不明")
+            state = WAIT_KIND_LABELS.get(r.get("wait_kind")) or STATE_LABELS.get(r["state"], "⚪ 不明")
             if r.get("wait_sec") is not None:      # 待ち時間を状態に併記
                 state += f" {_dur(r['wait_sec'])}"
             if r.get("is_new"):                    # 新着（待ち入りたて＝未確認の可能性大）
@@ -933,6 +971,7 @@ STATE_COLORS = {
     "waiting_input": ("#fab219", "待機中", "🟡"),
     "waiting_permission": ("#d03b3b", "許可待ち", "🔴"),
 }
+WAIT_KIND_COLORS = {"ask": ("#fab219", "質問中", "❓"), "done": ("#898781", "報告済み", "📄")}  # 📄 は灰＝急がない
 LONG_WAIT_SEC = 600  # これ以上待たせていたら待ち時間を強調（放置の気づき）
 
 # 静的ダッシュボード（claude_dashboard_gen.py）と同じトークン一式。テーマ切替は変数の差し替えだけ。
@@ -968,7 +1007,7 @@ h1{font-size:17px;font-weight:600;margin:0;letter-spacing:.01em}
 .pulse i{display:block;height:2px;width:0;background:var(--cat-1);
   animation:fill linear forwards;opacity:.85}
 @keyframes fill{from{width:0}to{width:100%}}
-.tiles{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:10px;margin-bottom:18px}
+.tiles{display:grid;grid-template-columns:repeat(6,minmax(100px,1fr));gap:10px;margin-bottom:18px}
 .tile{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:12px 15px}
 .tile .l{color:var(--muted);font-size:11px}
 .tile .v{font-size:30px;font-weight:600;line-height:1.15;margin-top:1px;color:var(--ink)}
@@ -1089,7 +1128,8 @@ def _live_rows_html(rows):
     esc = html_mod.escape
     out = []
     for r in rows:
-        color, label, icon = STATE_COLORS.get(r["state"], ("#898781", "不明", "⚪"))
+        color, label, icon = (WAIT_KIND_COLORS.get(r.get("wait_kind"))
+                              or STATE_COLORS.get(r["state"], ("#898781", "不明", "⚪")))
         wait = ""
         if r.get("wait_sec") is not None:  # 待ち時間を併記し、長引いたら強調（放置の気づき）
             cls = "wait long" if r["wait_sec"] >= LONG_WAIT_SEC else "wait"
@@ -1225,13 +1265,16 @@ def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
     need_me = [r for r in rows if r["state"].startswith("waiting")]
     running = [r for r in rows if not r["state"].startswith("waiting")]
     n_perm = sum(1 for r in need_me if r["state"] == "waiting_permission")
-    n_input = len(need_me) - n_perm
+    n_ask = sum(1 for r in need_me if r.get("wait_kind") == "ask")
+    n_done = len(need_me) - n_perm - n_ask
+    n_need = n_perm + n_ask  # 返事が要る数（📄 報告済みは読むだけ＝数えない・タブ題名もこれ）
 
     def tile(label, n, cls=""):
         return (f'<div class="tile {cls}"><div class="l">{label}</div>'
                 f'<div class="v">{n}</div></div>')
 
-    tiles = (tile("🔴 許可待ち", n_perm) + tile("🟡 待機中", n_input)
+    tiles = (tile("🔴 許可待ち", n_perm) + tile("❓ 質問中", n_ask)
+             + tile("📄 報告済み", n_done, "" if n_done else "zzz")
              + tile("⚠️ 委託応答なし" if n_stale else "⏳ 委託中",
                     n_stale if n_stale else len(jobs_running),
                     "" if jobs_running else "zzz")
@@ -1256,7 +1299,7 @@ def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
 <head>
 <meta charset="utf-8">
 <meta http-equiv="refresh" content="{refresh_sec}">
-<title>{"⚠️" if n_stale else ""}エージェントライブボード — 待ち {len(need_me)} / 委託 {len(jobs_running)} / 稼働 {len(rows)}</title>
+<title>{"⚠️" if n_stale else ""}エージェントライブボード — 待ち {n_need} / 委託 {len(jobs_running)} / 稼働 {len(rows)}</title>
 <script>{LIVE_HEAD_JS}</script>
 <style>{LIVE_CSS}</style>
 </head>
@@ -1283,7 +1326,7 @@ def render_html(rows, refresh_sec, skipped=0, pinned_rows=None,
 <h2>⏳ 委託中<span class="s">ローカルLLMバッチ等（agent_jobs 台帳）・応答なしは ⚠️</span></h2>
 {_jobs_html(jobs_running, jobs_finished)}
 
-<h2>👋 あなた待ち<span class="s">許可待ち → 待機中の順・新しいものが上</span></h2>
+<h2>👋 あなた待ち<span class="s">🔴 許可待ち → ❓ 質問中 → 📄 報告済み（読むだけ）の順・新しいものが上</span></h2>
 {need_html}
 {footnote}
 

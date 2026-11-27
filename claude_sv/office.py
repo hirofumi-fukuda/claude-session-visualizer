@@ -371,6 +371,7 @@ def build_office_data(res: dict, labels: dict, rows, cfg: dict) -> dict:
                      "model": r.get("model") or "", "title": (r.get("title") or "")[:60],
                      "last_human": r.get("last_human"),
                      "last_reply": r.get("last_reply"),  # 🗨 最後の返事（吹き出し・席カード・S25）
+                     "ask": r.get("wait_kind") == "ask",  # ❓ 質問中（待機中の内訳・3.1・11/27）
                      "subagents": r.get("subagents") or [],  # 🧩 今日のサブエージェント（机のちび分身・席カード・S25）
                      "ws": r.get("ws") or "", "ws_key": r.get("ws_key") or "", "cwd": r.get("cwd") or ""}
         if sid not in labels and r.get("project") and r["project"] != "—":
@@ -1143,11 +1144,11 @@ if(VIEW==='cards')cardsHtml=(function(){
  function ago(ms){var m=Math.max(0,Math.round((Date.now()-ms)/60000));return m<1?'たった今':m<60?m+'分前':m<1440?Math.floor(m/60)+'時間前':Math.floor(m/1440)+'日前';}
  function mshort(m){var k=modelKey(m);return k==='unknown'?'':k;}
  function pic(model,status,track){return '<svg viewBox="-4 0 44 48">'+sprite(0,0,MODEL_COL(model),model,status,track)+'</svg>';}
- var RK={perm:0,busy:1,idle:2,away:3,leave:4,empty:5},LAB={perm:'🔴 許可待ち',idle:'🟡 待機中',busy:'🟢 作業中',away:'💤 離席中',leave:'🏠 退社',empty:'⚪ 空席'};
+ var RK={perm:0,busy:1,idle:2,away:3,leave:4,empty:5},LAB={perm:'🔴 許可待ち',idle:'📄 報告済み',ask:'❓ 質問中',busy:'🟢 作業中',away:'💤 離席中',leave:'🏠 退社',empty:'⚪ 空席'};
  var all=[D.hub].concat(D.tracks).filter(function(t){return t&&inView(t.name);}).map(function(t,i){var live=t.live&&(t.occupied_by||[]).length,away=(!live&&t.away&&t.away.length)?t.away:null,leave=(!live&&t.leave)?t.leave:null;
   var occ=t.occupied_by||[],bb=null,single=occ.length===1;occ.forEach(function(s){var b=sayFor(t,s,single);if(b&&(!bb||b.ts>bb.ts))bb=b;});
-  return {t:t,i:i,away:away,leave:leave,bb:bb,last:bb?bb.ts:0,st:live?stOf(t,true):leave?'leave':away?'away':'empty'};});
- all.sort(function(a,b){return (RK[a.st]-RK[b.st])||(a.st==='idle'?b.last-a.last:0)||(a.i-b.i);});
+  return {t:t,i:i,away:away,leave:leave,bb:bb,last:bb?bb.ts:0,ask:occ.some(function(s){return s.live&&s.live.status==='idle'&&s.live.ask;})?1:0,st:live?stOf(t,true):leave?'leave':away?'away':'empty'};});
+ all.sort(function(a,b){return (RK[a.st]-RK[b.st])||(a.st==='idle'?(b.ask-a.ask)||(b.last-a.last):0)||(a.i-b.i);});  // 待機中は ❓ 質問中が先・次に新しい順
  var PE={};D.edges.forEach(function(e){if(e.removed||!e.frm||!e.to||e.frm===e.to)return;var ts=Date.parse(e.ts)||0;  // 📨 席ごとの相手＝{相手:{out,inn,last,fail}}
   function add(a,b,dir){var m=PE[a]=PE[a]||{},q=m[b]=m[b]||{out:0,inn:0,last:0,fail:0};q[dir]++;if(ts>q.last)q.last=ts;if(!e.ok)q.fail++;}
   add(e.frm,e.to,'out');add(e.to,e.frm,'inn');});
@@ -1158,7 +1159,7 @@ if(VIEW==='cards')cardsHtml=(function(){
    h+='<span class="sc-pe '+cls+'" data-peer="'+esc(k)+'" title="'+esc(k+'：送った '+q.out+'通・受けた '+q.inn+'通'+(q.fail?'・不達 '+q.fail+'通':'')+'（最後 '+ago(q.last)+'）＝押すと相手の席へ')+'">'+dir+' '+esc(k)+(n>1?' ×'+n:'')+' <i>'+(old?ago(q.last):hm(q.last))+'</i></span>';});
   if(ks.length>4)h+='<span class="sc-pe more" title="'+esc(ks.slice(4).join('・'))+'">ほか '+(ks.length-4)+'</span>';
   return '<div class="sc-pes">'+h+'</div>';}
- function card(o){var t=o.t,nm=t.name,st=o.st,occ=t.occupied_by||[],h='',pics='',stl='<b>'+LAB[st]+'</b>',tip=TIPS[nm]||deskTip(t,t.cur,!!t.live,o.away,false,o.leave);
+ function card(o){var t=o.t,nm=t.name,st=o.st,occ=t.occupied_by||[],h='',pics='',stl='<b>'+LAB[st==='idle'&&o.ask?'ask':st]+'</b>',tip=TIPS[nm]||deskTip(t,t.cur,!!t.live,o.away,false,o.leave);
   if(st==='away'){pics=pic(o.away[0].model,'away',nm);stl+=' 最後 '+esc(o.away[0].t);var m0=mshort(o.away[0].model);if(m0)stl+='<span class="sc-m" style="border-color:'+MODEL_COL(o.away[0].model)+'">'+m0+'</span>';}
   else if(st==='leave'){pics=pic(o.leave.model,'idle',nm);stl+=(o.leave.until_t?' 次 '+esc(o.leave.until_t):'');}
   else{occ.slice(0,3).forEach(function(s){pics+=pic(s.live.model,s.live.status,nm);});var ms={};occ.forEach(function(s){var k=mshort(s.live.model);if(k)ms[k]=s.live.model;});Object.keys(ms).forEach(function(k){stl+='<span class="sc-m" style="border-color:'+MODEL_COL(ms[k])+'">'+k+'</span>';});if(occ.length>1)stl+=' 👥'+occ.length;if(occ.some(function(s){return s.live.rc;}))stl+='<span class="sc-rc" title="Remote Control オン＝外出先（スマホ・claude.ai）から指示できる席">📱 RC</span>';}
@@ -1176,8 +1177,9 @@ if(VIEW==='cards')cardsHtml=(function(){
   if(bd.length)h+='<div class="sc-bd">'+bd.join('')+'</div>';
   return h+'</div>';}
  var out='',grp=null,emp=[];
- all.forEach(function(o){if(o.st==='empty'){emp.push(o);return;}var g=(o.st==='away'||o.st==='leave')?'off':o.st;
-  if(g!==grp){grp=g;var cnt=all.filter(function(x){return g==='off'?(x.st==='away'||x.st==='leave'):x.st===g;}).length;out+='<div class="sc-sec">'+(g==='off'?'💤 離席・🏠 退社':LAB[g])+' '+cnt+'</div>';}
+ function grpOf(x){return (x.st==='away'||x.st==='leave')?'off':x.st==='idle'&&x.ask?'ask':x.st;}  // 待機中は ❓ 質問中／📄 報告済み で見出しを分ける
+ all.forEach(function(o){if(o.st==='empty'){emp.push(o);return;}var g=grpOf(o);
+  if(g!==grp){grp=g;var cnt=all.filter(function(x){return x.st!=='empty'&&grpOf(x)===g;}).length;out+='<div class="sc-sec">'+(g==='off'?'💤 離席・🏠 退社':LAB[g])+' '+cnt+'</div>';}
   out+=card(o);});
  if(emp.length)out+='<div class="sc-sec">⚪ 空席 '+emp.length+'</div><div class="sc-empty">'+emp.map(function(o){var nm=o.t.name;return '<span class="desk'+(nm===CARD?' on':'')+'" data-track="'+esc(nm)+'" title="'+esc(TIPS[nm]||deskTip(o.t,o.t.cur,false,null,false,null))+'">'+esc(nm+nickOf(nm))+'</span>';}).join('')+'</div>';
  if(!out)out='<div class="sc-sec">席なし（この絞り込みに席がない）</div>';
